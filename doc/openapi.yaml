@@ -1,0 +1,349 @@
+openapi: "3.0.3"
+
+info:
+  title: Warpgate
+  description: |
+    Warpgate is a file server designed to bypass restrictive web proxies that inspect traffic content.
+    Files are served through a configurable transform that disguises the content; the browser-based
+    frontend reverses the transform to recover the original bytes. Uploads work in reverse: the
+    frontend applies the transform, the server reverses it.
+  version: "1.0.0"
+
+servers:
+  - url: /
+    description: Warpgate server
+
+security:
+  - ApiKey: []
+
+components:
+
+  securitySchemes:
+    ApiKey:
+      type: apiKey
+      in: header
+      name: X-Auth
+      description: |
+        Authentication key. Configured with `-auth-key` at startup; if omitted, a random 32-byte
+        hex key is auto-generated and printed to the server log. Disable auth entirely with
+        `-no-auth`, in which case the header is not checked.
+
+  schemas:
+
+    ListEntry:
+      type: object
+      required: [name, type]
+      properties:
+        name:
+          type: string
+          description: File or directory name (no path separator).
+          example: report.pdf
+        type:
+          type: string
+          enum: [f, d]
+          description: "'f' for file, 'd' for directory."
+        size:
+          type: integer
+          format: int64
+          description: Size in bytes. Present for files only; omitted for directories.
+          example: 1048576
+
+    UploadResponse:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+          description: Filename as stored on the server.
+          example: document.bin
+
+    TransformArgs:
+      type: object
+      description: |
+        Transform-specific arguments. The schema depends on the accompanying `transform` field:
+
+        **`id`** — No arguments (empty object or omit the field).
+
+        **`xor`** — `{"key": "<hex>"}`: hex-encoded XOR key, any length, applied cyclically.
+
+        **`aes-ctr`** — `{"key": "<hex>", "iv": "<hex>"}`: hex-encoded AES key (16, 24, or 32 bytes)
+        and IV (exactly 16 bytes).
+
+        **`pdf`** — `{"filename": "<name>", "password": "<hex>"}`: attachment filename embedded in
+        the PDF (defaults to `"attachment"`); optional hex password enables AES-256 PDF encryption
+        (download path only — `pdf-lib` used for upload encoding does not support encryption).
+
+        **`html-b64`** — `{"key": "<hex>"}`: hex-encoded XOR key, exactly 16 bytes. Data is XOR-ed
+        then base64-encoded and embedded in an HTML `<img>` tag.
+
+paths:
+
+  /checkin:
+    get:
+      operationId: checkin
+      summary: Log client check-in
+      description: |
+        Logs the client's remote IP address server-side. Called once on page load.
+        Does not require authentication.
+      security: []
+      responses:
+        "204":
+          description: Check-in recorded.
+
+  /list:
+    post:
+      operationId: listFiles
+      summary: List directory contents
+      description: |
+        Returns the files and subdirectories at `path` within the download root.
+        Use an empty string for the root itself.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                path:
+                  type: string
+                  description: Subdirectory path relative to the download root.
+                  default: ""
+            examples:
+              root:
+                summary: List root
+                value:
+                  path: ""
+              subdir:
+                summary: List subdirectory
+                value:
+                  path: docs/reports
+      responses:
+        "200":
+          description: Directory listing (files and directories).
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ListEntry'
+              example:
+                - name: subdir
+                  type: d
+                - name: report.pdf
+                  type: f
+                  size: 204800
+        "400":
+          description: Invalid or path-traversal path.
+        "401":
+          description: Missing or invalid `X-Auth` header.
+        "404":
+          description: Path not found.
+        "405":
+          description: Method not allowed.
+        "500":
+          description: Internal server error.
+
+  /get:
+    post:
+      operationId: getFileChunk
+      summary: Download a file chunk
+      description: |
+        Downloads a byte range of a file with a transform applied. The response body is the raw
+        transform output; the client must reverse the transform to recover the original bytes.
+
+        Set `start=0` and `size` equal to the full file size to download in a single request.
+        For chunked downloads, issue multiple requests with successive `start` offsets; `size`
+        for the last chunk may be smaller than the others.
+
+        The `args` field must match the chosen `transform`; see the `TransformArgs` schema for
+        per-transform details.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [path, start, size, transform]
+              properties:
+                path:
+                  type: string
+                  description: Path to the file, relative to the download root.
+                  example: docs/report.pdf
+                start:
+                  type: integer
+                  format: int64
+                  minimum: 0
+                  description: Byte offset to begin reading from.
+                  example: 0
+                size:
+                  type: integer
+                  format: int64
+                  minimum: 1
+                  description: Number of bytes to read. Must be positive.
+                  example: 1048576
+                transform:
+                  type: string
+                  enum: [id, xor, aes-ctr, pdf, html-b64]
+                  description: Transform to apply before sending.
+                  example: aes-ctr
+                args:
+                  $ref: '#/components/schemas/TransformArgs'
+            examples:
+              id:
+                summary: No transform
+                value:
+                  path: file.bin
+                  start: 0
+                  size: 1048576
+                  transform: id
+                  args: {}
+              xor:
+                summary: XOR
+                value:
+                  path: file.bin
+                  start: 0
+                  size: 1048576
+                  transform: xor
+                  args:
+                    key: deadbeefcafe1234
+              aes-ctr:
+                summary: AES-CTR
+                value:
+                  path: file.bin
+                  start: 0
+                  size: 1048576
+                  transform: aes-ctr
+                  args:
+                    key: 00112233445566778899aabbccddeeff
+                    iv: 0102030405060708090a0b0c0d0e0f10
+              pdf:
+                summary: PDF (with password)
+                value:
+                  path: file.bin
+                  start: 0
+                  size: 1048576
+                  transform: pdf
+                  args:
+                    filename: file.bin
+                    password: a1b2c3d4e5f6a7b8c9d0
+              html-b64:
+                summary: HTML/Base64
+                value:
+                  path: file.bin
+                  start: 0
+                  size: 1048576
+                  transform: html-b64
+                  args:
+                    key: 00112233445566778899aabbccddeeff
+      responses:
+        "200":
+          description: |
+            Transformed file data. The `Content-Type` depends on the transform:
+            `text/html; charset=utf-8` for `html-b64`, `application/octet-stream` for all others.
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+            text/html:
+              schema:
+                type: string
+        "400":
+          description: |
+            Invalid request — malformed JSON, path traversal, non-positive `size`, unknown
+            transform name, or invalid transform args (e.g. wrong key length).
+        "401":
+          description: Missing or invalid `X-Auth` header.
+        "404":
+          description: File not found.
+        "405":
+          description: Method not allowed.
+        "500":
+          description: Internal server error (I/O error or transform failure).
+
+  /upload:
+    post:
+      operationId: uploadFile
+      summary: Upload a file
+      description: |
+        Accepts a file that has already been encoded by the client using the specified transform.
+        The server reverses the transform and writes the recovered bytes to the upload root.
+
+        This endpoint is only available when the server was started with `-ul-root`.
+        If not configured, the endpoint returns 404.
+
+        The request is a `multipart/form-data` with two parts:
+
+        - **`transform`** (optional file part, `application/json`): describes the transform used
+          to encode the file: `{"transform":"<name>","args":{...}}`. Omit to use the `id`
+          (no-op) transform.
+        - **`file`**: the encoded file data. The part's filename is used as the stored filename.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                transform:
+                  type: string
+                  description: |
+                    JSON transform spec: `{"transform":"<name>","args":{...}}`.
+                    See `TransformArgs` for per-transform arg schemas.
+                  example: '{"transform":"xor","args":{"key":"deadbeefcafe1234"}}'
+                file:
+                  type: string
+                  format: binary
+                  description: Encoded file data. The multipart filename becomes the stored filename.
+      responses:
+        "201":
+          description: File stored successfully.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UploadResponse'
+        "400":
+          description: |
+            Invalid request — malformed multipart form, invalid transform spec JSON, invalid
+            transform args, or unusable filename.
+        "401":
+          description: Missing or invalid `X-Auth` header.
+        "404":
+          description: Upload not configured (server started without `-ul-root`).
+        "405":
+          description: Method not allowed.
+        "500":
+          description: Internal server error (transform failure or I/O error).
+
+  /ul-list:
+    get:
+      operationId: listUploads
+      summary: List uploaded files
+      description: |
+        Returns the files present in the upload directory. Only files are listed;
+        subdirectories are excluded.
+
+        This endpoint is only available when the server was started with `-ul-root`.
+        If not configured, the endpoint returns 404.
+      responses:
+        "200":
+          description: List of uploaded files.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ListEntry'
+              example:
+                - name: uploaded_file.bin
+                  type: f
+                  size: 512000
+        "401":
+          description: Missing or invalid `X-Auth` header.
+        "404":
+          description: Upload not configured (server started without `-ul-root`).
+        "405":
+          description: Method not allowed.
+        "500":
+          description: Internal server error.

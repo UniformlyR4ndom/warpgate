@@ -1,0 +1,125 @@
+package main
+
+import (
+	"bytes"
+	"crypto/sha256"
+	"crypto/tls"
+	"crypto/x509"
+	"encoding/hex"
+	"fmt"
+	"net/http"
+	"os"
+	"path/filepath"
+)
+
+type Server struct {
+	cfg       Config
+	mux       *http.ServeMux
+	absRoot   string
+	absUlRoot string
+	clientCAs *x509.CertPool
+	clientFP  []byte
+}
+
+func NewServer(cfg Config) (*Server, error) {
+	absRoot, err := filepath.Abs(cfg.Root)
+	if err != nil {
+		return nil, fmt.Errorf("resolving root: %w", err)
+	}
+	s := &Server{
+		cfg:     cfg,
+		mux:     http.NewServeMux(),
+		absRoot: absRoot,
+	}
+
+	if cfg.ClientRoot != "" {
+		pemBytes, err := os.ReadFile(cfg.ClientRoot)
+		if err != nil {
+			return nil, fmt.Errorf("reading -client-root: %w", err)
+		}
+		pool := x509.NewCertPool()
+		if !pool.AppendCertsFromPEM(pemBytes) {
+			return nil, fmt.Errorf("-client-root %q contains no valid PEM certificates", cfg.ClientRoot)
+		}
+		s.clientCAs = pool
+	}
+
+	if cfg.ClientFP != "" {
+		fp, err := hex.DecodeString(cfg.ClientFP)
+		if err != nil {
+			return nil, fmt.Errorf("decoding -client-fp: %w", err)
+		}
+		if len(fp) != sha256.Size {
+			return nil, fmt.Errorf("-client-fp must be a %d-byte SHA-256 fingerprint (got %d bytes)", sha256.Size, len(fp))
+		}
+		s.clientFP = fp
+	}
+	s.mux.HandleFunc("/checkin", s.handleCheckin)
+	s.mux.Handle("/list", s.withAuth(s.handleList))
+	s.mux.Handle("/get", s.withAuth(s.handleGet))
+	if cfg.UlRoot != "" {
+		absUlRoot, err := filepath.Abs(cfg.UlRoot)
+		if err != nil {
+			return nil, fmt.Errorf("resolving upload root: %w", err)
+		}
+		s.absUlRoot = absUlRoot
+		s.mux.Handle("/upload", s.withAuth(s.handleUpload))
+		s.mux.Handle("/ul-list", s.withAuth(s.handleUlList))
+	}
+	return s, nil
+}
+
+func (s *Server) withAuth(h http.HandlerFunc) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !s.cfg.NoAuth && r.Header.Get("X-Auth") != s.cfg.Key {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		h(w, r)
+	})
+}
+
+func (s *Server) handler() http.Handler {
+	static := http.StripPrefix("/static/", staticHandler())
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, pattern := s.mux.Handler(r)
+		if pattern == "" {
+			if r.URL.Path == "/" || r.URL.Path == "/static" {
+				http.Redirect(w, r, "/static/", http.StatusMovedPermanently)
+				return
+			}
+			static.ServeHTTP(w, r)
+			return
+		}
+		s.mux.ServeHTTP(w, r)
+	})
+}
+
+func (s *Server) ListenAndServe() error {
+	h := s.handler()
+	httpSrv := &http.Server{Addr: s.cfg.Addr, Handler: h}
+	if s.cfg.Cert != "" {
+		if s.clientCAs != nil || s.clientFP != nil {
+			tlsCfg := &tls.Config{}
+			if s.clientCAs != nil {
+				tlsCfg.ClientAuth = tls.RequireAndVerifyClientCert
+				tlsCfg.ClientCAs = s.clientCAs
+			} else {
+				tlsCfg.ClientAuth = tls.RequireAnyClientCert
+			}
+			if s.clientFP != nil {
+				fp := s.clientFP
+				tlsCfg.VerifyPeerCertificate = func(rawCerts [][]byte, _ [][]*x509.Certificate) error {
+					sum := sha256.Sum256(rawCerts[0])
+					if !bytes.Equal(sum[:], fp) {
+						return fmt.Errorf("client certificate fingerprint mismatch")
+					}
+					return nil
+				}
+			}
+			httpSrv.TLSConfig = tlsCfg
+		}
+		return httpSrv.ListenAndServeTLS(s.cfg.Cert, s.cfg.CertKey)
+	}
+	return httpSrv.ListenAndServe()
+}
