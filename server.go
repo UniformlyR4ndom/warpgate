@@ -14,6 +14,7 @@ import (
 
 type Server struct {
 	cfg       Config
+	db        *DB
 	mux       *http.ServeMux
 	absRoot   string
 	absUlRoot string
@@ -21,13 +22,14 @@ type Server struct {
 	clientFP  []byte
 }
 
-func NewServer(cfg Config) (*Server, error) {
+func NewServer(cfg Config, db *DB) (*Server, error) {
 	absRoot, err := filepath.Abs(cfg.Root)
 	if err != nil {
 		return nil, fmt.Errorf("resolving root: %w", err)
 	}
 	s := &Server{
 		cfg:     cfg,
+		db:      db,
 		mux:     http.NewServeMux(),
 		absRoot: absRoot,
 	}
@@ -54,17 +56,21 @@ func NewServer(cfg Config) (*Server, error) {
 		}
 		s.clientFP = fp
 	}
-	s.mux.HandleFunc("/checkin", s.handleCheckin)
-	s.mux.Handle("/list", s.withAuth(s.handleList))
-	s.mux.Handle("/get", s.withAuth(s.handleGet))
+	s.mux.HandleFunc("/api/public/checkin", s.handleCheckin)
+	s.mux.Handle("/api/clip/list", s.withAuth(s.handleClipList))
+	s.mux.Handle("/api/clip/new", s.withAuth(s.handleClipNew))
+	s.mux.Handle("/api/clip/edit", s.withAuth(s.handleClipEdit))
+	s.mux.Handle("/api/clip/delete", s.withAuth(s.handleClipDelete))
+	s.mux.Handle("/api/files/list", s.withAuth(s.handleList))
+	s.mux.Handle("/api/files/get", s.withAuth(s.handleGet))
 	if cfg.UlRoot != "" {
 		absUlRoot, err := filepath.Abs(cfg.UlRoot)
 		if err != nil {
 			return nil, fmt.Errorf("resolving upload root: %w", err)
 		}
 		s.absUlRoot = absUlRoot
-		s.mux.Handle("/upload", s.withAuth(s.handleUpload))
-		s.mux.Handle("/ul-list", s.withAuth(s.handleUlList))
+		s.mux.Handle("/api/files/upload", s.withAuth(s.handleUpload))
+		s.mux.Handle("/api/files/ul-list", s.withAuth(s.handleUlList))
 	}
 	return s, nil
 }

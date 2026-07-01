@@ -12,6 +12,7 @@ import (
 type Config struct {
 	Root       string
 	UlRoot     string
+	DBPath     string
 	Addr       string
 	Cert       string
 	CertKey    string
@@ -26,6 +27,7 @@ func main() {
 
 	flag.StringVar(&cfg.Root, "root", "./files", "root directory to serve files from")
 	flag.StringVar(&cfg.UlRoot, "ul-root", "", "directory to accept file uploads into (uploads disabled if not set)")
+	flag.StringVar(&cfg.DBPath, "db", "warpgate.sqlite", "path to the SQLite database file")
 	flag.StringVar(&cfg.Addr, "listen", "0.0.0.0:8080", "address to listen on (host:port)")
 	flag.StringVar(&cfg.Cert, "cert", "", "TLS certificate (chain) file; requires -cert-key")
 	flag.StringVar(&cfg.CertKey, "cert-key", "", "TLS private key file; requires -cert")
@@ -83,7 +85,13 @@ func main() {
 		log.Printf("auth key: %s", cfg.Key)
 	}
 
-	srv, err := NewServer(cfg)
+	db, err := OpenDB(cfg.DBPath)
+	if err != nil {
+		log.Fatalf("opening database: %v", err)
+	}
+	defer db.Close()
+
+	srv, err := NewServer(cfg, db)
 	if err != nil {
 		log.Fatalf("initializing server: %v", err)
 	}

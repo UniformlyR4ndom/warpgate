@@ -1,6 +1,8 @@
 pdfjsLib.GlobalWorkerOptions.workerSrc = 'pdf.worker.min.js';
 
 function filesApp() {
+  let refreshTimer = null;
+
   return {
     pathSegments: [],
     entries: [],
@@ -9,6 +11,12 @@ function filesApp() {
     tab: 'download',
     uploadEntries: [],
     uploadError: null,
+    clipItems: [],
+    clipText: '',
+    clipEditId: null,
+    clipError: null,
+    autoRefresh: false,
+    confirmDelete: true,
 
     transformTypes: [
       { id: 'id',       label: 'id'           },
@@ -21,8 +29,10 @@ function filesApp() {
     panel: {
       open: true,
       authOpen: true,
+      authShowKey: false,
       transformOpen: true,
       chunkingOpen: true,
+      generalOpen: true,
     },
 
     settings: {
@@ -43,7 +53,16 @@ function filesApp() {
     init() {
       this.applyAuto();
       this.load();
-      fetch('/checkin').catch(() => {});
+      fetch('/api/public/checkin').catch(() => {});
+
+      this.$watch('autoRefresh', (enabled) => {
+        clearInterval(refreshTimer);
+        refreshTimer = enabled ? setInterval(() => {
+          if (this.tab === 'download') this.load();
+          else if (this.tab === 'upload') this.loadUploadDir();
+          else if (this.tab === 'clipboard') this.loadClipboard();
+        }, 1000) : null;
+      });
 
       this.$watch('settings.auth.key', (newVal) => {
         localStorage.setItem('auth-key', newVal || '');
@@ -191,7 +210,7 @@ function filesApp() {
         transform: t.type,
         args:      this.buildTransformArgs(password, htmlB64Key),
       };
-      var res = await fetch('/get', {
+      var res = await fetch('/api/files/get', {
         method:  'POST',
         headers: Object.assign({ 'Content-Type': 'application/json' }, this.authHeaders()),
         body:    JSON.stringify(body),
@@ -263,13 +282,16 @@ function filesApp() {
     async load() {
       this.error = null;
       try {
-        var res = await fetch('/list', {
+        var res = await fetch('/api/files/list', {
           method:  'POST',
           headers: Object.assign({ 'Content-Type': 'application/json' }, this.authHeaders()),
           body:    JSON.stringify({ path: this.currentPath() }),
         });
         if (!res.ok) throw new Error('HTTP ' + res.status);
-        this.entries = await res.json();
+        var data = await res.json();
+        if (JSON.stringify(data) !== JSON.stringify(this.entries)) {
+          this.entries = data;
+        }
       } catch(err) {
         this.error = 'Failed to load directory (' + err.message + ')';
       }
@@ -288,7 +310,7 @@ function filesApp() {
     async loadUploadDir() {
       this.uploadError = null;
       try {
-        var res = await fetch('/ul-list', { headers: this.authHeaders() });
+        var res = await fetch('/api/files/ul-list', { headers: this.authHeaders() });
         if (!res.ok) {
           this.uploadEntries = [];
           this.uploadError = res.status === 404
@@ -296,7 +318,10 @@ function filesApp() {
             : 'Failed to load upload directory (HTTP ' + res.status + ')';
           return;
         }
-        this.uploadEntries = (await res.json()) || [];
+        var data = (await res.json()) || [];
+        if (JSON.stringify(data) !== JSON.stringify(this.uploadEntries)) {
+          this.uploadEntries = data;
+        }
       } catch(err) {
         this.uploadEntries = [];
         this.uploadError = 'Failed to load upload directory (' + err.message + ')';
@@ -306,6 +331,97 @@ function filesApp() {
     setTab(t) {
       this.tab = t;
       if (t === 'upload') this.loadUploadDir();
+      if (t === 'clipboard') this.loadClipboard();
+    },
+
+    textToBase64(str) {
+      var bytes = new TextEncoder().encode(str);
+      var binary = '';
+      for (var i = 0; i < bytes.length; i++) { binary += String.fromCharCode(bytes[i]); }
+      return btoa(binary);
+    },
+
+    base64ToText(b64) {
+      var binary = atob(b64);
+      var bytes = new Uint8Array(binary.length);
+      for (var i = 0; i < binary.length; i++) { bytes[i] = binary.charCodeAt(i); }
+      return new TextDecoder().decode(bytes);
+    },
+
+    formatTS(ts) {
+      return new Date(ts * 1000).toLocaleString();
+    },
+
+    async copyClip(b64) {
+      await navigator.clipboard.writeText(this.base64ToText(b64));
+    },
+
+    downloadClip(item) {
+      var text = this.base64ToText(item.data);
+      this.triggerDownload(new TextEncoder().encode(text), 'note-' + item.id + '.txt');
+    },
+
+    async loadClipboard() {
+      this.clipError = null;
+      try {
+        var res = await fetch('/api/clip/list', { headers: this.authHeaders() });
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        var data = await res.json();
+        if (JSON.stringify(data) !== JSON.stringify(this.clipItems)) {
+          this.clipItems = data;
+        }
+      } catch(err) {
+        this.clipError = 'Failed to load clipboard (' + err.message + ')';
+      }
+    },
+
+    async submitClip() {
+      this.clipError = null;
+      var editing = this.clipEditId !== null;
+      try {
+        var url  = editing ? '/api/clip/edit' : '/api/clip/new';
+        var body = { data: this.textToBase64(this.clipText) };
+        if (editing) { body.id = this.clipEditId; }
+        var res = await fetch(url, {
+          method:  'POST',
+          headers: Object.assign({ 'Content-Type': 'application/json' }, this.authHeaders()),
+          body:    JSON.stringify(body),
+        });
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        this.clipText   = '';
+        this.clipEditId = null;
+        await this.loadClipboard();
+      } catch(err) {
+        this.clipError = (editing ? 'Failed to update note (' : 'Failed to submit note (') + err.message + ')';
+      }
+    },
+
+    editClip(item) {
+      this.clipText   = this.base64ToText(item.data);
+      this.clipEditId = item.id;
+      this.$refs.clipTextarea.focus();
+    },
+
+    cancelEdit() {
+      this.clipText   = '';
+      this.clipEditId = null;
+    },
+
+
+    async deleteClip(id) {
+      if (this.confirmDelete && !window.confirm('Delete this note?')) return;
+      this.clipError = null;
+      try {
+        var res = await fetch('/api/clip/delete', {
+          method:  'DELETE',
+          headers: Object.assign({ 'Content-Type': 'application/json' }, this.authHeaders()),
+          body:    JSON.stringify({ id: id }),
+        });
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        await this.loadClipboard();
+      } catch(err) {
+        this.clipError = 'Failed to delete note (' + err.message + ')';
+      }
     },
 
     createPDFWithAttachment(fileBytes, filename) {
@@ -365,7 +481,7 @@ function filesApp() {
           var fd   = new FormData();
           fd.append('transform', new Blob([spec], { type: 'application/json' }), 'transform.json');
           fd.append('file', result.data, file.name);
-          var res = await fetch('/upload', { method: 'POST', headers: self.authHeaders(), body: fd });
+          var res = await fetch('/api/files/upload', { method: 'POST', headers: self.authHeaders(), body: fd });
           if (!res.ok) throw Object.assign(new Error('HTTP ' + res.status), { status: res.status });
         } catch(err) {
           self.uploadError = 'Upload of "' + file.name + '" failed: ' +

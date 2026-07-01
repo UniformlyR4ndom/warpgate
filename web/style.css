@@ -155,6 +155,35 @@ input.readonly {
   cursor: default;
 }
 
+.key-input-wrap {
+  display: flex;
+  gap: 0.4rem;
+}
+
+.key-input-wrap input {
+  flex: 1;
+  min-width: 0;
+}
+
+.key-masked {
+  -webkit-text-security: disc;
+}
+
+.key-toggle {
+  flex-shrink: 0;
+  background: none;
+  border: none;
+  color: #888;
+  cursor: pointer;
+  font-size: 1rem;
+  padding: 0 0.2rem;
+  line-height: 1;
+}
+
+.key-toggle:hover {
+  color: #d4d4d4;
+}
+
 input[type="text"],
 input[type="number"],
 select {
@@ -298,4 +327,105 @@ th {
   color: #555;
   font-size: 0.85rem;
   padding: 1rem 0;
+}
+
+/* ── Clipboard tab ── */
+
+.clip-compose {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin-bottom: 1.5rem;
+}
+
+.clip-textarea {
+  width: 100%;
+  height: 25vh;
+  background: #2d2d2d;
+  border: 1px solid #444;
+  color: #d4d4d4;
+  font-family: monospace;
+  font-size: 0.85rem;
+  padding: 0.5rem;
+  resize: vertical;
+}
+
+.clip-btn-row {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.clip-btn-row .choose-btn {
+  flex: 1;
+}
+
+.clip-textarea:focus {
+  outline: 1px solid #4ec9b0;
+  border-color: #4ec9b0;
+}
+
+.clip-item {
+  border: 1px solid #333;
+  margin-bottom: 0.75rem;
+  padding: 0.5rem 0.75rem;
+}
+
+.clip-meta {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 0.35rem;
+}
+
+.clip-ts {
+  font-size: 0.75rem;
+  color: #666;
+}
+
+.clip-delete {
+  background: none;
+  border: none;
+  color: #666;
+  cursor: pointer;
+  font-size: 0.75rem;
+  padding: 0 0.2rem;
+  line-height: 1;
+}
+
+.clip-delete:hover {
+  color: #e05252;
+}
+
+.clip-text {
+  font-size: 0.85rem;
+  color: #d4d4d4;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.clip-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  margin-top: 0.35rem;
+}
+
+.clip-copy {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 1.05rem;
+  opacity: 0.4;
+  padding: 0;
+  line-height: 1;
+  filter: grayscale(1);
+}
+
+.clip-copy:hover {
+  opacity: 1;
+}
+
+.clip-download {
+  display: inline-block;
+  transform: scaleX(1.4);
 }

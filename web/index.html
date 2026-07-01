@@ -34,7 +34,49 @@
           </h2>
           <div x-show="panel.authOpen">
             <label>Key (X-Auth header)</label>
-            <input type="text" x-model="settings.auth.key" placeholder="leave empty to skip">
+            <div class="key-input-wrap">
+              <input type="text" x-model="settings.auth.key"
+                     placeholder="leave empty to skip" autocomplete="off"
+                     :class="{'key-masked': !panel.authShowKey}">
+              <button type="button" class="key-toggle" @click="panel.authShowKey = !panel.authShowKey"
+                      :title="panel.authShowKey ? 'Hide key' : 'Show key'">👁</button>
+            </div>
+          </div>
+        </section>
+
+        <section class="panel-section" x-show="tab === 'download'">
+          <h2 class="section-header" @click="panel.chunkingOpen = !panel.chunkingOpen">
+            <span class="section-arrow" x-text="panel.chunkingOpen ? '▾' : '▸'"></span>Chunking
+          </h2>
+          <div x-show="panel.chunkingOpen">
+            <label class="auto-label">
+              <input type="checkbox" x-model="settings.chunking.enabled"> Enable chunking
+            </label>
+            <div x-show="settings.chunking.enabled">
+              <label>Chunk size (MB)</label>
+              <input type="number" x-model="settings.chunking.chunkSize" min="1">
+              <label class="auto-label"
+                     :class="{'disabled': !hasFileSystemAccess}"
+                     :title="hasFileSystemAccess ? '' : 'File System Access API is required for efficient reassembly'">
+                <input type="checkbox"
+                       x-model="settings.chunking.reassemble"
+                       :disabled="!hasFileSystemAccess"> Reassemble chunks
+              </label>
+            </div>
+          </div>
+        </section>
+
+        <section class="panel-section">
+          <h2 class="section-header" @click="panel.generalOpen = !panel.generalOpen">
+            <span class="section-arrow" x-text="panel.generalOpen ? '▾' : '▸'"></span>General
+          </h2>
+          <div x-show="panel.generalOpen">
+            <label class="auto-label">
+              <input type="checkbox" x-model="autoRefresh"> Auto-refresh
+            </label>
+            <label class="auto-label">
+              <input type="checkbox" x-model="confirmDelete"> Confirm note delete
+            </label>
           </div>
         </section>
 
@@ -98,35 +140,14 @@
           </div>
         </section>
 
-        <section class="panel-section" x-show="tab === 'download'">
-          <h2 class="section-header" @click="panel.chunkingOpen = !panel.chunkingOpen">
-            <span class="section-arrow" x-text="panel.chunkingOpen ? '▾' : '▸'"></span>Chunking
-          </h2>
-          <div x-show="panel.chunkingOpen">
-            <label class="auto-label">
-              <input type="checkbox" x-model="settings.chunking.enabled"> Enable chunking
-            </label>
-            <div x-show="settings.chunking.enabled">
-              <label>Chunk size (MB)</label>
-              <input type="number" x-model="settings.chunking.chunkSize" min="1">
-              <label class="auto-label"
-                     :class="{'disabled': !hasFileSystemAccess}"
-                     :title="hasFileSystemAccess ? '' : 'File System Access API is required for efficient reassembly'">
-                <input type="checkbox"
-                       x-model="settings.chunking.reassemble"
-                       :disabled="!hasFileSystemAccess"> Reassemble chunks
-              </label>
-            </div>
-          </div>
-        </section>
-
       </div>
     </aside>
 
     <main>
       <div class="tabs">
-        <button class="tab-btn" :class="{'active': tab === 'download'}" @click="setTab('download')">Download</button>
-        <button class="tab-btn" :class="{'active': tab === 'upload'}"   @click="setTab('upload')">Upload</button>
+        <button class="tab-btn" :class="{'active': tab === 'download'}"   @click="setTab('download')">Download</button>
+        <button class="tab-btn" :class="{'active': tab === 'upload'}"     @click="setTab('upload')">Upload</button>
+        <button class="tab-btn" :class="{'active': tab === 'clipboard'}"  @click="setTab('clipboard')">Clipboard</button>
       </div>
 
       <div x-show="tab === 'download'">
@@ -180,6 +201,36 @@
           </tbody>
         </table>
         <div x-show="!uploadError && uploadEntries.length === 0" class="upload-empty">No files uploaded yet.</div>
+      </div>
+
+      <div x-show="tab === 'clipboard'">
+        <div x-show="clipError" class="error" x-text="clipError"></div>
+        <div class="clip-compose">
+          <textarea class="clip-textarea" x-model="clipText" x-ref="clipTextarea" placeholder="Type a note..."
+                    @keydown.escape.prevent="cancelEdit()"></textarea>
+          <div class="clip-btn-row">
+            <button class="choose-btn" @click="submitClip()" :disabled="!clipText.trim()"
+                    x-text="clipEditId !== null ? 'Update' : 'Submit'"></button>
+            <button class="choose-btn" x-show="clipEditId !== null" @click="cancelEdit()">Cancel</button>
+          </div>
+        </div>
+        <div class="clip-list">
+          <template x-for="item in clipItems" :key="item.id">
+            <div class="clip-item">
+              <div class="clip-meta">
+                <span class="clip-ts" x-text="formatTS(item.ts)"></span>
+                <button class="clip-delete" @click="deleteClip(item.id)" title="Delete">✕</button>
+              </div>
+              <div class="clip-text" x-text="base64ToText(item.data)"></div>
+              <div class="clip-footer">
+                <button class="clip-copy clip-download" @click="downloadClip(item)" title="Download note">⬇</button>
+                <button class="clip-copy" @click="copyClip(item.data)" title="Copy to clipboard">📋</button>
+                <button class="clip-copy" @click="editClip(item)" title="Edit note">✏</button>
+              </div>
+            </div>
+          </template>
+          <div x-show="!clipError && clipItems.length === 0" class="upload-empty">No notes yet.</div>
+        </div>
       </div>
     </main>
 
