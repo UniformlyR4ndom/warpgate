@@ -1,117 +1,120 @@
 <!DOCTYPE html>
-<html ng-app="warpgate">
+<html>
 <head>
   <meta charset="utf-8">
   <title>Warpgate</title>
   <link rel="stylesheet" href="style.css">
 </head>
-<body ng-controller="FilesCtrl">
+<body x-data="filesApp()" x-init="init()">
 
   <header>
     <h1>Warpgate</h1>
-    <nav class="breadcrumb" ng-show="tab === 'download'">
-      <span class="crumb" ng-click="navigateTo(-1)">root</span>
-      <span ng-repeat="(i, seg) in pathSegments">
-        <span class="separator">/</span>
-        <span class="crumb" ng-click="navigateTo(i)">{{ seg }}</span>
-      </span>
+    <nav class="breadcrumb" x-show="tab === 'download'">
+      <span class="crumb" @click="navigateTo(-1)">root</span>
+      <template x-for="(seg, i) in pathSegments" :key="i">
+        <span>
+          <span class="separator">/</span>
+          <span class="crumb" @click="navigateTo(i)" x-text="seg"></span>
+        </span>
+      </template>
     </nav>
   </header>
 
   <div class="layout">
 
-    <aside class="panel" ng-class="{collapsed: !panel.open}">
-      <button class="panel-toggle" ng-click="panel.open = !panel.open" title="Toggle panel">
-        {{ panel.open ? '◀' : '▶' }}
-      </button>
+    <aside class="panel" :class="{'collapsed': !panel.open}">
+      <button class="panel-toggle" @click="panel.open = !panel.open" title="Toggle panel"
+              x-text="panel.open ? '◀' : '▶'"></button>
 
-      <div class="panel-content" ng-show="panel.open">
+      <div class="panel-content" x-show="panel.open">
 
         <section class="panel-section">
-          <h2 class="section-header" ng-click="panel.authOpen = !panel.authOpen">
-            <span class="section-arrow">{{ panel.authOpen ? '▾' : '▸' }}</span>Auth
+          <h2 class="section-header" @click="panel.authOpen = !panel.authOpen">
+            <span class="section-arrow" x-text="panel.authOpen ? '▾' : '▸'"></span>Auth
           </h2>
-          <div ng-show="panel.authOpen">
+          <div x-show="panel.authOpen">
             <label>Key (X-Auth header)</label>
-            <input type="text" ng-model="settings.auth.key" placeholder="leave empty to skip">
+            <input type="text" x-model="settings.auth.key" placeholder="leave empty to skip">
           </div>
         </section>
 
         <section class="panel-section">
-          <h2 class="section-header" ng-click="panel.transformOpen = !panel.transformOpen">
-            <span class="section-arrow">{{ panel.transformOpen ? '▾' : '▸' }}</span>Transform
+          <h2 class="section-header" @click="panel.transformOpen = !panel.transformOpen">
+            <span class="section-arrow" x-text="panel.transformOpen ? '▾' : '▸'"></span>Transform
           </h2>
-          <div ng-show="panel.transformOpen">
+          <div x-show="panel.transformOpen">
             <label>Type</label>
-            <select ng-model="settings.transform.type"
-                    ng-options="t.id as t.label for t in transformTypes">
+            <select x-model="settings.transform.type">
+              <template x-for="t in transformTypes" :key="t.id">
+                <option :value="t.id" x-text="t.label"></option>
+              </template>
             </select>
 
-            <div ng-show="settings.transform.type === 'xor'">
+            <div x-show="settings.transform.type === 'xor'">
               <div class="auto-row">
                 <label>Key (hex)</label>
                 <label class="auto-label">
-                  <input type="checkbox" ng-model="settings.transform.xor.auto"
-                         ng-change="onAutoChange('xor')"> auto
+                  <input type="checkbox" x-model="settings.transform.xor.auto"
+                         @change="onAutoChange('xor')"> auto
                 </label>
               </div>
-              <input type="text" ng-model="settings.transform.xor.key"
-                     ng-readonly="settings.transform.xor.auto"
-                     ng-class="{readonly: settings.transform.xor.auto}">
+              <input type="text" x-model="settings.transform.xor.key"
+                     :readonly="settings.transform.xor.auto"
+                     :class="{'readonly': settings.transform.xor.auto}">
             </div>
 
-            <div ng-show="settings.transform.type === 'aes-ctr'">
+            <div x-show="settings.transform.type === 'aes-ctr'">
               <div class="auto-row">
                 <label>Key (hex, 32 bytes)</label>
                 <label class="auto-label">
-                  <input type="checkbox" ng-model="settings.transform.aesCtr.autoKey"
-                         ng-change="onAutoChange('aes-ctr-key')"> auto
+                  <input type="checkbox" x-model="settings.transform.aesCtr.autoKey"
+                         @change="onAutoChange('aes-ctr-key')"> auto
                 </label>
               </div>
-              <input type="text" ng-model="settings.transform.aesCtr.key"
-                     ng-readonly="settings.transform.aesCtr.autoKey"
-                     ng-class="{readonly: settings.transform.aesCtr.autoKey}">
+              <input type="text" x-model="settings.transform.aesCtr.key"
+                     :readonly="settings.transform.aesCtr.autoKey"
+                     :class="{'readonly': settings.transform.aesCtr.autoKey}">
               <div class="auto-row">
                 <label>IV (hex, 16 bytes)</label>
                 <label class="auto-label">
-                  <input type="checkbox" ng-model="settings.transform.aesCtr.autoIv"
-                         ng-change="onAutoChange('aes-ctr-iv')"> auto
+                  <input type="checkbox" x-model="settings.transform.aesCtr.autoIv"
+                         @change="onAutoChange('aes-ctr-iv')"> auto
                 </label>
               </div>
-              <input type="text" ng-model="settings.transform.aesCtr.iv"
-                     ng-readonly="settings.transform.aesCtr.autoIv"
-                     ng-class="{readonly: settings.transform.aesCtr.autoIv}">
+              <input type="text" x-model="settings.transform.aesCtr.iv"
+                     :readonly="settings.transform.aesCtr.autoIv"
+                     :class="{'readonly': settings.transform.aesCtr.autoIv}">
             </div>
 
-            <div ng-show="settings.transform.type === 'pdf'">
+            <div x-show="settings.transform.type === 'pdf'">
               <label>Attachment name</label>
-              <input type="text" ng-model="settings.transform.pdf.filename" placeholder="attachment">
-              <div class="auto-row" ng-show="tab === 'download'">
+              <input type="text" x-model="settings.transform.pdf.filename" placeholder="attachment">
+              <div class="auto-row" x-show="tab === 'download'">
                 <label class="auto-label">
-                  <input type="checkbox" ng-model="settings.transform.pdf.password.enabled"> Password protect
+                  <input type="checkbox" x-model="settings.transform.pdf.password.enabled"> Password protect
                 </label>
               </div>
             </div>
           </div>
         </section>
 
-        <section class="panel-section" ng-show="tab === 'download'">
-          <h2 class="section-header" ng-click="panel.chunkingOpen = !panel.chunkingOpen">
-            <span class="section-arrow">{{ panel.chunkingOpen ? '▾' : '▸' }}</span>Chunking
+        <section class="panel-section" x-show="tab === 'download'">
+          <h2 class="section-header" @click="panel.chunkingOpen = !panel.chunkingOpen">
+            <span class="section-arrow" x-text="panel.chunkingOpen ? '▾' : '▸'"></span>Chunking
           </h2>
-          <div ng-show="panel.chunkingOpen">
+          <div x-show="panel.chunkingOpen">
             <label class="auto-label">
-              <input type="checkbox" ng-model="settings.chunking.enabled"> Enable chunking
+              <input type="checkbox" x-model="settings.chunking.enabled"> Enable chunking
             </label>
-            <div ng-show="settings.chunking.enabled">
+            <div x-show="settings.chunking.enabled">
               <label>Chunk size (MB)</label>
-              <input type="number" ng-model="settings.chunking.chunkSize" min="1">
+              <input type="number" x-model="settings.chunking.chunkSize" min="1">
               <label class="auto-label"
-                     ng-class="{'disabled': !hasFileSystemAccess}"
-                     title="{{ hasFileSystemAccess ? '' : 'File System Access API is required for efficient reassembly' }}">
+                     :class="{'disabled': !hasFileSystemAccess}"
+                     :title="hasFileSystemAccess ? '' : 'File System Access API is required for efficient reassembly'">
                 <input type="checkbox"
-                       ng-model="settings.chunking.reassemble"
-                       ng-disabled="!hasFileSystemAccess"> Reassemble chunks
+                       x-model="settings.chunking.reassemble"
+                       :disabled="!hasFileSystemAccess"> Reassemble chunks
               </label>
             </div>
           </div>
@@ -122,60 +125,70 @@
 
     <main>
       <div class="tabs">
-        <button class="tab-btn" ng-class="{active: tab === 'download'}" ng-click="setTab('download')">Download</button>
-        <button class="tab-btn" ng-class="{active: tab === 'upload'}"   ng-click="setTab('upload')">Upload</button>
+        <button class="tab-btn" :class="{'active': tab === 'download'}" @click="setTab('download')">Download</button>
+        <button class="tab-btn" :class="{'active': tab === 'upload'}"   @click="setTab('upload')">Upload</button>
       </div>
 
-      <div ng-show="tab === 'download'">
-        <div ng-if="error" class="error">{{ error }}</div>
-        <table ng-if="!error">
+      <div x-show="tab === 'download'">
+        <div x-show="error" class="error" x-text="error"></div>
+        <table x-show="!error">
           <thead>
             <tr><th>Name</th><th class="col-size">Size</th></tr>
           </thead>
           <tbody>
-            <tr ng-if="pathSegments.length > 0" class="entry dir" ng-click="navigateTo(pathSegments.length - 2)">
-              <td><span class="icon">📁</span>..</td><td></td>
-            </tr>
-            <tr ng-repeat="entry in entries"
-                class="entry {{ entry.type === 'd' ? 'dir' : 'file' }}"
-                ng-click="entry.type === 'd' ? enterDir(entry.name) : downloadFile(entry)">
-              <td>
-                <span class="icon">{{ entry.type === 'd' ? '📁' : '📄' }}</span>{{ entry.name }}
-              </td>
-              <td class="col-size">{{ entry.type === 'f' ? formatSize(entry.size) : '' }}</td>
-            </tr>
+            <template x-if="pathSegments.length > 0">
+              <tr class="entry dir" @click="navigateTo(pathSegments.length - 2)">
+                <td><span class="icon">📁</span>..</td><td></td>
+              </tr>
+            </template>
+            <template x-for="entry in entries" :key="entry.name">
+              <tr :class="'entry ' + (entry.type === 'd' ? 'dir' : 'file')"
+                  @click="entry.type === 'd' ? enterDir(entry.name) : downloadFile(entry)">
+                <td>
+                  <span class="icon" x-text="entry.type === 'd' ? '📁' : '📄'"></span><span x-text="entry.name"></span>
+                </td>
+                <td class="col-size" x-text="entry.type === 'f' ? formatSize(entry.size) : ''"></td>
+              </tr>
+            </template>
           </tbody>
         </table>
       </div>
 
-      <div ng-show="tab === 'upload'">
-        <div ng-if="uploadError" class="error">{{ uploadError }}</div>
-        <div class="drop-zone" drop-zone>
+      <div x-show="tab === 'upload'">
+        <div x-show="uploadError" class="error" x-text="uploadError"></div>
+        <div class="drop-zone"
+             @dragover.prevent
+             @dragenter.prevent="$el.classList.add('drag-active')"
+             @dragleave="if (!$event.relatedTarget || !$el.contains($event.relatedTarget)) $el.classList.remove('drag-active')"
+             @drop.prevent="$el.classList.remove('drag-active'); uploadFiles($event.dataTransfer.files)">
           Drop files here or
-          <button class="choose-btn" ng-click="triggerFileInput()">choose files</button>
-          <input type="file" file-input id="ulFileInput" style="display:none" multiple>
+          <button class="choose-btn" @click="triggerFileInput()">choose files</button>
+          <input type="file" id="ulFileInput" style="display:none" multiple
+                 @change="uploadFiles($event.target.files); $event.target.value = ''">
         </div>
-        <table ng-if="uploadEntries.length > 0">
+        <table x-show="uploadEntries.length > 0">
           <thead>
             <tr><th>Name</th><th class="col-size">Size</th></tr>
           </thead>
           <tbody>
-            <tr ng-repeat="entry in uploadEntries" class="entry file">
-              <td><span class="icon">📄</span>{{ entry.name }}</td>
-              <td class="col-size">{{ formatSize(entry.size) }}</td>
-            </tr>
+            <template x-for="entry in uploadEntries" :key="entry.name">
+              <tr class="entry file">
+                <td><span class="icon">📄</span><span x-text="entry.name"></span></td>
+                <td class="col-size" x-text="formatSize(entry.size)"></td>
+              </tr>
+            </template>
           </tbody>
         </table>
-        <div ng-if="!uploadError && uploadEntries.length === 0" class="upload-empty">No files uploaded yet.</div>
+        <div x-show="!uploadError && uploadEntries.length === 0" class="upload-empty">No files uploaded yet.</div>
       </div>
     </main>
 
   </div>
 
-  <script src="angular.min.js"></script>
   <script src="pdf.min.js"></script>
   <script src="pdf-lib.min.js"></script>
   <script src="aes.js"></script>
   <script src="app.js"></script>
+  <script defer src="alpine.min.js"></script>
 </body>
 </html>
