@@ -76,6 +76,10 @@ func main() {
 		}
 	}
 
+	if cfg.NoAuth && cfg.Key != "" {
+		log.Fatalf("-no-auth and -auth-key are mutually exclusive")
+	}
+
 	if !cfg.NoAuth && cfg.Key == "" {
 		b := make([]byte, 32)
 		if _, err := rand.Read(b); err != nil {

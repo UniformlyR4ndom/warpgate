@@ -7,6 +7,9 @@ info:
     Files are served through a configurable transform that disguises the content; the browser-based
     frontend reverses the transform to recover the original bytes. Uploads work in reverse: the
     frontend applies the transform, the server reverses it.
+
+    The server also provides a clipboard API for storing and retrieving short text notes, backed by
+    a local SQLite database (`warpgate.sqlite` by default, configurable with `-db`).
   version: "1.0.0"
 
 servers:
@@ -76,9 +79,44 @@ components:
         **`html-b64`** — `{"key": "<hex>"}`: hex-encoded XOR key, exactly 16 bytes. Data is XOR-ed
         then base64-encoded and embedded in an HTML `<img>` tag.
 
+    ClipItem:
+      type: object
+      required: [id, ts, data]
+      properties:
+        id:
+          type: integer
+          format: int64
+          description: Sequential database ID.
+          example: 42
+        ts:
+          type: integer
+          format: int64
+          description: Unix timestamp of when the note was created or last edited.
+          example: 1751400000
+        data:
+          type: string
+          format: byte
+          description: Note content, base64-encoded.
+          example: SGVsbG8gd29ybGQh
+
+    ClipNewResponse:
+      type: object
+      required: [id, ts]
+      properties:
+        id:
+          type: integer
+          format: int64
+          description: Database ID of the newly created note.
+          example: 42
+        ts:
+          type: integer
+          format: int64
+          description: Unix timestamp assigned to the note.
+          example: 1751400000
+
 paths:
 
-  /checkin:
+  /api/public/checkin:
     get:
       operationId: checkin
       summary: Log client check-in
@@ -90,7 +128,7 @@ paths:
         "204":
           description: Check-in recorded.
 
-  /list:
+  /api/files/list:
     post:
       operationId: listFiles
       summary: List directory contents
@@ -143,7 +181,7 @@ paths:
         "500":
           description: Internal server error.
 
-  /get:
+  /api/files/get:
     post:
       operationId: getFileChunk
       summary: Download a file chunk
@@ -261,7 +299,7 @@ paths:
         "500":
           description: Internal server error (I/O error or transform failure).
 
-  /upload:
+  /api/files/upload:
     post:
       operationId: uploadFile
       summary: Upload a file
@@ -316,7 +354,7 @@ paths:
         "500":
           description: Internal server error (transform failure or I/O error).
 
-  /ul-list:
+  /api/files/ul-list:
     get:
       operationId: listUploads
       summary: List uploaded files
@@ -343,6 +381,150 @@ paths:
           description: Missing or invalid `X-Auth` header.
         "404":
           description: Upload not configured (server started without `-ul-root`).
+        "405":
+          description: Method not allowed.
+        "500":
+          description: Internal server error.
+
+  /api/clip/list:
+    get:
+      operationId: listClipboard
+      summary: List clipboard notes
+      description: |
+        Returns all notes currently stored in the clipboard, ordered by insertion sequence.
+        Returns an empty array when no notes exist.
+      responses:
+        "200":
+          description: Array of clipboard notes.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ClipItem'
+              example:
+                - id: 1
+                  ts: 1751400000
+                  data: SGVsbG8gd29ybGQh
+        "401":
+          description: Missing or invalid `X-Auth` header.
+        "405":
+          description: Method not allowed.
+        "500":
+          description: Internal server error.
+
+  /api/clip/new:
+    post:
+      operationId: newClipboardNote
+      summary: Create a clipboard note
+      description: |
+        Stores a new note in the clipboard database. The `data` field must be the note content
+        base64-encoded. The server records the current Unix timestamp at insertion time.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [data]
+              properties:
+                data:
+                  type: string
+                  format: byte
+                  description: Note content, base64-encoded.
+                  example: SGVsbG8gd29ybGQh
+            example:
+              data: SGVsbG8gd29ybGQh
+      responses:
+        "200":
+          description: Note created. Returns the assigned ID and timestamp.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClipNewResponse'
+              example:
+                id: 42
+                ts: 1751400000
+        "400":
+          description: Malformed JSON body or `data` is not valid base64.
+        "401":
+          description: Missing or invalid `X-Auth` header.
+        "405":
+          description: Method not allowed.
+        "500":
+          description: Internal server error.
+
+  /api/clip/edit:
+    post:
+      operationId: editClipboardNote
+      summary: Edit a clipboard note
+      description: |
+        Replaces the content of an existing note and updates its timestamp to the current time.
+        The `data` field must be the new note content base64-encoded.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [id, data]
+              properties:
+                id:
+                  type: integer
+                  format: int64
+                  description: ID of the note to update.
+                  example: 42
+                data:
+                  type: string
+                  format: byte
+                  description: New note content, base64-encoded.
+                  example: VXBkYXRlZCBjb250ZW50
+            example:
+              id: 42
+              data: VXBkYXRlZCBjb250ZW50
+      responses:
+        "204":
+          description: Note updated successfully.
+        "400":
+          description: Malformed JSON body or `data` is not valid base64.
+        "401":
+          description: Missing or invalid `X-Auth` header.
+        "404":
+          description: No note with the given ID exists.
+        "405":
+          description: Method not allowed.
+        "500":
+          description: Internal server error.
+
+  /api/clip/delete:
+    delete:
+      operationId: deleteClipboardNote
+      summary: Delete a clipboard note
+      description: Permanently removes a note from the clipboard by ID.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [id]
+              properties:
+                id:
+                  type: integer
+                  format: int64
+                  description: ID of the note to delete.
+                  example: 42
+            example:
+              id: 42
+      responses:
+        "204":
+          description: Note deleted successfully.
+        "400":
+          description: Malformed JSON body.
+        "401":
+          description: Missing or invalid `X-Auth` header.
+        "404":
+          description: No note with the given ID exists.
         "405":
           description: Method not allowed.
         "500":
