@@ -31,6 +31,28 @@ async function wsNextJSON(ws) {
   return JSON.parse(raw);
 }
 
+const SETTINGS_STORAGE_KEY = 'warpgate-settings';
+const SETTINGS_VERSION = 1;
+
+// mergeSettings copies fields from source onto target, recursing into
+// nested plain objects, but only for keys that already exist on target —
+// this ignores stale/unknown fields from an older schema version instead
+// of blindly grafting them on.
+function mergeSettings(target, source) {
+  if (!source || typeof source !== 'object') return;
+  for (var key in source) {
+    if (!Object.prototype.hasOwnProperty.call(source, key)) continue;
+    if (!Object.prototype.hasOwnProperty.call(target, key)) continue;
+    var sVal = source[key];
+    var tVal = target[key];
+    if (sVal && typeof sVal === 'object' && !Array.isArray(sVal) && tVal && typeof tVal === 'object') {
+      mergeSettings(tVal, sVal);
+    } else {
+      target[key] = sVal;
+    }
+  }
+}
+
 function filesApp() {
   let refreshTimer = null;
 
@@ -46,9 +68,7 @@ function filesApp() {
     clipText: '',
     clipEditId: null,
     clipError: null,
-    autoRefresh: false,
-    confirmDelete: true,
-    backend: 'http',
+    authShowKey: false, // not persisted: always start masked
     wsFrameMinKB: 1,
     wsFrameMaxKB: 262144, // 256M; generous fallback ceiling until /api/public/settings responds
 
@@ -65,17 +85,15 @@ function filesApp() {
       { id: 'html-b64', label: 'HTML (base64)' },
     ],
 
-    panel: {
-      open: true,
-      authOpen: true,
-      authShowKey: false,
-      transformOpen: true,
-      chunkingOpen: true,
-      generalOpen: true,
-    },
-
+    // Everything in `settings` is persisted to localStorage as one JSON
+    // object (see loadSettings/saveSettings) — keep it that way, i.e. don't
+    // add non-serializable values (functions, DOM refs) here, and put any
+    // new UI-configurable value under this object rather than top-level.
     settings: {
-      auth: { key: localStorage.getItem('auth-key') || '' },
+      auth: { key: '' },
+      backend: 'http',
+      autoRefresh: false,
+      confirmDelete: true,
       wsFrameSizeKB: 4096, // 4M default, clamped to the server's max in init()
       transform: {
         type: 'id',
@@ -88,11 +106,31 @@ function filesApp() {
         chunkSize: 100,
         reassemble: false,
       },
+      panel: {
+        open: true,
+        authOpen: true,
+        transformOpen: true,
+        chunkingOpen: true,
+        generalOpen: true,
+      },
     },
 
     init() {
+      this.loadSettings();
       this.applyAuto();
       this.load();
+
+      // x-model on a <select> whose <option>s come from x-for tries to apply
+      // the restored value before those options exist in the DOM yet; a
+      // native <select>.value assignment to a not-yet-existing option is a
+      // silent no-op with no automatic retry once the option appears.
+      // $nextTick alone isn't late enough to guarantee this; a 0ms timeout
+      // (a full macrotask later) reliably is. Force a resync once settled.
+      setTimeout(() => {
+        this.$refs.backendSelect.value = this.settings.backend;
+        this.$refs.transformTypeSelect.value = this.settings.transform.type;
+      }, 0);
+
       fetch('/api/public/checkin').catch(() => {});
       fetch('/api/public/settings')
         .then(function(res) { return res.ok ? res.json() : null; })
@@ -105,20 +143,42 @@ function filesApp() {
         })
         .catch(() => {});
 
-      this.$watch('autoRefresh', (enabled) => {
-        clearInterval(refreshTimer);
-        refreshTimer = enabled ? setInterval(() => {
-          if (this.tab === 'download') this.load();
-          else if (this.tab === 'upload') this.loadUploadDir();
-          else if (this.tab === 'clipboard') this.loadClipboard();
-        }, 1000) : null;
-      });
+      this.applyAutoRefresh(this.settings.autoRefresh); // in case restored as true
+      this.$watch('settings.autoRefresh', (enabled) => this.applyAutoRefresh(enabled));
 
-      this.$watch('settings.auth.key', (newVal) => {
-        localStorage.setItem('auth-key', newVal || '');
+      this.$watch('settings.auth.key', () => {
         this.load();
         if (this.tab === 'upload') this.loadUploadDir();
       });
+
+      // Deep-watch the whole settings tree: evaluating JSON.stringify(settings)
+      // reads every nested field, so this fires on any change anywhere in it.
+      this.$watch('JSON.stringify(settings)', () => { this.saveSettings(); });
+    },
+
+    applyAutoRefresh(enabled) {
+      clearInterval(refreshTimer);
+      refreshTimer = enabled ? setInterval(() => {
+        if (this.tab === 'download') this.load();
+        else if (this.tab === 'upload') this.loadUploadDir();
+        else if (this.tab === 'clipboard') this.loadClipboard();
+      }, 1000) : null;
+    },
+
+    loadSettings() {
+      try {
+        var raw = localStorage.getItem(SETTINGS_STORAGE_KEY);
+        if (!raw) return;
+        var parsed = JSON.parse(raw);
+        if (!parsed || parsed.version !== SETTINGS_VERSION || !parsed.settings) return;
+        mergeSettings(this.settings, parsed.settings);
+      } catch(e) {}
+    },
+
+    saveSettings() {
+      try {
+        localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify({ version: SETTINGS_VERSION, settings: this.settings }));
+      } catch(e) {}
     },
 
     randomHex(byteCount) {
@@ -257,11 +317,11 @@ function filesApp() {
     // fetchChunk fetches one chunk of a file. wsSession is a plain object
     // ({ws, password, htmlB64Key}, all initially null) owned by the caller
     // and threaded through repeated calls for the same file; when
-    // this.backend === 'ws' the first call opens a WebSocket connection and
+    // this.settings.backend === 'ws' the first call opens a WebSocket connection and
     // caches it there, subsequent calls reuse it, and the caller must call
     // closeWSSession(wsSession) once done. Ignored for the HTTP backend.
     async fetchChunk(wsSession, path, start, size) {
-      if (this.backend === 'ws') { return this.fetchChunkWS(wsSession, path, start, size); }
+      if (this.settings.backend === 'ws') { return this.fetchChunkWS(wsSession, path, start, size); }
       return this.fetchChunkHTTP(path, start, size);
     },
 
@@ -276,7 +336,7 @@ function filesApp() {
         transform: t.type,
         args:      this.buildTransformArgs(password, htmlB64Key),
       };
-      var res = await fetch('/api/files/get', {
+      var res = await fetch('/api/files/download', {
         method:  'POST',
         headers: Object.assign({ 'Content-Type': 'application/json' }, this.authHeaders()),
         body:    JSON.stringify(body),
@@ -292,7 +352,7 @@ function filesApp() {
         var password   = (t.type === 'pdf'      && t.pdf.password.enabled) ? this.randomHex(10) : null;
         var htmlB64Key = (t.type === 'html-b64') ? this.randomHex(16) : null;
 
-        var ws = await wsOpen(this.wsBaseURL() + '/api/ws/download');
+        var ws = await wsOpen(this.wsBaseURL() + '/api/files/ws/download');
         ws.send(JSON.stringify({
           auth:      this.settings.auth.key,
           path:      path,
@@ -532,7 +592,7 @@ function filesApp() {
 
 
     async deleteClip(id) {
-      if (this.confirmDelete && !window.confirm('Delete this note?')) return;
+      if (this.settings.confirmDelete && !window.confirm('Delete this note?')) return;
       this.clipError = null;
       try {
         var res = await fetch('/api/clip/delete', {
@@ -598,7 +658,7 @@ function filesApp() {
       var self = this;
       var promises = Array.from(files).map(async function(file) {
         try {
-          if (self.backend === 'ws') {
+          if (self.settings.backend === 'ws') {
             await self.uploadFileWS(file);
           } else {
             await self.uploadFileHTTP(file);
@@ -629,7 +689,7 @@ function filesApp() {
       var buffer    = await result.data.arrayBuffer();
       var frameSize = this.settings.wsFrameSizeKB * 1024;
 
-      var ws = await wsOpen(this.wsBaseURL() + '/api/ws/upload');
+      var ws = await wsOpen(this.wsBaseURL() + '/api/files/ws/upload');
       try {
         ws.send(JSON.stringify({
           auth:      this.settings.auth.key,

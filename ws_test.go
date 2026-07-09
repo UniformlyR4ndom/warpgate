@@ -46,7 +46,7 @@ func TestWSDownloadRoundTrip(t *testing.T) {
 
 	ts := newWSTestServer(t, Config{Root: root, NoAuth: true, WSFrameMax: 16 * 1024 * 1024})
 
-	conn, _, err := websocket.DefaultDialer.Dial(wsURL(ts, "/api/ws/download"), nil)
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL(ts, "/api/files/ws/download"), nil)
 	if err != nil {
 		t.Fatalf("dial: %v", err)
 	}
@@ -94,7 +94,7 @@ func TestWSDownloadRoundTrip(t *testing.T) {
 // TestWSDownloadMultiFrame requests a chunk with a per-request frameSize
 // much smaller than the chunk itself, forcing the server to manually split
 // the chunk's transformed output into several separate WS messages (see the
-// frame-writing loop in ws_get.go). This verifies the client-driven,
+// frame-writing loop in ws_download.go). This verifies the client-driven,
 // per-request frame size mechanism directly, rather than relying on
 // gorilla's connection-wide buffer to auto-fragment one big message.
 func TestWSDownloadMultiFrame(t *testing.T) {
@@ -111,7 +111,7 @@ func TestWSDownloadMultiFrame(t *testing.T) {
 
 	ts := newWSTestServer(t, Config{Root: root, NoAuth: true, WSFrameMax: 16 * 1024 * 1024})
 
-	conn, _, err := websocket.DefaultDialer.Dial(wsURL(ts, "/api/ws/download"), nil)
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL(ts, "/api/files/ws/download"), nil)
 	if err != nil {
 		t.Fatalf("dial: %v", err)
 	}
@@ -164,7 +164,7 @@ func TestWSUploadRoundTrip(t *testing.T) {
 	ulRoot := t.TempDir()
 	ts := newWSTestServer(t, Config{Root: t.TempDir(), UlRoot: ulRoot, NoAuth: true, WSFrameMax: 16 * 1024 * 1024})
 
-	conn, _, err := websocket.DefaultDialer.Dial(wsURL(ts, "/api/ws/upload"), nil)
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL(ts, "/api/files/ws/upload"), nil)
 	if err != nil {
 		t.Fatalf("dial: %v", err)
 	}
@@ -220,7 +220,7 @@ func TestWSUploadMultiFrame(t *testing.T) {
 	ulRoot := t.TempDir()
 	ts := newWSTestServer(t, Config{Root: t.TempDir(), UlRoot: ulRoot, NoAuth: true, WSFrameMax: 16 * 1024 * 1024})
 
-	conn, _, err := websocket.DefaultDialer.Dial(wsURL(ts, "/api/ws/upload"), nil)
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL(ts, "/api/files/ws/upload"), nil)
 	if err != nil {
 		t.Fatalf("dial: %v", err)
 	}
@@ -297,7 +297,7 @@ func TestWSDownloadFrameSizeValidation(t *testing.T) {
 	ts := newWSTestServer(t, Config{Root: root, NoAuth: true, WSFrameMax: 1024 * 1024})
 
 	for _, frameSize := range []int64{100, 2 * 1024 * 1024} { // too small, too large
-		conn, _, err := websocket.DefaultDialer.Dial(wsURL(ts, "/api/ws/download"), nil)
+		conn, _, err := websocket.DefaultDialer.Dial(wsURL(ts, "/api/files/ws/download"), nil)
 		if err != nil {
 			t.Fatalf("dial: %v", err)
 		}
@@ -320,7 +320,7 @@ func TestWSUploadFrameSizeValidation(t *testing.T) {
 	ts := newWSTestServer(t, Config{Root: t.TempDir(), UlRoot: ulRoot, NoAuth: true, WSFrameMax: 1024 * 1024})
 
 	for _, frameSize := range []int64{100, 2 * 1024 * 1024} { // too small, too large
-		conn, _, err := websocket.DefaultDialer.Dial(wsURL(ts, "/api/ws/upload"), nil)
+		conn, _, err := websocket.DefaultDialer.Dial(wsURL(ts, "/api/files/ws/upload"), nil)
 		if err != nil {
 			t.Fatalf("dial: %v", err)
 		}
@@ -350,7 +350,7 @@ func TestWSDownloadAuthFailure(t *testing.T) {
 
 	ts := newWSTestServer(t, Config{Root: root, Key: "correct-key"})
 
-	conn, _, err := websocket.DefaultDialer.Dial(wsURL(ts, "/api/ws/download"), nil)
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL(ts, "/api/files/ws/download"), nil)
 	if err != nil {
 		t.Fatalf("dial: %v", err)
 	}

@@ -34,7 +34,7 @@ func NewServer(cfg Config, db *DB) (*Server, error) {
 	// main.go always validates -ws-frame-max to >= wsFrameSizeMin before
 	// this point, but a zero-value Config (e.g. constructed directly by a
 	// test) must not silently produce a zero-size frame buffer: that turns
-	// the frame-writing loop in ws_get.go into a non-blocking infinite loop
+	// the frame-writing loop in ws_download.go into a non-blocking infinite loop
 	// (io.ReadFull on an empty buffer returns (0, nil) forever).
 	if cfg.WSFrameMax < wsFrameSizeMin {
 		cfg.WSFrameMax = wsFrameSizeMin
@@ -80,11 +80,11 @@ func NewServer(cfg Config, db *DB) (*Server, error) {
 	s.mux.Handle("/api/clip/edit", s.withAuth(s.handleClipEdit))
 	s.mux.Handle("/api/clip/delete", s.withAuth(s.handleClipDelete))
 	s.mux.Handle("/api/files/list", s.withAuth(s.handleList))
-	s.mux.Handle("/api/files/get", s.withAuth(s.handleGet))
+	s.mux.Handle("/api/files/download", s.withAuth(s.handleDownload))
 	// Not wrapped in withAuth: browsers can't set custom headers on a
 	// WebSocket handshake, so auth is instead checked inside the handler
 	// against the first control message sent after upgrade.
-	s.mux.Handle("/api/ws/download", http.HandlerFunc(s.handleWSDownload))
+	s.mux.Handle("/api/files/ws/download", http.HandlerFunc(s.handleWSDownload))
 	if cfg.UlRoot != "" {
 		absUlRoot, err := filepath.Abs(cfg.UlRoot)
 		if err != nil {
@@ -93,7 +93,7 @@ func NewServer(cfg Config, db *DB) (*Server, error) {
 		s.absUlRoot = absUlRoot
 		s.mux.Handle("/api/files/upload", s.withAuth(s.handleUpload))
 		s.mux.Handle("/api/files/ul-list", s.withAuth(s.handleUlList))
-		s.mux.Handle("/api/ws/upload", http.HandlerFunc(s.handleWSUpload))
+		s.mux.Handle("/api/files/ws/upload", http.HandlerFunc(s.handleWSUpload))
 	}
 	return s, nil
 }

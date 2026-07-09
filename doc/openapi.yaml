@@ -181,9 +181,9 @@ paths:
         "500":
           description: Internal server error.
 
-  /api/files/get:
+  /api/files/download:
     post:
-      operationId: getFileChunk
+      operationId: downloadFileChunk
       summary: Download a file chunk
       description: |
         Downloads a byte range of a file with a transform applied. The response body is the raw

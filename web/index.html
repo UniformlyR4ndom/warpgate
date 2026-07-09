@@ -5,7 +5,7 @@
   <title>Warpgate</title>
   <link rel="stylesheet" href="style.css">
 </head>
-<body x-data="filesApp()" x-init="init()">
+<body x-data="filesApp()">
 
   <header>
     <h1>Warpgate</h1>
@@ -22,33 +22,33 @@
 
   <div class="layout">
 
-    <aside class="panel" :class="{'collapsed': !panel.open}">
-      <button class="panel-toggle" @click="panel.open = !panel.open" title="Toggle panel"
-              x-text="panel.open ? '◀' : '▶'"></button>
+    <aside class="panel" :class="{'collapsed': !settings.panel.open}">
+      <button class="panel-toggle" @click="settings.panel.open = !settings.panel.open" title="Toggle panel"
+              x-text="settings.panel.open ? '◀' : '▶'"></button>
 
-      <div class="panel-content" x-show="panel.open">
+      <div class="panel-content" x-show="settings.panel.open">
 
         <section class="panel-section">
-          <h2 class="section-header" @click="panel.authOpen = !panel.authOpen">
-            <span class="section-arrow" x-text="panel.authOpen ? '▾' : '▸'"></span>Auth
+          <h2 class="section-header" @click="settings.panel.authOpen = !settings.panel.authOpen">
+            <span class="section-arrow" x-text="settings.panel.authOpen ? '▾' : '▸'"></span>Auth
           </h2>
-          <div x-show="panel.authOpen">
+          <div x-show="settings.panel.authOpen">
             <label>Key (X-Auth header)</label>
             <div class="key-input-wrap">
               <input type="text" x-model="settings.auth.key"
                      placeholder="leave empty to skip" autocomplete="off"
-                     :class="{'key-masked': !panel.authShowKey}">
-              <button type="button" class="key-toggle" @click="panel.authShowKey = !panel.authShowKey"
-                      :title="panel.authShowKey ? 'Hide key' : 'Show key'">👁</button>
+                     :class="{'key-masked': !authShowKey}">
+              <button type="button" class="key-toggle" @click="authShowKey = !authShowKey"
+                      :title="authShowKey ? 'Hide key' : 'Show key'">👁</button>
             </div>
           </div>
         </section>
 
         <section class="panel-section" x-show="tab === 'download'">
-          <h2 class="section-header" @click="panel.chunkingOpen = !panel.chunkingOpen">
-            <span class="section-arrow" x-text="panel.chunkingOpen ? '▾' : '▸'"></span>Chunking
+          <h2 class="section-header" @click="settings.panel.chunkingOpen = !settings.panel.chunkingOpen">
+            <span class="section-arrow" x-text="settings.panel.chunkingOpen ? '▾' : '▸'"></span>Chunking
           </h2>
-          <div x-show="panel.chunkingOpen">
+          <div x-show="settings.panel.chunkingOpen">
             <label class="auto-label">
               <input type="checkbox" x-model="settings.chunking.enabled"> Enable chunking
             </label>
@@ -67,25 +67,25 @@
         </section>
 
         <section class="panel-section">
-          <h2 class="section-header" @click="panel.generalOpen = !panel.generalOpen">
-            <span class="section-arrow" x-text="panel.generalOpen ? '▾' : '▸'"></span>General
+          <h2 class="section-header" @click="settings.panel.generalOpen = !settings.panel.generalOpen">
+            <span class="section-arrow" x-text="settings.panel.generalOpen ? '▾' : '▸'"></span>General
           </h2>
-          <div x-show="panel.generalOpen">
+          <div x-show="settings.panel.generalOpen">
             <label class="auto-label">
-              <input type="checkbox" x-model="autoRefresh"> Auto-refresh
+              <input type="checkbox" x-model="settings.autoRefresh"> Auto-refresh
             </label>
             <label class="auto-label">
-              <input type="checkbox" x-model="confirmDelete"> Confirm note delete
+              <input type="checkbox" x-model="settings.confirmDelete"> Confirm note delete
             </label>
             <div x-show="tab === 'download' || tab === 'upload'">
               <label>Backend</label>
-              <select x-model="backend">
+              <select x-model="settings.backend" x-ref="backendSelect">
                 <template x-for="b in backendTypes" :key="b.id">
                   <option :value="b.id" x-text="b.label"></option>
                 </template>
               </select>
             </div>
-            <div x-show="(tab === 'download' || tab === 'upload') && backend === 'ws'">
+            <div x-show="(tab === 'download' || tab === 'upload') && settings.backend === 'ws'">
               <label>WS frame size (KB)</label>
               <input type="number" x-model.number="settings.wsFrameSizeKB"
                      :min="wsFrameMinKB" :max="wsFrameMaxKB">
@@ -94,12 +94,12 @@
         </section>
 
         <section class="panel-section">
-          <h2 class="section-header" @click="panel.transformOpen = !panel.transformOpen">
-            <span class="section-arrow" x-text="panel.transformOpen ? '▾' : '▸'"></span>Transform
+          <h2 class="section-header" @click="settings.panel.transformOpen = !settings.panel.transformOpen">
+            <span class="section-arrow" x-text="settings.panel.transformOpen ? '▾' : '▸'"></span>Transform
           </h2>
-          <div x-show="panel.transformOpen">
+          <div x-show="settings.panel.transformOpen">
             <label>Type</label>
-            <select x-model="settings.transform.type">
+            <select x-model="settings.transform.type" x-ref="transformTypeSelect">
               <template x-for="t in transformTypes" :key="t.id">
                 <option :value="t.id" x-text="t.label"></option>
               </template>

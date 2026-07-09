@@ -22,11 +22,11 @@ The Go module (`warpgate`, Go 1.25.0) lives at the repo root. The frontend is em
 | GET      | `/api/public/checkin`   | No            | Logs client IP; called once on page load |
 | GET      | `/api/public/settings`  | No            | Returns `{"wsFrameMin":...,"wsFrameMax":...}`, the server's configured WS frame size bounds, for UI clamping |
 | POST     | `/api/files/list`       | Yes           | List files in the download root; body: `{"path":"subdir"}` |
-| POST     | `/api/files/get`        | Yes           | Download a (chunk of a) file with a transform applied |
+| POST     | `/api/files/download`   | Yes           | Download a (chunk of a) file with a transform applied |
 | POST     | `/api/files/upload`     | Yes           | Upload a file (requires `-ul-root`); multipart form |
 | GET      | `/api/files/ul-list`    | Yes           | List files in the upload directory |
-| GET/Upgrade | `/api/ws/download`  | Yes (in-band) | WebSocket alternative to `/api/files/get`; see below |
-| GET/Upgrade | `/api/ws/upload`    | Yes (in-band) | WebSocket alternative to `/api/files/upload` (requires `-ul-root`); see below |
+| GET/Upgrade | `/api/files/ws/download`  | Yes (in-band) | WebSocket alternative to `/api/files/download`; see below |
+| GET/Upgrade | `/api/files/ws/upload`    | Yes (in-band) | WebSocket alternative to `/api/files/upload` (requires `-ul-root`); see below |
 | GET      | `/api/clip/list`        | Yes           | List all clipboard notes |
 | POST     | `/api/clip/new`         | Yes           | Create a clipboard note; body: `{"data":"<base64>"}` |
 | POST     | `/api/clip/edit`        | Yes           | Update a note's content and timestamp; body: `{"id":<id>,"data":"<base64>"}` |
@@ -37,7 +37,7 @@ The Go module (`warpgate`, Go 1.25.0) lives at the repo root. The frontend is em
 
 The full API is documented in `doc/openapi.yaml`.
 
-### `/api/files/get` request body
+### `/api/files/download` request body
 
 ```json
 {
@@ -57,8 +57,8 @@ Two parts:
 
 ## WebSocket Transport
 
-`/api/ws/download` and `/api/ws/upload` are a second, user-selectable transport for the same
-operations as `/api/files/get` and `/api/files/upload`, implemented in `ws.go`, `ws_get.go`, and
+`/api/files/ws/download` and `/api/files/ws/upload` are a second, user-selectable transport for the same
+operations as `/api/files/download` and `/api/files/upload`, implemented in `ws.go`, `ws_download.go`, and
 `ws_upload.go` (using `github.com/gorilla/websocket`). They exist alongside the HTTP transport, not
 instead of it — the client picks per transfer. One WebSocket connection handles exactly one file
 end to end; chunking within that connection is optional and orthogonal to the transport choice (see
@@ -88,7 +88,7 @@ server constant.
 `Server.wsUpgrader`'s `ReadBufferSize`/`WriteBufferSize` (`server.go`), which just needs to be large
 enough to hold the biggest frame any request is allowed to produce — `NewServer` clamps a
 misconfigured/zero `Config.WSFrameMax` up to `wsFrameSizeMin` (1 KiB) so a zero-size frame buffer can
-never occur (that would make the frame-writing loop in `ws_get.go` spin forever: `io.ReadFull` on an
+never occur (that would make the frame-writing loop in `ws_download.go` spin forever: `io.ReadFull` on an
 empty buffer returns `(0, nil)` without ever blocking). `GET /api/public/settings` reports the
 current `wsFrameMin`/`wsFrameMax` so the frontend can clamp its input instead of letting the user
 pick a value the server will reject.
@@ -100,7 +100,7 @@ to `Transformer.Transform`/`Untransform`**: XOR and AES-CTR reset their cipher s
 counter) at the start of every call, and PDF/html-b64 chunks are self-contained documents, so a
 chunk's bytes must be fully assembled before a single Transform/Untransform call — never split across
 independent calls. Concretely:
-- **Download** (`ws_get.go`): `Transform` is still called once per `{start,size}` chunk request; only
+- **Download** (`ws_download.go`): `Transform` is still called once per `{start,size}` chunk request; only
   *its output* is split, by manually looping `Conn.WriteMessage` over `frameSize`-sized pieces read
   via `io.ReadFull` (instead of one `Conn.NextWriter`+`io.Copy` call left to gorilla's own,
   connection-wide auto-fragmentation).
@@ -141,7 +141,7 @@ level, but check the key in-band — see WebSocket Transport below).
 
 - Set the key with `-auth-key <key>`. If omitted and `-no-auth` is not set, a random 32-byte hex key is auto-generated and printed to the log at startup.
 - `-no-auth` disables authentication entirely (no header check).
-- The frontend stores the key in `localStorage` under `"auth-key"` and restores it on reload.
+- The frontend persists the key as part of the unified UI settings (see "UI settings persistence" below) and restores it on reload.
 - The side panel has an **Auth** section where the user enters the key (displayed masked; a toggle reveals it). Changing it immediately refreshes the file listing.
 
 Auth is enforced via `withAuth(h http.HandlerFunc) http.Handler` in `server.go`, applied at route registration time. The dispatch loop in `handler()` is unconditional.
@@ -298,17 +298,56 @@ All JS libraries are served locally (embedded in the binary); no CDN requests at
 - `authHeaders()` — returns `{"X-Auth": key}` if key is non-empty, else `{}`. Merged into every API request.
 - `encodeForUpload(file)` — async; resolves to `{data: Blob, args: {}}`.
 - `decrypt(buffer, password, htmlB64Key)` — reverses the transform on a downloaded chunk's `ArrayBuffer`.
-- `fetchChunk(wsSession, path, start, size)` — dispatches to `fetchChunkHTTP` (POSTs to `/api/files/get`) or `fetchChunkWS` based on the `backend` setting, calling `decrypt` on the (re)assembled response either way. `wsSession` is a plain `{ws, password, htmlB64Key}` object owned by the caller (`downloadFile`), threaded through repeated calls for the same file so the WS backend reuses one connection per file instead of opening one per chunk; `closeWSSession` ends it. Ignored for the HTTP backend.
+- `fetchChunk(wsSession, path, start, size)` — dispatches to `fetchChunkHTTP` (POSTs to `/api/files/download`) or `fetchChunkWS` based on the `settings.backend` setting, calling `decrypt` on the (re)assembled response either way. `wsSession` is a plain `{ws, password, htmlB64Key}` object owned by the caller (`downloadFile`), threaded through repeated calls for the same file so the WS backend reuses one connection per file instead of opening one per chunk; `closeWSSession` ends it. Ignored for the HTTP backend.
 - Chunked downloads with optional reassembly via the File System Access API (`showSaveFilePicker`). Requires a secure context (HTTPS or localhost); the checkbox is disabled otherwise.
-- `uploadFiles(files)` — dispatches each file to `uploadFileHTTP` or `uploadFileWS` based on `backend`, in parallel, then refreshes the upload listing.
+- `uploadFiles(files)` — dispatches each file to `uploadFileHTTP` or `uploadFileWS` based on `settings.backend`, in parallel, then refreshes the upload listing.
 - `load()` / `loadUploadDir()` / `loadClipboard()` — each compares the fetched data against the current state with `JSON.stringify` and only updates the reactive array on a change, preserving scroll position during auto-refresh.
 - `textToBase64` / `base64ToText` — UTF-8–safe helpers used by the clipboard tab.
+
+### UI settings persistence
+
+Everything under Alpine's `settings` object (auth key, backend choice, auto-refresh, confirm-delete,
+WS frame size, transform config, chunking config, and side-panel open/collapsed state) is persisted
+as one JSON blob in `localStorage["warpgate-settings"]`, restored on the next page load. Deliberately
+**not** persisted: `tab`/`pathSegments` (navigation, not configuration — a stale restored path could
+point at a since-deleted directory), `wsFrameMinKB`/`wsFrameMaxKB` (fetched fresh from
+`/api/public/settings` every load, not user configuration), and `authShowKey` (whether the auth key
+is currently unmasked — always starts masked for basic shoulder-surf hygiene, kept as a standalone
+top-level property outside `settings` specifically so it can never end up in the persisted blob).
+
+- Shape: `{"version":1,"settings":{...}}` — mirrors the `settings` object exactly, so persistence is
+  just "serialize `settings`, merge back into `settings`" with no separate allowlist to maintain. Any
+  new UI-configurable value should be added under `settings`, not as a new top-level Alpine property,
+  or it won't be persisted.
+- `mergeSettings(target, source)` (module-level in `app.js`) recursively copies fields from the parsed
+  stored blob onto the live `settings` object, but only for keys that already exist on the target —
+  this ignores stale/unknown fields from an older schema version rather than grafting them on
+  (relevant if `SETTINGS_VERSION` is ever bumped and old/new fields briefly coexist).
+- `loadSettings()` runs synchronously as the very first line of `init()`, before `applyAuto()` — that
+  order matters: it lets a restored `auto: false` + custom key survive untouched, while `auto: true`
+  still gets a fresh key generated every load (`applyAuto()` only overwrites when the auto flag is
+  true), matching the pre-existing "never reuse an old auto-generated key" behavior.
+- `saveSettings()` is triggered by `this.$watch('JSON.stringify(settings)', ...)` — evaluating
+  `JSON.stringify` reads every nested field, which is what makes the watcher fire on a change
+  anywhere in the tree; a plain `$watch('settings', ...)` only fires when the `settings` reference
+  itself is reassigned, not on nested mutations, since almost every field here is edited via a plain
+  `x-model` binding with no dedicated change handler to hook a manual save into.
+- **`<select x-model="settings.backend">` and `<select x-model="settings.transform.type">` need an
+  extra nudge.** Their `<option>`s are rendered by a child `x-for`; Alpine's tree walk processes a
+  parent's directives (including `x-model`'s initial DOM sync) before recursing into that child, so
+  `x-model` tries to apply the restored value before the matching `<option>` exists. A native
+  `<select>.value` assignment to a not-yet-existing option value is a silent no-op with no automatic
+  retry once the option later appears — so without a fix, these two selects visually stick on their
+  default option after a restore even though the underlying `settings` value is correct.
+  `$nextTick` fires too early to reliably fix this; `init()` instead force-resyncs both via
+  `x-ref="backendSelect"`/`x-ref="transformTypeSelect"` inside a `setTimeout(fn, 0)` (a full macrotask
+  later, after Alpine's render has definitely settled).
 
 ### Side panel sections (alphabetical order)
 
 | Section   | Purpose |
 |-----------|---------|
-| Auth      | `X-Auth` key input; masked by default with a 👁 reveal toggle; persisted in `localStorage["auth-key"]`; change triggers listing refresh |
+| Auth      | `X-Auth` key input; masked by default with a 👁 reveal toggle (reveal state itself is not persisted); change triggers listing refresh |
 | Chunking  | Enable chunked download (download tab only), set chunk size, enable File System Access API reassembly |
 | General   | Auto-refresh (polls the active tab every second; re-renders only on changes); Confirm note delete; Backend (HTTP POST/Websocket, download+upload tabs); WS frame size in KB (download+upload tabs, only when Backend is Websocket; default 4M, clamped to the server's `-ws-frame-max` via `/api/public/settings`) |
 | Transform | Select transform type and configure its parameters (auto-generate keys/IVs) |
@@ -326,7 +365,7 @@ All JS libraries are served locally (embedded in the binary); no CDN requests at
 |---------|---------|---------|
 | `github.com/pdfcpu/pdfcpu` | v0.13.0 | Create PDFs, add/extract attachments, AES-256 encryption |
 | `modernc.org/sqlite` | v1.53.0 | Pure-Go SQLite driver (no CGO); clipboard storage |
-| `github.com/gorilla/websocket` | v1.5.3 | WebSocket transport for `/api/ws/download` and `/api/ws/upload` |
+| `github.com/gorilla/websocket` | v1.5.3 | WebSocket transport for `/api/files/ws/download` and `/api/files/ws/upload` |
 
 ## Development
 

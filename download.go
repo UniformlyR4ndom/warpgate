@@ -8,7 +8,7 @@ import (
 	"os"
 )
 
-type getRequest struct {
+type downloadRequest struct {
 	Path      string          `json:"path"`
 	Start     int64           `json:"start"`
 	Size      int64           `json:"size"`
@@ -16,13 +16,13 @@ type getRequest struct {
 	Args      json.RawMessage `json:"args"`
 }
 
-func (s *Server) handleGet(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleDownload(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
-	var req getRequest
+	var req downloadRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "invalid JSON body", http.StatusBadRequest)
 		return
