@@ -9,6 +9,13 @@ import (
 	"path/filepath"
 )
 
+// wsFrameSizeMin and wsFrameSizeMax bound both the -ws-frame-max flag and
+// the per-request frameSize a client may specify in a WS control message.
+const (
+	wsFrameSizeMin = 1024              // 1 KiB
+	wsFrameSizeMax = 256 * 1024 * 1024 // 256 MiB
+)
+
 type Config struct {
 	Root       string
 	UlRoot     string
@@ -20,10 +27,12 @@ type Config struct {
 	ClientFP   string
 	Key        string
 	NoAuth     bool
+	WSFrameMax int
 }
 
 func main() {
 	var cfg Config
+	var wsFrameMaxStr string
 
 	flag.StringVar(&cfg.Root, "root", "./files", "root directory to serve files from")
 	flag.StringVar(&cfg.UlRoot, "ul-root", "", "directory to accept file uploads into (uploads disabled if not set)")
@@ -35,11 +44,23 @@ func main() {
 	flag.StringVar(&cfg.ClientFP, "client-fp", "", "hex SHA-256 fingerprint of the client certificate to accept; requires -cert and -cert-key")
 	flag.StringVar(&cfg.Key, "auth-key", "", "authentication key for X-Auth header (auto-generated if not set)")
 	flag.BoolVar(&cfg.NoAuth, "no-auth", false, "disable authentication")
+	flag.StringVar(&wsFrameMaxStr, "ws-frame-max", "16M",
+		"Maximum WebSocket frame size: a byte count, or a number with a K or M suffix (case-insensitive, e.g. 512K, 4M); range 1K-256M. "+
+			"Clients may request a smaller per-transfer frame size (via the UI) up to this ceiling; smaller frames are more likely to pass through proxies that buffer whole frames for inspection")
 	flag.Parse()
 
 	if _, _, err := net.SplitHostPort(cfg.Addr); err != nil {
 		log.Fatalf("invalid --listen address %q: %v", cfg.Addr, err)
 	}
+
+	wsFrameMax, err := parseByteSize(wsFrameMaxStr)
+	if err != nil {
+		log.Fatalf("invalid -ws-frame-max %q: %v", wsFrameMaxStr, err)
+	}
+	if wsFrameMax < wsFrameSizeMin || wsFrameMax > wsFrameSizeMax {
+		log.Fatalf("-ws-frame-max must be between %d and %d bytes (got %d)", wsFrameSizeMin, wsFrameSizeMax, wsFrameMax)
+	}
+	cfg.WSFrameMax = int(wsFrameMax)
 
 	if (cfg.Cert == "") != (cfg.CertKey == "") {
 		log.Fatalf("-cert and -cert-key must be provided together")
@@ -117,5 +138,6 @@ func main() {
 	if cfg.ClientFP != "" {
 		log.Printf("requiring TLS client certificate fingerprint: %s", cfg.ClientFP)
 	}
+	log.Printf("WebSocket frame size ceiling: %d bytes", cfg.WSFrameMax)
 	log.Fatal(srv.ListenAndServe())
 }

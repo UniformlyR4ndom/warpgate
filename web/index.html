@@ -77,6 +77,19 @@
             <label class="auto-label">
               <input type="checkbox" x-model="confirmDelete"> Confirm note delete
             </label>
+            <div x-show="tab === 'download' || tab === 'upload'">
+              <label>Backend</label>
+              <select x-model="backend">
+                <template x-for="b in backendTypes" :key="b.id">
+                  <option :value="b.id" x-text="b.label"></option>
+                </template>
+              </select>
+            </div>
+            <div x-show="(tab === 'download' || tab === 'upload') && backend === 'ws'">
+              <label>WS frame size (KB)</label>
+              <input type="number" x-model.number="settings.wsFrameSizeKB"
+                     :min="wsFrameMinKB" :max="wsFrameMaxKB">
+            </div>
           </div>
         </section>
 

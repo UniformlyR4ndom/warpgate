@@ -20,6 +20,7 @@ The Go module (`warpgate`, Go 1.25.0) lives at the repo root. The frontend is em
 | Method   | Path                    | Auth required | Description |
 |----------|-------------------------|---------------|-------------|
 | GET      | `/api/public/checkin`   | No            | Logs client IP; called once on page load |
+| GET      | `/api/public/settings`  | No            | Returns `{"wsFrameMin":...,"wsFrameMax":...}`, the server's configured WS frame size bounds, for UI clamping |
 | POST     | `/api/files/list`       | Yes           | List files in the download root; body: `{"path":"subdir"}` |
 | POST     | `/api/files/get`        | Yes           | Download a (chunk of a) file with a transform applied |
 | POST     | `/api/files/upload`     | Yes           | Upload a file (requires `-ul-root`); multipart form |
@@ -74,20 +75,56 @@ functions are stateless per call (a fresh cipher/reader is constructed each time
 `Transformer` is built once per connection from the first message's `transform`/`args` and reused
 across chunks.
 
+**Frame size is a compatibility knob, not just a performance one.** Intercepting/inspecting proxies
+that buffer a whole WebSocket frame before forwarding it — Burp Suite among them — can choke on very
+large single frames, closing the connection abnormally (no close frame, no reason) partway through a
+transfer. Since bypassing exactly this kind of proxy is the point of the tool, the frame size used
+for a given transfer is a **per-request value the client picks** (the frontend's "WS frame size"
+setting in the General panel section, default 4 MB, used for both Download and Upload), not a fixed
+server constant.
+
+`-ws-frame-max` (`main.go`, default `16M`, range 1 KiB-256 MiB via `parseByteSize` in
+`bytesize.go`) is the server-operator-controlled *ceiling* on that per-request value; it also sizes
+`Server.wsUpgrader`'s `ReadBufferSize`/`WriteBufferSize` (`server.go`), which just needs to be large
+enough to hold the biggest frame any request is allowed to produce — `NewServer` clamps a
+misconfigured/zero `Config.WSFrameMax` up to `wsFrameSizeMin` (1 KiB) so a zero-size frame buffer can
+never occur (that would make the frame-writing loop in `ws_get.go` spin forever: `io.ReadFull` on an
+empty buffer returns `(0, nil)` without ever blocking). `GET /api/public/settings` reports the
+current `wsFrameMin`/`wsFrameMax` so the frontend can clamp its input instead of letting the user
+pick a value the server will reject.
+
+Each control message carries a `frameSize` (bytes); `Server.resolveFrameSize` (`ws.go`) validates it
+against `[wsFrameSizeMin, cfg.WSFrameMax]`, rejecting out-of-range requests, or — if omitted/zero —
+falls back to the server ceiling. **Frame splitting is purely transport-level and must stay invisible
+to `Transformer.Transform`/`Untransform`**: XOR and AES-CTR reset their cipher state (key phase / CTR
+counter) at the start of every call, and PDF/html-b64 chunks are self-contained documents, so a
+chunk's bytes must be fully assembled before a single Transform/Untransform call — never split across
+independent calls. Concretely:
+- **Download** (`ws_get.go`): `Transform` is still called once per `{start,size}` chunk request; only
+  *its output* is split, by manually looping `Conn.WriteMessage` over `frameSize`-sized pieces read
+  via `io.ReadFull` (instead of one `Conn.NextWriter`+`io.Copy` call left to gorilla's own,
+  connection-wide auto-fragmentation).
+- **Upload** (`ws_upload.go`): the server accumulates *all* binary frames for the file into one
+  buffer, and only calls `Untransform` once, when the `{"done":true}` message arrives. (Earlier this
+  called `Untransform` per received message, which was only safe because there was always exactly one
+  message per upload; now that uploads can be split into multiple frames, that assumption no longer
+  holds and would otherwise silently corrupt anything but the `id` transform.)
+
 **Download protocol:**
-1. Client → Server (text): `{"auth":"<key>","path":"...","transform":"xor","args":{...}}`
+1. Client → Server (text): `{"auth":"<key>","path":"...","transform":"xor","args":{...},"frameSize":1048576}`
 2. Server → Client (text): `{"ok":true,"size":12345}` or `{"ok":false,"error":"..."}`
 3. Client → Server (text, repeated, one at a time — no pipelining): `{"start":0,"size":1048576}` to
    request a chunk, or `{"done":true}` to end the session
-4. Server → Client (binary): the transformed chunk for the requested range
+4. Server → Client (binary, one or more messages, each ≤ `frameSize`, totaling `size` bytes): the
+   transformed chunk for the requested range
 5. On any error: server sends `{"ok":false,"error":"..."}` then closes
 
 **Upload protocol:**
-1. Client → Server (text): `{"auth":"<key>","filename":"...","transform":"xor","args":{...}}`
+1. Client → Server (text): `{"auth":"<key>","filename":"...","transform":"xor","args":{...},"frameSize":1048576}`
 2. Server → Client (text): `{"ok":true}` or `{"ok":false,"error":"..."}`
-3. Client → Server (binary, repeated): one self-contained transformed chunk — same shape
-   `Untransform` already expects (e.g. each chunk is its own complete PDF/HTML document when using
-   those transforms, exactly as the HTTP download path already treats each chunk independently)
+3. Client → Server (binary, one or more messages, each ≤ `frameSize`): the transformed file's bytes,
+   split purely for transport — unlike before, an individual message is *not* required to be
+   independently decodable
 4. Client → Server (text, final): `{"done":true}`
 5. Server → Client (text, final): `{"ok":true,"name":"<filename>"}`, then a normal close
 6. On any error: server sends `{"ok":false,"error":"..."}` then closes; a partial output file may be
@@ -98,7 +135,9 @@ source of truth.
 
 ## Authentication
 
-All API endpoints except `/api/public/checkin` require an `X-Auth` header matching the server's key.
+All API endpoints except `/api/public/checkin` and `/api/public/settings` require an `X-Auth` header
+matching the server's key (the two WebSocket endpoints are also unauthenticated at the HTTP/upgrade
+level, but check the key in-band — see WebSocket Transport below).
 
 - Set the key with `-auth-key <key>`. If omitted and `-no-auth` is not set, a random 32-byte hex key is auto-generated and printed to the log at startup.
 - `-no-auth` disables authentication entirely (no header check).
@@ -259,9 +298,9 @@ All JS libraries are served locally (embedded in the binary); no CDN requests at
 - `authHeaders()` — returns `{"X-Auth": key}` if key is non-empty, else `{}`. Merged into every API request.
 - `encodeForUpload(file)` — async; resolves to `{data: Blob, args: {}}`.
 - `decrypt(buffer, password, htmlB64Key)` — reverses the transform on a downloaded chunk's `ArrayBuffer`.
-- `fetchChunk(path, start, size)` — POSTs to `/api/files/get`, calls `decrypt` on the response.
+- `fetchChunk(wsSession, path, start, size)` — dispatches to `fetchChunkHTTP` (POSTs to `/api/files/get`) or `fetchChunkWS` based on the `backend` setting, calling `decrypt` on the (re)assembled response either way. `wsSession` is a plain `{ws, password, htmlB64Key}` object owned by the caller (`downloadFile`), threaded through repeated calls for the same file so the WS backend reuses one connection per file instead of opening one per chunk; `closeWSSession` ends it. Ignored for the HTTP backend.
 - Chunked downloads with optional reassembly via the File System Access API (`showSaveFilePicker`). Requires a secure context (HTTPS or localhost); the checkbox is disabled otherwise.
-- `uploadFiles(files)` — encodes and uploads all files in parallel, then refreshes the upload listing.
+- `uploadFiles(files)` — dispatches each file to `uploadFileHTTP` or `uploadFileWS` based on `backend`, in parallel, then refreshes the upload listing.
 - `load()` / `loadUploadDir()` / `loadClipboard()` — each compares the fetched data against the current state with `JSON.stringify` and only updates the reactive array on a change, preserving scroll position during auto-refresh.
 - `textToBase64` / `base64ToText` — UTF-8–safe helpers used by the clipboard tab.
 
@@ -271,7 +310,7 @@ All JS libraries are served locally (embedded in the binary); no CDN requests at
 |-----------|---------|
 | Auth      | `X-Auth` key input; masked by default with a 👁 reveal toggle; persisted in `localStorage["auth-key"]`; change triggers listing refresh |
 | Chunking  | Enable chunked download (download tab only), set chunk size, enable File System Access API reassembly |
-| General   | Auto-refresh (polls the active tab every second; re-renders only on changes); Confirm note delete |
+| General   | Auto-refresh (polls the active tab every second; re-renders only on changes); Confirm note delete; Backend (HTTP POST/Websocket, download+upload tabs); WS frame size in KB (download+upload tabs, only when Backend is Websocket; default 4M, clamped to the server's `-ws-frame-max` via `/api/public/settings`) |
 | Transform | Select transform type and configure its parameters (auto-generate keys/IVs) |
 
 ### Clipboard tab
@@ -319,3 +358,4 @@ golangci-lint run
 | `-cert-key` | — | TLS private key file; must be paired with `-cert` |
 | `-client-root` | — | PEM certificate for validating client certificates; requires `-cert`/`-cert-key` |
 | `-client-fp` | — | Hex SHA-256 fingerprint to pin a specific client certificate; requires `-cert`/`-cert-key` |
+| `-ws-frame-max` | `16M` | Ceiling on the WS frame size a client may request; byte count or `K`/`M` suffix (case-insensitive), range `1K`-`256M` |

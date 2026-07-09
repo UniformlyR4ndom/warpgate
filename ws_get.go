@@ -15,6 +15,7 @@ type wsDownloadRequest struct {
 	Path      string          `json:"path"`
 	Transform string          `json:"transform"`
 	Args      json.RawMessage `json:"args"`
+	FrameSize int64           `json:"frameSize"`
 }
 
 // wsChunkRequest is sent by the client for each chunk it wants, or with
@@ -30,7 +31,7 @@ type wsChunkRequest struct {
 // headers on the WS handshake; instead the first control message must carry
 // the auth key, checked here after upgrade.
 func (s *Server) handleWSDownload(w http.ResponseWriter, r *http.Request) {
-	conn, err := wsUpgrader.Upgrade(w, r, nil)
+	conn, err := s.wsUpgrader.Upgrade(w, r, nil)
 	if err != nil {
 		log.Printf("ws download: upgrade failed: %v", err)
 		return
@@ -45,6 +46,12 @@ func (s *Server) handleWSDownload(w http.ResponseWriter, r *http.Request) {
 
 	if !s.checkWSAuth(req.Auth) {
 		writeWSError(conn, websocket.ClosePolicyViolation, "unauthorized")
+		return
+	}
+
+	frameSize, err := s.resolveFrameSize(req.FrameSize)
+	if err != nil {
+		writeWSError(conn, websocket.ClosePolicyViolation, "%v", err)
 		return
 	}
 
@@ -82,6 +89,9 @@ func (s *Server) handleWSDownload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Reused across chunk requests; frameSize is fixed for the connection.
+	frameBuf := make([]byte, frameSize)
+
 	for {
 		chunkReq, err := readWSControl[wsChunkRequest](conn)
 		if err != nil {
@@ -110,19 +120,25 @@ func (s *Server) handleWSDownload(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		wr, err := conn.NextWriter(websocket.BinaryMessage)
-		if err != nil {
-			log.Printf("ws download: getting writer for %q: %v", req.Path, err)
-			return
-		}
-		if _, err := io.Copy(wr, reader); err != nil {
-			log.Printf("ws download: writing chunk for %q: %v", req.Path, err)
-			wr.Close()
-			return
-		}
-		if err := wr.Close(); err != nil {
-			log.Printf("ws download: closing chunk writer for %q: %v", req.Path, err)
-			return
+		// Manually split the chunk's transformed output into frameSize-sized
+		// WS messages instead of relying on gorilla's connection-wide buffer
+		// to auto-fragment one big message: this makes frame size a
+		// per-request value instead of a fixed per-connection one.
+		for {
+			n, rerr := io.ReadFull(reader, frameBuf)
+			if n > 0 {
+				if werr := conn.WriteMessage(websocket.BinaryMessage, frameBuf[:n]); werr != nil {
+					log.Printf("ws download: writing frame for %q: %v", req.Path, werr)
+					return
+				}
+			}
+			if rerr == io.EOF || rerr == io.ErrUnexpectedEOF {
+				break
+			}
+			if rerr != nil {
+				log.Printf("ws download: reading chunk data for %q: %v", req.Path, rerr)
+				return
+			}
 		}
 	}
 }

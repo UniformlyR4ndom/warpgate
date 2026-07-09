@@ -1,5 +1,36 @@
 pdfjsLib.GlobalWorkerOptions.workerSrc = 'pdf.worker.min.js';
 
+function wsOpen(url) {
+  return new Promise(function(resolve, reject) {
+    var ws = new WebSocket(url);
+    ws.binaryType = 'arraybuffer';
+    ws.addEventListener('open', function() { resolve(ws); }, { once: true });
+    ws.addEventListener('error', function() { reject(new Error('WebSocket connection failed')); }, { once: true });
+  });
+}
+
+function wsNextMessage(ws) {
+  return new Promise(function(resolve, reject) {
+    function cleanup() {
+      ws.removeEventListener('message', onMessage);
+      ws.removeEventListener('close', onClose);
+      ws.removeEventListener('error', onError);
+    }
+    function onMessage(ev) { cleanup(); resolve(ev.data); }
+    function onClose(ev)   { cleanup(); reject(new Error('WebSocket closed unexpectedly' + (ev.reason ? ': ' + ev.reason : ''))); }
+    function onError()     { cleanup(); reject(new Error('WebSocket error')); }
+    ws.addEventListener('message', onMessage);
+    ws.addEventListener('close', onClose);
+    ws.addEventListener('error', onError);
+  });
+}
+
+async function wsNextJSON(ws) {
+  var raw = await wsNextMessage(ws);
+  if (typeof raw !== 'string') throw new Error('expected JSON control message, got binary');
+  return JSON.parse(raw);
+}
+
 function filesApp() {
   let refreshTimer = null;
 
@@ -17,6 +48,14 @@ function filesApp() {
     clipError: null,
     autoRefresh: false,
     confirmDelete: true,
+    backend: 'http',
+    wsFrameMinKB: 1,
+    wsFrameMaxKB: 262144, // 256M; generous fallback ceiling until /api/public/settings responds
+
+    backendTypes: [
+      { id: 'http', label: 'HTTP POST' },
+      { id: 'ws',   label: 'Websocket' },
+    ],
 
     transformTypes: [
       { id: 'id',       label: 'id'           },
@@ -37,6 +76,7 @@ function filesApp() {
 
     settings: {
       auth: { key: localStorage.getItem('auth-key') || '' },
+      wsFrameSizeKB: 4096, // 4M default, clamped to the server's max in init()
       transform: {
         type: 'id',
         xor:    { auto: true,  key: '' },
@@ -54,6 +94,16 @@ function filesApp() {
       this.applyAuto();
       this.load();
       fetch('/api/public/checkin').catch(() => {});
+      fetch('/api/public/settings')
+        .then(function(res) { return res.ok ? res.json() : null; })
+        .then((data) => {
+          if (!data) return;
+          this.wsFrameMinKB = Math.ceil(data.wsFrameMin / 1024);
+          this.wsFrameMaxKB = Math.floor(data.wsFrameMax / 1024);
+          if (this.settings.wsFrameSizeKB > this.wsFrameMaxKB) { this.settings.wsFrameSizeKB = this.wsFrameMaxKB; }
+          if (this.settings.wsFrameSizeKB < this.wsFrameMinKB) { this.settings.wsFrameSizeKB = this.wsFrameMinKB; }
+        })
+        .catch(() => {});
 
       this.$watch('autoRefresh', (enabled) => {
         clearInterval(refreshTimer);
@@ -83,6 +133,11 @@ function filesApp() {
       var h = {};
       if (this.settings.auth.key) { h['X-Auth'] = this.settings.auth.key; }
       return h;
+    },
+
+    wsBaseURL() {
+      var proto = window.location.protocol === 'https:' ? 'wss://' : 'ws://';
+      return proto + window.location.host;
     },
 
     applyAuto() {
@@ -199,7 +254,18 @@ function filesApp() {
       URL.revokeObjectURL(url);
     },
 
-    async fetchChunk(path, start, size) {
+    // fetchChunk fetches one chunk of a file. wsSession is a plain object
+    // ({ws, password, htmlB64Key}, all initially null) owned by the caller
+    // and threaded through repeated calls for the same file; when
+    // this.backend === 'ws' the first call opens a WebSocket connection and
+    // caches it there, subsequent calls reuse it, and the caller must call
+    // closeWSSession(wsSession) once done. Ignored for the HTTP backend.
+    async fetchChunk(wsSession, path, start, size) {
+      if (this.backend === 'ws') { return this.fetchChunkWS(wsSession, path, start, size); }
+      return this.fetchChunkHTTP(path, start, size);
+    },
+
+    async fetchChunkHTTP(path, start, size) {
       var t = this.settings.transform;
       var password   = (t.type === 'pdf'      && t.pdf.password.enabled) ? this.randomHex(10) : null;
       var htmlB64Key = (t.type === 'html-b64') ? this.randomHex(16) : null;
@@ -220,10 +286,61 @@ function filesApp() {
       return this.decrypt(buffer, password, htmlB64Key);
     },
 
+    async fetchChunkWS(wsSession, path, start, size) {
+      if (!wsSession.ws) {
+        var t          = this.settings.transform;
+        var password   = (t.type === 'pdf'      && t.pdf.password.enabled) ? this.randomHex(10) : null;
+        var htmlB64Key = (t.type === 'html-b64') ? this.randomHex(16) : null;
+
+        var ws = await wsOpen(this.wsBaseURL() + '/api/ws/download');
+        ws.send(JSON.stringify({
+          auth:      this.settings.auth.key,
+          path:      path,
+          transform: t.type,
+          args:      this.buildTransformArgs(password, htmlB64Key),
+          frameSize: this.settings.wsFrameSizeKB * 1024,
+        }));
+        var ack = await wsNextJSON(ws);
+        if (!ack.ok) { ws.close(); throw new Error(ack.error || 'download failed'); }
+
+        wsSession.ws         = ws;
+        wsSession.password   = password;
+        wsSession.htmlB64Key = htmlB64Key;
+      }
+
+      wsSession.ws.send(JSON.stringify({ start: start, size: size }));
+
+      // The server may split one chunk across several frameSize-sized
+      // binary messages instead of sending it as a single message; keep
+      // reading until the full chunk has arrived.
+      var received = new Uint8Array(size);
+      var offset = 0;
+      while (offset < size) {
+        var raw = await wsNextMessage(wsSession.ws);
+        if (typeof raw === 'string') {
+          var msg = JSON.parse(raw);
+          throw new Error(msg.error || 'download failed');
+        }
+        var piece = new Uint8Array(raw);
+        received.set(piece, offset);
+        offset += piece.byteLength;
+      }
+      return this.decrypt(received.buffer, wsSession.password, wsSession.htmlB64Key);
+    },
+
+    closeWSSession(wsSession) {
+      if (!wsSession || !wsSession.ws) { return; }
+      var ws = wsSession.ws;
+      wsSession.ws = null;
+      try { ws.send(JSON.stringify({ done: true })); } catch(e) {}
+      try { ws.close(); } catch(e) {}
+    },
+
     async downloadFile(entry) {
       this.error = null;
-      var path     = this.pathSegments.concat([entry.name]).join('/');
-      var chunking = this.settings.chunking;
+      var path      = this.pathSegments.concat([entry.name]).join('/');
+      var chunking  = this.settings.chunking;
+      var wsSession = { ws: null, password: null, htmlB64Key: null };
 
       if (chunking.enabled) {
         var chunkBytes = chunking.chunkSize * 1024 * 1024;
@@ -237,7 +354,7 @@ function filesApp() {
               for (var i = 0; i < numChunks; i++) {
                 var start = i * chunkBytes;
                 var size  = Math.min(chunkBytes, entry.size - start);
-                var data  = await this.fetchChunk(path, start, size);
+                var data  = await this.fetchChunk(wsSession, path, start, size);
                 await writable.write(data);
               }
               await writable.close();
@@ -249,28 +366,34 @@ function filesApp() {
             if (err && err.name !== 'AbortError') {
               this.error = 'Download failed: ' + err;
             }
+          } finally {
+            this.closeWSSession(wsSession);
           }
         } else {
           var self = this;
-          (async function downloadChunk(i) {
-            if (i >= numChunks) return;
-            var start = i * chunkBytes;
-            var size  = Math.min(chunkBytes, entry.size - start);
+          (async function() {
             try {
-              var data = await self.fetchChunk(path, start, size);
-              self.triggerDownload(data, entry.name + '.' + self.padIndex(i));
-              await downloadChunk(i + 1);
+              for (var i = 0; i < numChunks; i++) {
+                var start = i * chunkBytes;
+                var size  = Math.min(chunkBytes, entry.size - start);
+                var data  = await self.fetchChunk(wsSession, path, start, size);
+                self.triggerDownload(data, entry.name + '.' + self.padIndex(i));
+              }
             } catch(err) {
-              self.error = 'Chunk ' + i + ' failed: ' + (err.status ? 'HTTP ' + err.status : err);
+              self.error = 'Chunk failed: ' + (err.status ? 'HTTP ' + err.status : err);
+            } finally {
+              self.closeWSSession(wsSession);
             }
-          })(0);
+          })();
         }
       } else {
         try {
-          var data = await this.fetchChunk(path, 0, entry.size);
+          var data = await this.fetchChunk(wsSession, path, 0, entry.size);
           this.triggerDownload(data, entry.name);
         } catch(err) {
           this.error = 'Download failed: ' + (err.status ? 'HTTP ' + err.status : err);
+        } finally {
+          this.closeWSSession(wsSession);
         }
       }
     },
@@ -472,17 +595,14 @@ function filesApp() {
 
     async uploadFiles(files) {
       this.uploadError = null;
-      var t = this.settings.transform;
       var self = this;
       var promises = Array.from(files).map(async function(file) {
         try {
-          var result = await self.encodeForUpload(file);
-          var spec = JSON.stringify({ transform: t.type, args: result.args });
-          var fd   = new FormData();
-          fd.append('transform', new Blob([spec], { type: 'application/json' }), 'transform.json');
-          fd.append('file', result.data, file.name);
-          var res = await fetch('/api/files/upload', { method: 'POST', headers: self.authHeaders(), body: fd });
-          if (!res.ok) throw Object.assign(new Error('HTTP ' + res.status), { status: res.status });
+          if (self.backend === 'ws') {
+            await self.uploadFileWS(file);
+          } else {
+            await self.uploadFileHTTP(file);
+          }
         } catch(err) {
           self.uploadError = 'Upload of "' + file.name + '" failed: ' +
             (err.status ? 'HTTP ' + err.status : err);
@@ -490,6 +610,51 @@ function filesApp() {
       });
       await Promise.all(promises);
       this.loadUploadDir();
+    },
+
+    async uploadFileHTTP(file) {
+      var t      = this.settings.transform;
+      var result = await this.encodeForUpload(file);
+      var spec   = JSON.stringify({ transform: t.type, args: result.args });
+      var fd     = new FormData();
+      fd.append('transform', new Blob([spec], { type: 'application/json' }), 'transform.json');
+      fd.append('file', result.data, file.name);
+      var res = await fetch('/api/files/upload', { method: 'POST', headers: this.authHeaders(), body: fd });
+      if (!res.ok) throw Object.assign(new Error('HTTP ' + res.status), { status: res.status });
+    },
+
+    async uploadFileWS(file) {
+      var t         = this.settings.transform;
+      var result    = await this.encodeForUpload(file);
+      var buffer    = await result.data.arrayBuffer();
+      var frameSize = this.settings.wsFrameSizeKB * 1024;
+
+      var ws = await wsOpen(this.wsBaseURL() + '/api/ws/upload');
+      try {
+        ws.send(JSON.stringify({
+          auth:      this.settings.auth.key,
+          filename:  file.name,
+          transform: t.type,
+          args:      result.args,
+          frameSize: frameSize,
+        }));
+        var ack = await wsNextJSON(ws);
+        if (!ack.ok) throw new Error(ack.error || 'upload failed');
+
+        // Send as several frameSize-sized messages instead of one, purely a
+        // wire-transport concern — the server reassembles them before
+        // applying Untransform once.
+        var bytes = new Uint8Array(buffer);
+        for (var offset = 0; offset < bytes.length; offset += frameSize) {
+          ws.send(bytes.slice(offset, offset + frameSize));
+        }
+        ws.send(JSON.stringify({ done: true }));
+
+        var final = await wsNextJSON(ws);
+        if (!final.ok) throw new Error(final.error || 'upload failed');
+      } finally {
+        ws.close();
+      }
     },
 
     triggerFileInput() {

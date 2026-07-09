@@ -18,6 +18,7 @@ type wsUploadRequest struct {
 	Filename  string          `json:"filename"`
 	Transform string          `json:"transform"`
 	Args      json.RawMessage `json:"args"`
+	FrameSize int64           `json:"frameSize"`
 }
 
 type wsDoneMessage struct {
@@ -25,11 +26,12 @@ type wsDoneMessage struct {
 }
 
 // handleWSUpload receives one file over a single WebSocket connection, as a
-// sequence of binary chunk messages followed by a {"done":true} text
-// message. Each chunk is independently transformed, matching how
-// Untransform is already applied per-chunk on the HTTP download path.
+// sequence of binary frame messages (each up to the negotiated frameSize)
+// followed by a {"done":true} text message. All frames are reassembled into
+// one buffer before a single Untransform call — see the comment above
+// `received` below for why.
 func (s *Server) handleWSUpload(w http.ResponseWriter, r *http.Request) {
-	conn, err := wsUpgrader.Upgrade(w, r, nil)
+	conn, err := s.wsUpgrader.Upgrade(w, r, nil)
 	if err != nil {
 		log.Printf("ws upload: upgrade failed: %v", err)
 		return
@@ -44,6 +46,11 @@ func (s *Server) handleWSUpload(w http.ResponseWriter, r *http.Request) {
 
 	if !s.checkWSAuth(req.Auth) {
 		writeWSError(conn, websocket.ClosePolicyViolation, "unauthorized")
+		return
+	}
+
+	if _, err := s.resolveFrameSize(req.FrameSize); err != nil {
+		writeWSError(conn, websocket.ClosePolicyViolation, "%v", err)
 		return
 	}
 
@@ -79,6 +86,15 @@ func (s *Server) handleWSUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Frames are a purely transport-level split of one logical upload: XOR
+	// and AES-CTR reset their cipher state on every Untransform call, and
+	// PDF/html-b64 chunks are self-contained documents, so all frames must
+	// be reassembled into one buffer before a single Untransform call —
+	// Untransforming each received message independently (as this used to
+	// do, back when there was always exactly one message per upload) would
+	// silently corrupt anything split across more than one frame.
+	var received bytes.Buffer
+
 	for {
 		mt, p, err := conn.ReadMessage()
 		if err != nil {
@@ -94,24 +110,27 @@ func (s *Server) handleWSUpload(w http.ResponseWriter, r *http.Request) {
 				writeWSError(conn, websocket.CloseInternalServerErr, "unexpected control message")
 				return
 			}
-			log.Printf("uploaded %q to %q", filename, targetPath)
-			if err := writeWSOK(conn, wsAck{OK: true, Name: filename}); err != nil {
-				return
-			}
-			writeWSClose(conn, websocket.CloseNormalClosure, "")
-			return
+			break
 		}
 
-		reader, err := transformer.Untransform(bytes.NewReader(p))
-		if err != nil {
-			log.Printf("ws upload: applying transform %q to %q: %v", req.Transform, filename, err)
-			writeWSError(conn, websocket.CloseInternalServerErr, "internal error")
-			return
-		}
-		if _, err := io.Copy(f, reader); err != nil {
-			log.Printf("ws upload: writing chunk for %q: %v", targetPath, err)
-			writeWSError(conn, websocket.CloseInternalServerErr, "internal error")
-			return
-		}
+		received.Write(p)
 	}
+
+	reader, err := transformer.Untransform(&received)
+	if err != nil {
+		log.Printf("ws upload: applying transform %q to %q: %v", req.Transform, filename, err)
+		writeWSError(conn, websocket.CloseInternalServerErr, "internal error")
+		return
+	}
+	if _, err := io.Copy(f, reader); err != nil {
+		log.Printf("ws upload: writing %q: %v", targetPath, err)
+		writeWSError(conn, websocket.CloseInternalServerErr, "internal error")
+		return
+	}
+
+	log.Printf("uploaded %q to %q", filename, targetPath)
+	if err := writeWSOK(conn, wsAck{OK: true, Name: filename}); err != nil {
+		return
+	}
+	writeWSClose(conn, websocket.CloseNormalClosure, "")
 }

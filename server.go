@@ -10,16 +10,19 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+
+	"github.com/gorilla/websocket"
 )
 
 type Server struct {
-	cfg       Config
-	db        *DB
-	mux       *http.ServeMux
-	absRoot   string
-	absUlRoot string
-	clientCAs *x509.CertPool
-	clientFP  []byte
+	cfg        Config
+	db         *DB
+	mux        *http.ServeMux
+	absRoot    string
+	absUlRoot  string
+	clientCAs  *x509.CertPool
+	clientFP   []byte
+	wsUpgrader websocket.Upgrader
 }
 
 func NewServer(cfg Config, db *DB) (*Server, error) {
@@ -27,11 +30,25 @@ func NewServer(cfg Config, db *DB) (*Server, error) {
 	if err != nil {
 		return nil, fmt.Errorf("resolving root: %w", err)
 	}
+
+	// main.go always validates -ws-frame-max to >= wsFrameSizeMin before
+	// this point, but a zero-value Config (e.g. constructed directly by a
+	// test) must not silently produce a zero-size frame buffer: that turns
+	// the frame-writing loop in ws_get.go into a non-blocking infinite loop
+	// (io.ReadFull on an empty buffer returns (0, nil) forever).
+	if cfg.WSFrameMax < wsFrameSizeMin {
+		cfg.WSFrameMax = wsFrameSizeMin
+	}
+
 	s := &Server{
 		cfg:     cfg,
 		db:      db,
 		mux:     http.NewServeMux(),
 		absRoot: absRoot,
+		wsUpgrader: websocket.Upgrader{
+			ReadBufferSize:  cfg.WSFrameMax,
+			WriteBufferSize: cfg.WSFrameMax,
+		},
 	}
 
 	if cfg.ClientRoot != "" {
@@ -57,6 +74,7 @@ func NewServer(cfg Config, db *DB) (*Server, error) {
 		s.clientFP = fp
 	}
 	s.mux.HandleFunc("/api/public/checkin", s.handleCheckin)
+	s.mux.HandleFunc("/api/public/settings", s.handleSettings)
 	s.mux.Handle("/api/clip/list", s.withAuth(s.handleClipList))
 	s.mux.Handle("/api/clip/new", s.withAuth(s.handleClipNew))
 	s.mux.Handle("/api/clip/edit", s.withAuth(s.handleClipEdit))

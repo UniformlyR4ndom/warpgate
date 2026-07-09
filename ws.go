@@ -8,8 +8,6 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-var wsUpgrader = websocket.Upgrader{}
-
 const wsWriteWait = 10 * time.Second
 
 // wsAck is the JSON envelope sent in response to control messages
@@ -23,6 +21,21 @@ type wsAck struct {
 
 func (s *Server) checkWSAuth(key string) bool {
 	return s.cfg.NoAuth || key == s.cfg.Key
+}
+
+// resolveFrameSize validates a client-requested per-transfer WS frame size
+// against the server's configured ceiling (-ws-frame-max). A zero value
+// means the client didn't specify one, in which case the ceiling itself is
+// used (the pre-existing behavior of sending/receiving one unbounded frame
+// per chunk).
+func (s *Server) resolveFrameSize(requested int64) (int, error) {
+	if requested == 0 {
+		return s.cfg.WSFrameMax, nil
+	}
+	if requested < wsFrameSizeMin || requested > int64(s.cfg.WSFrameMax) {
+		return 0, fmt.Errorf("frameSize must be between %d and %d bytes", wsFrameSizeMin, s.cfg.WSFrameMax)
+	}
+	return int(requested), nil
 }
 
 // readWSControl reads the next WebSocket message, requires it to be a text
