@@ -17,6 +17,7 @@ type wsAck struct {
 	Error string `json:"error,omitempty"`
 	Size  int64  `json:"size,omitempty"`
 	Name  string `json:"name,omitempty"`
+	Hash  string `json:"hash,omitempty"`
 }
 
 func (s *Server) checkWSAuth(key string) bool {

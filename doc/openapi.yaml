@@ -354,6 +354,118 @@ paths:
         "500":
           description: Internal server error (transform failure or I/O error).
 
+  /api/sim/download:
+    post:
+      operationId: simDownload
+      summary: Download a chunk of a synthesized file (benchmark)
+      description: |
+        Returns a byte range of a synthesized file, for probing whether a given network path
+        (proxy, etc.) tolerates a transfer of a given size — without touching the filesystem or
+        applying any transform.
+
+        The synthesized file's content is `<totalSize-as-decimal><space><0xFF padding>`, out to
+        `totalSize` bytes total. `totalSize` must be large enough for its own decimal
+        representation plus the space to fit (e.g. `totalSize: 1` is rejected), and at most 100 MiB
+        (104857600 bytes).
+
+        As with `/api/files/download`, set `start=0` and `size` equal to `totalSize` for a single
+        request, or issue multiple requests with successive `start` offsets to simulate a chunked
+        transfer.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [totalSize, start, size]
+              properties:
+                totalSize:
+                  type: integer
+                  format: int64
+                  minimum: 1
+                  maximum: 104857600
+                  description: Total size of the synthesized file, in bytes.
+                  example: 1048576
+                start:
+                  type: integer
+                  format: int64
+                  minimum: 0
+                  description: Byte offset to begin reading from.
+                  example: 0
+                size:
+                  type: integer
+                  format: int64
+                  minimum: 1
+                  description: Number of bytes to read. Must be positive.
+                  example: 1048576
+            example:
+              totalSize: 1048576
+              start: 0
+              size: 1048576
+      responses:
+        "200":
+          description: Chunk of the synthesized file.
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        "400":
+          description: |
+            Invalid request — malformed JSON, `totalSize` out of range or too small to fit its own
+            header, negative `start`, or non-positive `size`.
+        "401":
+          description: Missing or invalid `X-Auth` header.
+        "405":
+          description: Method not allowed.
+
+  /api/sim/upload:
+    post:
+      operationId: simUpload
+      summary: Upload a file for hashing (benchmark)
+      description: |
+        Accepts a file the same way `/api/files/upload` does, but never writes it to disk: the
+        received bytes are hashed with SHA-256 and the hash is returned, so a client can verify a
+        benchmark upload arrived intact without the server needing storage for it. No transform is
+        applied.
+
+        This endpoint is only available when the server was started with `-ul-root`
+        (matching `/api/files/upload`'s gating), even though nothing is written to disk. If not
+        configured, the endpoint returns 404. The upload is capped at 100 MiB (104857600 bytes).
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  format: binary
+                  description: File data to hash.
+      responses:
+        "200":
+          description: File received and hashed successfully.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [hash]
+                properties:
+                  hash:
+                    type: string
+                    description: SHA-256 hash of the received bytes, hex-encoded.
+                    example: 3a7bd3e2360a3d29eea436fcfb7e44c735d117c42d1c1835420b6b9942dd4f1
+        "400":
+          description: Invalid request — malformed multipart form or file exceeds 100 MiB.
+        "401":
+          description: Missing or invalid `X-Auth` header.
+        "404":
+          description: Upload not configured (server started without `-ul-root`).
+        "405":
+          description: Method not allowed.
+
   /api/files/ul-list:
     get:
       operationId: listUploads

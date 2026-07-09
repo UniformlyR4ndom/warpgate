@@ -64,6 +64,8 @@ function filesApp() {
     tab: 'download',
     uploadEntries: [],
     uploadError: null,
+    benchmarkResults: [],
+    benchmarkRunning: false,
     clipItems: [],
     clipText: '',
     clipEditId: null,
@@ -106,9 +108,14 @@ function filesApp() {
         chunkSize: 100,
         reassemble: false,
       },
+      benchmark: {
+        sizeMB: 10,
+        chunkSizeMB: 4,
+      },
       panel: {
         open: true,
         authOpen: true,
+        benchmarkOpen: true,
         transformOpen: true,
         chunkingOpen: true,
         generalOpen: true,
@@ -181,12 +188,16 @@ function filesApp() {
       } catch(e) {}
     },
 
-    randomHex(byteCount) {
-      var bytes = new Uint8Array(byteCount);
-      window.crypto.getRandomValues(bytes);
+    bytesToHex(bytes) {
       return Array.from(bytes).map(function(b) {
         return ('0' + b.toString(16)).slice(-2);
       }).join('');
+    },
+
+    randomHex(byteCount) {
+      var bytes = new Uint8Array(byteCount);
+      window.crypto.getRandomValues(bytes);
+      return this.bytesToHex(bytes);
     },
 
     authHeaders() {
@@ -719,6 +730,213 @@ function filesApp() {
 
     triggerFileInput() {
       document.getElementById('ulFileInput').click();
+    },
+
+    // ── Benchmark tab ──
+    // Exercises /api/sim/* (no transform, no filesystem access) to probe
+    // which transport/frame size gets through a given proxy. Download
+    // discards received bytes but checks the byte count of each response;
+    // upload hashes locally and compares against the server's reported hash.
+
+    clampBenchmarkSettings() {
+      var b = this.settings.benchmark;
+      if (!(b.sizeMB >= 1))   { b.sizeMB = 1; }
+      if (b.sizeMB > 100)     { b.sizeMB = 100; }
+      if (!(b.chunkSizeMB >= 1)) { b.chunkSizeMB = 1; }
+      if (b.chunkSizeMB > b.sizeMB) { b.chunkSizeMB = b.sizeMB; }
+    },
+
+    addBenchmarkResult(result) {
+      result.id = Date.now() + '-' + Math.random().toString(36).slice(2);
+      this.benchmarkResults.unshift(result);
+    },
+
+    clearBenchmarkResults() {
+      this.benchmarkResults = [];
+    },
+
+    formatDuration(ms) {
+      return (ms / 1000).toFixed(2) + ' s';
+    },
+
+    formatThroughput(bytes, ms) {
+      if (!(ms > 0)) return '-';
+      var mbps = (bytes / (ms / 1000)) / (1024 * 1024);
+      return mbps.toFixed(2) + ' MB/s';
+    },
+
+    formatChunkFrame(r) {
+      var parts = [];
+      if (r.chunkBytes) { parts.push('chunk ' + this.formatSize(r.chunkBytes)); }
+      if (r.frameBytes) { parts.push('frame ' + this.formatSize(r.frameBytes)); }
+      return parts.length ? parts.join(' / ') : '-';
+    },
+
+    async fetchSimChunkHTTP(totalSize, start, size) {
+      var res = await fetch('/api/sim/download', {
+        method:  'POST',
+        headers: Object.assign({ 'Content-Type': 'application/json' }, this.authHeaders()),
+        body:    JSON.stringify({ totalSize: totalSize, start: start, size: size }),
+      });
+      if (!res.ok) throw Object.assign(new Error('HTTP ' + res.status), { status: res.status });
+      var buffer = await res.arrayBuffer();
+      if (buffer.byteLength !== size) {
+        throw new Error('expected ' + size + ' bytes, got ' + buffer.byteLength);
+      }
+    },
+
+    async fetchSimChunkWS(wsSession, totalSize, start, size) {
+      if (!wsSession.ws) {
+        var ws = await wsOpen(this.wsBaseURL() + '/api/sim/ws/download');
+        ws.send(JSON.stringify({
+          auth:      this.settings.auth.key,
+          totalSize: totalSize,
+          frameSize: this.settings.wsFrameSizeKB * 1024,
+        }));
+        var ack = await wsNextJSON(ws);
+        if (!ack.ok) { ws.close(); throw new Error(ack.error || 'download failed'); }
+        wsSession.ws = ws;
+      }
+
+      wsSession.ws.send(JSON.stringify({ start: start, size: size }));
+
+      var received = 0;
+      while (received < size) {
+        var raw = await wsNextMessage(wsSession.ws);
+        if (typeof raw === 'string') {
+          var msg = JSON.parse(raw);
+          throw new Error(msg.error || 'download failed');
+        }
+        received += raw.byteLength;
+      }
+      if (received !== size) {
+        throw new Error('expected ' + size + ' bytes, got ' + received);
+      }
+    },
+
+    async fetchSimChunk(wsSession, totalSize, start, size) {
+      if (this.settings.backend === 'ws') { return this.fetchSimChunkWS(wsSession, totalSize, start, size); }
+      return this.fetchSimChunkHTTP(totalSize, start, size);
+    },
+
+    async runDownloadBenchmark() {
+      if (this.benchmarkRunning) return;
+      this.clampBenchmarkSettings();
+      this.benchmarkRunning = true;
+
+      var backend   = this.settings.backend;
+      var totalSize = this.settings.benchmark.sizeMB * 1024 * 1024;
+      var chunkSize = Math.min(this.settings.benchmark.chunkSizeMB * 1024 * 1024, totalSize);
+      var frameSize = backend === 'ws' ? this.settings.wsFrameSizeKB * 1024 : null;
+      var wsSession = { ws: null };
+      var startTime = performance.now();
+
+      try {
+        for (var offset = 0; offset < totalSize; offset += chunkSize) {
+          var size = Math.min(chunkSize, totalSize - offset);
+          await this.fetchSimChunk(wsSession, totalSize, offset, size);
+        }
+        this.addBenchmarkResult({
+          direction: 'download', backend: backend, sizeBytes: totalSize,
+          chunkBytes: chunkSize, frameBytes: frameSize,
+          durationMs: performance.now() - startTime, ok: true,
+        });
+      } catch(err) {
+        this.addBenchmarkResult({
+          direction: 'download', backend: backend, sizeBytes: totalSize,
+          chunkBytes: chunkSize, frameBytes: frameSize,
+          durationMs: performance.now() - startTime, ok: false,
+          error: err.status ? 'HTTP ' + err.status : String(err.message || err),
+        });
+      } finally {
+        this.closeWSSession(wsSession);
+        this.benchmarkRunning = false;
+      }
+    },
+
+    // crypto.getRandomValues rejects requests over 65536 bytes in one call.
+    generateRandomBuffer(totalSize) {
+      var buf = new Uint8Array(totalSize);
+      var CHUNK = 65536;
+      for (var offset = 0; offset < totalSize; offset += CHUNK) {
+        var len = Math.min(CHUNK, totalSize - offset);
+        window.crypto.getRandomValues(buf.subarray(offset, offset + len));
+      }
+      return buf.buffer;
+    },
+
+    async uploadSimHTTP(buffer) {
+      var fd = new FormData();
+      fd.append('file', new Blob([buffer]), 'bench.bin');
+      var res = await fetch('/api/sim/upload', { method: 'POST', headers: this.authHeaders(), body: fd });
+      if (!res.ok) throw Object.assign(new Error('HTTP ' + res.status), { status: res.status });
+      var data = await res.json();
+      return data.hash;
+    },
+
+    async uploadSimWS(buffer) {
+      var frameSize = this.settings.wsFrameSizeKB * 1024;
+      var ws = await wsOpen(this.wsBaseURL() + '/api/sim/ws/upload');
+      try {
+        ws.send(JSON.stringify({ auth: this.settings.auth.key, frameSize: frameSize }));
+        var ack = await wsNextJSON(ws);
+        if (!ack.ok) throw new Error(ack.error || 'upload failed');
+
+        var bytes = new Uint8Array(buffer);
+        for (var offset = 0; offset < bytes.length; offset += frameSize) {
+          ws.send(bytes.slice(offset, offset + frameSize));
+        }
+        ws.send(JSON.stringify({ done: true }));
+
+        var final = await wsNextJSON(ws);
+        if (!final.ok) throw new Error(final.error || 'upload failed');
+        return final.hash;
+      } finally {
+        ws.close();
+      }
+    },
+
+    async runUploadBenchmark() {
+      if (this.benchmarkRunning) return;
+      this.clampBenchmarkSettings();
+      this.benchmarkRunning = true;
+
+      var backend   = this.settings.backend;
+      var totalSize = this.settings.benchmark.sizeMB * 1024 * 1024;
+      var frameSize = backend === 'ws' ? this.settings.wsFrameSizeKB * 1024 : null;
+      var startTime = performance.now();
+
+      if (!window.crypto.subtle) {
+        this.addBenchmarkResult({
+          direction: 'upload', backend: backend, sizeBytes: totalSize, frameBytes: frameSize,
+          durationMs: 0, ok: false,
+          error: 'SHA-256 hashing requires a secure context (HTTPS or localhost)',
+        });
+        this.benchmarkRunning = false;
+        return;
+      }
+
+      try {
+        var buffer       = this.generateRandomBuffer(totalSize);
+        var digest       = await window.crypto.subtle.digest('SHA-256', buffer);
+        var expectedHash = this.bytesToHex(new Uint8Array(digest));
+        var hash = (backend === 'ws') ? await this.uploadSimWS(buffer) : await this.uploadSimHTTP(buffer);
+        var hashMatch = hash === expectedHash;
+
+        this.addBenchmarkResult({
+          direction: 'upload', backend: backend, sizeBytes: totalSize, frameBytes: frameSize,
+          durationMs: performance.now() - startTime, ok: hashMatch,
+          error: hashMatch ? null : 'hash mismatch (data corrupted in transit)',
+        });
+      } catch(err) {
+        this.addBenchmarkResult({
+          direction: 'upload', backend: backend, sizeBytes: totalSize, frameBytes: frameSize,
+          durationMs: performance.now() - startTime, ok: false,
+          error: err.status ? 'HTTP ' + err.status : String(err.message || err),
+        });
+      } finally {
+        this.benchmarkRunning = false;
+      }
     },
   };
 }

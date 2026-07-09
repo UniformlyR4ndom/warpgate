@@ -27,6 +27,10 @@ The Go module (`warpgate`, Go 1.25.0) lives at the repo root. The frontend is em
 | GET      | `/api/files/ul-list`    | Yes           | List files in the upload directory |
 | GET/Upgrade | `/api/files/ws/download`  | Yes (in-band) | WebSocket alternative to `/api/files/download`; see below |
 | GET/Upgrade | `/api/files/ws/upload`    | Yes (in-band) | WebSocket alternative to `/api/files/upload` (requires `-ul-root`); see below |
+| POST     | `/api/sim/download`     | Yes           | Download a chunk of a synthesized file, no transform applied; see "Benchmark/Simulation Endpoints" |
+| POST     | `/api/sim/upload`       | Yes           | Upload a file for SHA-256 hashing (requires `-ul-root`), nothing written to disk; see below |
+| GET/Upgrade | `/api/sim/ws/download`  | Yes (in-band) | WebSocket alternative to `/api/sim/download`; see below |
+| GET/Upgrade | `/api/sim/ws/upload`    | Yes (in-band) | WebSocket alternative to `/api/sim/upload` (requires `-ul-root`); see below |
 | GET      | `/api/clip/list`        | Yes           | List all clipboard notes |
 | POST     | `/api/clip/new`         | Yes           | Create a clipboard note; body: `{"data":"<base64>"}` |
 | POST     | `/api/clip/edit`        | Yes           | Update a note's content and timestamp; body: `{"id":<id>,"data":"<base64>"}` |
@@ -132,6 +136,57 @@ independent calls. Concretely:
 
 `doc/openapi.yaml` is REST/HTTP-only and does not model these two endpoints; this section is their
 source of truth.
+
+## Benchmark/Simulation Endpoints
+
+`/api/sim/download`, `/api/sim/ws/download`, `/api/sim/upload`, and `/api/sim/ws/upload`
+(`sim.go`, `sim_download.go`, `sim_upload.go`, `sim_ws_download.go`, `sim_ws_upload.go`) exist
+purely to probe which transport (HTTP POST vs. WebSocket) and frame/chunk size work through a given
+proxy, independent of any transform. **No transform is applied and no filesystem I/O happens** on
+either side — these endpoints exist to isolate transport behavior from everything else, so unlike
+`/api/files/*` they take no `transform`/`args` fields at all.
+
+**Download** synthesizes a file server-side instead of reading one from `-root`: the content is
+`<totalSize-as-decimal><space><0xFF padding>`, out to `totalSize` bytes total, generated on the fly
+by `simReader` (`sim.go`) for an arbitrary `[start, …)` window so ranged/chunked requests never
+materialize the whole file. `validateSimTotalSize` enforces `1 <= totalSize <= simMaxTotalSize` (100
+MiB) and that `totalSize` is large enough for its own decimal representation plus the trailing space
+to fit (e.g. `totalSize: 1` is rejected). The frontend is expected to discard the downloaded bytes
+rather than save them.
+
+**Upload** accepts a file the same way `/api/files/upload` does (gated behind `-ul-root`, even
+though nothing is written to disk — matching the operator's intent to disable upload-shaped
+features entirely via that flag) but never writes it: the received bytes are streamed straight into
+a SHA-256 hash, capped at `simMaxTotalSize`, and the hex-encoded hash is returned instead of a
+filename, so a client can verify a benchmark upload arrived intact without server-side storage.
+
+Because there's no transform step requiring the full contents assembled in one place first, the WS
+upload variant hashes frames incrementally as they arrive rather than buffering them like
+`handleWSUpload` does.
+
+**HTTP request/response shapes** (see `doc/openapi.yaml` for the authoritative schema):
+- `POST /api/sim/download`: `{"totalSize":1048576,"start":0,"size":1048576}` → raw bytes
+  (`application/octet-stream`)
+- `POST /api/sim/upload`: multipart form with a single `file` part → `{"hash":"<hex>"}`
+
+**WS download protocol:**
+1. Client → Server (text): `{"auth":"<key>","totalSize":1048576,"frameSize":1048576}`
+2. Server → Client (text): `{"ok":true,"size":1048576}` (`size` echoes `totalSize`) or
+   `{"ok":false,"error":"..."}`
+3. Client → Server (text, repeated): `{"start":0,"size":1048576}` (reuses `wsChunkRequest`, the same
+   type `/api/files/ws/download` uses) or `{"done":true}` to end the session
+4. Server → Client (binary, one or more messages, each ≤ `frameSize`): the requested chunk of the
+   synthesized file
+5. On any error: server sends `{"ok":false,"error":"..."}` then closes
+
+**WS upload protocol:**
+1. Client → Server (text): `{"auth":"<key>","frameSize":1048576}` (no filename)
+2. Server → Client (text): `{"ok":true}` or `{"ok":false,"error":"..."}`
+3. Client → Server (binary, one or more messages, each ≤ `frameSize`): raw bytes to hash; the running
+   total is checked against `simMaxTotalSize` on every message, aborting the connection if exceeded
+4. Client → Server (text, final): `{"done":true}`
+5. Server → Client (text, final): `{"ok":true,"hash":"<hex>"}`, then a normal close
+6. On any error: server sends `{"ok":false,"error":"..."}` then closes
 
 ## Authentication
 

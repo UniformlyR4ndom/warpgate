@@ -85,6 +85,8 @@ func NewServer(cfg Config, db *DB) (*Server, error) {
 	// WebSocket handshake, so auth is instead checked inside the handler
 	// against the first control message sent after upgrade.
 	s.mux.Handle("/api/files/ws/download", http.HandlerFunc(s.handleWSDownload))
+	s.mux.Handle("/api/sim/download", s.withAuth(s.handleSimDownload))
+	s.mux.Handle("/api/sim/ws/download", http.HandlerFunc(s.handleSimWSDownload))
 	if cfg.UlRoot != "" {
 		absUlRoot, err := filepath.Abs(cfg.UlRoot)
 		if err != nil {
@@ -94,6 +96,8 @@ func NewServer(cfg Config, db *DB) (*Server, error) {
 		s.mux.Handle("/api/files/upload", s.withAuth(s.handleUpload))
 		s.mux.Handle("/api/files/ul-list", s.withAuth(s.handleUlList))
 		s.mux.Handle("/api/files/ws/upload", http.HandlerFunc(s.handleWSUpload))
+		s.mux.Handle("/api/sim/upload", s.withAuth(s.handleSimUpload))
+		s.mux.Handle("/api/sim/ws/upload", http.HandlerFunc(s.handleSimWSUpload))
 	}
 	return s, nil
 }

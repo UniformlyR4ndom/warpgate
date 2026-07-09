@@ -44,6 +44,18 @@
           </div>
         </section>
 
+        <section class="panel-section" x-show="tab === 'benchmark'">
+          <h2 class="section-header" @click="settings.panel.benchmarkOpen = !settings.panel.benchmarkOpen">
+            <span class="section-arrow" x-text="settings.panel.benchmarkOpen ? '▾' : '▸'"></span>Benchmark
+          </h2>
+          <div x-show="settings.panel.benchmarkOpen">
+            <label>Size (MB)</label>
+            <input type="number" x-model.number="settings.benchmark.sizeMB" min="1" max="100">
+            <label>Chunk size (MB)</label>
+            <input type="number" x-model.number="settings.benchmark.chunkSizeMB" min="1" :max="settings.benchmark.sizeMB">
+          </div>
+        </section>
+
         <section class="panel-section" x-show="tab === 'download'">
           <h2 class="section-header" @click="settings.panel.chunkingOpen = !settings.panel.chunkingOpen">
             <span class="section-arrow" x-text="settings.panel.chunkingOpen ? '▾' : '▸'"></span>Chunking
@@ -77,7 +89,7 @@
             <label class="auto-label">
               <input type="checkbox" x-model="settings.confirmDelete"> Confirm note delete
             </label>
-            <div x-show="tab === 'download' || tab === 'upload'">
+            <div x-show="tab === 'download' || tab === 'upload' || tab === 'benchmark'">
               <label>Backend</label>
               <select x-model="settings.backend" x-ref="backendSelect">
                 <template x-for="b in backendTypes" :key="b.id">
@@ -85,7 +97,7 @@
                 </template>
               </select>
             </div>
-            <div x-show="(tab === 'download' || tab === 'upload') && settings.backend === 'ws'">
+            <div x-show="(tab === 'download' || tab === 'upload' || tab === 'benchmark') && settings.backend === 'ws'">
               <label>WS frame size (KB)</label>
               <input type="number" x-model.number="settings.wsFrameSizeKB"
                      :min="wsFrameMinKB" :max="wsFrameMaxKB">
@@ -161,6 +173,7 @@
         <button class="tab-btn" :class="{'active': tab === 'download'}"   @click="setTab('download')">Download</button>
         <button class="tab-btn" :class="{'active': tab === 'upload'}"     @click="setTab('upload')">Upload</button>
         <button class="tab-btn" :class="{'active': tab === 'clipboard'}"  @click="setTab('clipboard')">Clipboard</button>
+        <button class="tab-btn" :class="{'active': tab === 'benchmark'}"  @click="setTab('benchmark')">Benchmark</button>
       </div>
 
       <div x-show="tab === 'download'">
@@ -244,6 +257,41 @@
           </template>
           <div x-show="!clipError && clipItems.length === 0" class="upload-empty">No notes yet.</div>
         </div>
+      </div>
+
+      <div x-show="tab === 'benchmark'">
+        <div class="benchmark-actions">
+          <button class="choose-btn" @click="runDownloadBenchmark()" :disabled="benchmarkRunning">Run Download Benchmark</button>
+          <button class="choose-btn" @click="runUploadBenchmark()" :disabled="benchmarkRunning">Run Upload Benchmark</button>
+          <button class="choose-btn" @click="clearBenchmarkResults()" :disabled="benchmarkResults.length === 0">Clear results</button>
+        </div>
+        <table x-show="benchmarkResults.length > 0">
+          <thead>
+            <tr>
+              <th>Direction</th>
+              <th>Backend</th>
+              <th class="col-size">Size</th>
+              <th>Chunk/Frame</th>
+              <th class="col-size">Duration</th>
+              <th class="col-size">Throughput</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            <template x-for="r in benchmarkResults" :key="r.id">
+              <tr class="bench-row">
+                <td x-text="r.direction === 'download' ? 'Download' : 'Upload'"></td>
+                <td x-text="r.backend === 'ws' ? 'Websocket' : 'HTTP POST'"></td>
+                <td class="col-size" x-text="formatSize(r.sizeBytes)"></td>
+                <td x-text="formatChunkFrame(r)"></td>
+                <td class="col-size" x-text="formatDuration(r.durationMs)"></td>
+                <td class="col-size" x-text="r.ok ? formatThroughput(r.sizeBytes, r.durationMs) : '-'"></td>
+                <td :class="r.ok ? 'bench-ok' : 'bench-fail'" x-text="r.ok ? 'OK' : ('Failed: ' + r.error)"></td>
+              </tr>
+            </template>
+          </tbody>
+        </table>
+        <div x-show="benchmarkResults.length === 0" class="upload-empty">No benchmark runs yet.</div>
       </div>
     </main>
 

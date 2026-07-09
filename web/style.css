@@ -429,3 +429,23 @@ th {
   display: inline-block;
   transform: scaleX(1.4);
 }
+
+/* ── Benchmark tab ── */
+
+.benchmark-actions {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+}
+
+.bench-row td {
+  padding: 0.3rem 1rem 0.3rem 0;
+}
+
+.bench-ok {
+  color: #4ec9b0;
+}
+
+.bench-fail {
+  color: #f44747;
+}
