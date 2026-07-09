@@ -63,6 +63,10 @@ func NewServer(cfg Config, db *DB) (*Server, error) {
 	s.mux.Handle("/api/clip/delete", s.withAuth(s.handleClipDelete))
 	s.mux.Handle("/api/files/list", s.withAuth(s.handleList))
 	s.mux.Handle("/api/files/get", s.withAuth(s.handleGet))
+	// Not wrapped in withAuth: browsers can't set custom headers on a
+	// WebSocket handshake, so auth is instead checked inside the handler
+	// against the first control message sent after upgrade.
+	s.mux.Handle("/api/ws/download", http.HandlerFunc(s.handleWSDownload))
 	if cfg.UlRoot != "" {
 		absUlRoot, err := filepath.Abs(cfg.UlRoot)
 		if err != nil {
@@ -71,6 +75,7 @@ func NewServer(cfg Config, db *DB) (*Server, error) {
 		s.absUlRoot = absUlRoot
 		s.mux.Handle("/api/files/upload", s.withAuth(s.handleUpload))
 		s.mux.Handle("/api/files/ul-list", s.withAuth(s.handleUlList))
+		s.mux.Handle("/api/ws/upload", http.HandlerFunc(s.handleWSUpload))
 	}
 	return s, nil
 }

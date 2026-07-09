@@ -24,6 +24,8 @@ The Go module (`warpgate`, Go 1.25.0) lives at the repo root. The frontend is em
 | POST     | `/api/files/get`        | Yes           | Download a (chunk of a) file with a transform applied |
 | POST     | `/api/files/upload`     | Yes           | Upload a file (requires `-ul-root`); multipart form |
 | GET      | `/api/files/ul-list`    | Yes           | List files in the upload directory |
+| GET/Upgrade | `/api/ws/download`  | Yes (in-band) | WebSocket alternative to `/api/files/get`; see below |
+| GET/Upgrade | `/api/ws/upload`    | Yes (in-band) | WebSocket alternative to `/api/files/upload` (requires `-ul-root`); see below |
 | GET      | `/api/clip/list`        | Yes           | List all clipboard notes |
 | POST     | `/api/clip/new`         | Yes           | Create a clipboard note; body: `{"data":"<base64>"}` |
 | POST     | `/api/clip/edit`        | Yes           | Update a note's content and timestamp; body: `{"id":<id>,"data":"<base64>"}` |
@@ -51,6 +53,48 @@ The full API is documented in `doc/openapi.yaml`.
 Two parts:
 - `transform` (optional file part, JSON): `{"transform":"pdf","args":{"filename":"myfile.txt"}}`
 - `file`: the file data (already encoded by the frontend)
+
+## WebSocket Transport
+
+`/api/ws/download` and `/api/ws/upload` are a second, user-selectable transport for the same
+operations as `/api/files/get` and `/api/files/upload`, implemented in `ws.go`, `ws_get.go`, and
+`ws_upload.go` (using `github.com/gorilla/websocket`). They exist alongside the HTTP transport, not
+instead of it — the client picks per transfer. One WebSocket connection handles exactly one file
+end to end; chunking within that connection is optional and orthogonal to the transport choice (see
+"Transform System" below for why chunking matters independent of transport).
+
+Browsers cannot set the `X-Auth` header on a WebSocket handshake request, so these two routes are
+registered without the `withAuth` middleware; instead, auth is checked in-band against the `auth`
+field of the first control message sent after upgrade. An invalid key gets a
+`{"ok":false,"error":"unauthorized"}` message followed by a close frame with code 1008 (policy
+violation).
+
+Control messages are JSON text frames; file data is sent as binary frames. Because the transform
+functions are stateless per call (a fresh cipher/reader is constructed each time), a single
+`Transformer` is built once per connection from the first message's `transform`/`args` and reused
+across chunks.
+
+**Download protocol:**
+1. Client → Server (text): `{"auth":"<key>","path":"...","transform":"xor","args":{...}}`
+2. Server → Client (text): `{"ok":true,"size":12345}` or `{"ok":false,"error":"..."}`
+3. Client → Server (text, repeated, one at a time — no pipelining): `{"start":0,"size":1048576}` to
+   request a chunk, or `{"done":true}` to end the session
+4. Server → Client (binary): the transformed chunk for the requested range
+5. On any error: server sends `{"ok":false,"error":"..."}` then closes
+
+**Upload protocol:**
+1. Client → Server (text): `{"auth":"<key>","filename":"...","transform":"xor","args":{...}}`
+2. Server → Client (text): `{"ok":true}` or `{"ok":false,"error":"..."}`
+3. Client → Server (binary, repeated): one self-contained transformed chunk — same shape
+   `Untransform` already expects (e.g. each chunk is its own complete PDF/HTML document when using
+   those transforms, exactly as the HTTP download path already treats each chunk independently)
+4. Client → Server (text, final): `{"done":true}`
+5. Server → Client (text, final): `{"ok":true,"name":"<filename>"}`, then a normal close
+6. On any error: server sends `{"ok":false,"error":"..."}` then closes; a partial output file may be
+   left behind, matching the existing HTTP upload path's behavior on a mid-copy failure
+
+`doc/openapi.yaml` is REST/HTTP-only and does not model these two endpoints; this section is their
+source of truth.
 
 ## Authentication
 
@@ -243,6 +287,7 @@ All JS libraries are served locally (embedded in the binary); no CDN requests at
 |---------|---------|---------|
 | `github.com/pdfcpu/pdfcpu` | v0.13.0 | Create PDFs, add/extract attachments, AES-256 encryption |
 | `modernc.org/sqlite` | v1.53.0 | Pure-Go SQLite driver (no CGO); clipboard storage |
+| `github.com/gorilla/websocket` | v1.5.3 | WebSocket transport for `/api/ws/download` and `/api/ws/upload` |
 
 ## Development
 
