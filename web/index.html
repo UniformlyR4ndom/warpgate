@@ -33,10 +33,11 @@
             <span class="section-arrow" x-text="settings.panel.authOpen ? '▾' : '▸'"></span>Auth
           </h2>
           <div x-show="settings.panel.authOpen">
-            <label>Key (X-Auth header)</label>
+            <label title="Sent as the X-Auth header on every API request. Leave empty if the server was started with -no-auth.">Key (X-Auth header)</label>
             <div class="key-input-wrap">
               <input type="text" x-model="settings.auth.key"
                      placeholder="leave empty to skip" autocomplete="off"
+                     title="Sent as the X-Auth header on every API request. Leave empty if the server was started with -no-auth."
                      :class="{'key-masked': !authShowKey}">
               <button type="button" class="key-toggle" @click="authShowKey = !authShowKey"
                       :title="authShowKey ? 'Hide key' : 'Show key'">👁</button>
@@ -49,10 +50,12 @@
             <span class="section-arrow" x-text="settings.panel.benchmarkOpen ? '▾' : '▸'"></span>Benchmark
           </h2>
           <div x-show="settings.panel.benchmarkOpen">
-            <label>Size (MB)</label>
-            <input type="number" x-model.number="settings.benchmark.sizeMB" min="1" max="100">
-            <label>Chunk size (MB)</label>
-            <input type="number" x-model.number="settings.benchmark.chunkSizeMB" min="1" :max="settings.benchmark.sizeMB">
+            <label title="Total size of the synthetic file transferred by the benchmark (1-100 MB). Nothing is read from or written to disk - all data is synthesized.">Size (MB)</label>
+            <input type="number" x-model.number="settings.benchmark.sizeMB" min="1" max="100"
+                   title="Total size of the synthetic file transferred by the benchmark (1-100 MB). Nothing is read from or written to disk - all data is synthesized.">
+            <label title="Splits the download benchmark into multiple {start,size} requests of this size, simulating a chunked transfer. Not used by the upload benchmark, which always sends the whole file in one request.">Chunk size (MB)</label>
+            <input type="number" x-model.number="settings.benchmark.chunkSizeMB" min="1" :max="settings.benchmark.sizeMB"
+                   title="Splits the download benchmark into multiple {start,size} requests of this size, simulating a chunked transfer. Not used by the upload benchmark, which always sends the whole file in one request.">
           </div>
         </section>
 
@@ -61,15 +64,17 @@
             <span class="section-arrow" x-text="settings.panel.chunkingOpen ? '▾' : '▸'"></span>Chunking
           </h2>
           <div x-show="settings.panel.chunkingOpen">
-            <label class="auto-label">
+            <label class="auto-label"
+                   title="Split a file download into multiple sequential requests instead of one, useful for very large files or flaky connections.">
               <input type="checkbox" x-model="settings.chunking.enabled"> Enable chunking
             </label>
             <div x-show="settings.chunking.enabled">
-              <label>Chunk size (MB)</label>
-              <input type="number" x-model="settings.chunking.chunkSize" min="1">
+              <label title="Size of each downloaded chunk, in megabytes.">Chunk size (MB)</label>
+              <input type="number" x-model="settings.chunking.chunkSize" min="1"
+                     title="Size of each downloaded chunk, in megabytes.">
               <label class="auto-label"
                      :class="{'disabled': !hasFileSystemAccess}"
-                     :title="hasFileSystemAccess ? '' : 'File System Access API is required for efficient reassembly'">
+                     :title="hasFileSystemAccess ? 'Write chunks directly to a single file on disk as they arrive (File System Access API) instead of downloading each chunk as a separate file.' : 'File System Access API is required for efficient reassembly'">
                 <input type="checkbox"
                        x-model="settings.chunking.reassemble"
                        :disabled="!hasFileSystemAccess"> Reassemble chunks
@@ -83,24 +88,26 @@
             <span class="section-arrow" x-text="settings.panel.generalOpen ? '▾' : '▸'"></span>General
           </h2>
           <div x-show="settings.panel.generalOpen">
-            <label class="auto-label">
+            <label class="auto-label" title="Reload the current tab's list every second.">
               <input type="checkbox" x-model="settings.autoRefresh"> Auto-refresh
             </label>
-            <label class="auto-label">
+            <label class="auto-label" title="Ask for confirmation before deleting a clipboard note.">
               <input type="checkbox" x-model="settings.confirmDelete"> Confirm note delete
             </label>
             <div x-show="tab === 'download' || tab === 'upload' || tab === 'benchmark'">
-              <label>Backend</label>
-              <select x-model="settings.backend" x-ref="backendSelect">
+              <label title="Transport used for downloads, uploads, and the benchmark tab. WebSocket uses one connection per file with a configurable wire frame size.">Backend</label>
+              <select x-model="settings.backend" x-ref="backendSelect"
+                      title="Transport used for downloads, uploads, and the benchmark tab. WebSocket uses one connection per file with a configurable wire frame size.">
                 <template x-for="b in backendTypes" :key="b.id">
                   <option :value="b.id" x-text="b.label"></option>
                 </template>
               </select>
             </div>
             <div x-show="(tab === 'download' || tab === 'upload' || tab === 'benchmark') && settings.backend === 'ws'">
-              <label>WS frame size (KB)</label>
+              <label title="Maximum size of each WebSocket frame. Clamped to the range the server allows.">WS frame size (KB)</label>
               <input type="number" x-model.number="settings.wsFrameSizeKB"
-                     :min="wsFrameMinKB" :max="wsFrameMaxKB">
+                     :min="wsFrameMinKB" :max="wsFrameMaxKB"
+                     title="Maximum size of each WebSocket frame. Clamped to the range the server allows.">
             </div>
           </div>
         </section>
@@ -110,8 +117,9 @@
             <span class="section-arrow" x-text="settings.panel.transformOpen ? '▾' : '▸'"></span>Transform
           </h2>
           <div x-show="settings.panel.transformOpen">
-            <label>Type</label>
-            <select x-model="settings.transform.type" x-ref="transformTypeSelect">
+            <label title="How file content is disguised in transit.">Type</label>
+            <select x-model="settings.transform.type" x-ref="transformTypeSelect"
+                    title="How file content is disguised in transit.">
               <template x-for="t in transformTypes" :key="t.id">
                 <option :value="t.id" x-text="t.label"></option>
               </template>
@@ -119,45 +127,49 @@
 
             <div x-show="settings.transform.type === 'xor'">
               <div class="auto-row">
-                <label>Key (hex)</label>
-                <label class="auto-label">
+                <label title="Hex-encoded key, XOR-ed with the file bytes on a repeating cycle. Any length. Uncheck 'auto' to enter your own.">Key (hex)</label>
+                <label class="auto-label" title="Generate a new random key automatically.">
                   <input type="checkbox" x-model="settings.transform.xor.auto"
                          @change="onAutoChange('xor')"> auto
                 </label>
               </div>
               <input type="text" x-model="settings.transform.xor.key"
                      :readonly="settings.transform.xor.auto"
-                     :class="{'readonly': settings.transform.xor.auto}">
+                     :class="{'readonly': settings.transform.xor.auto}"
+                     title="Hex-encoded key, XOR-ed with the file bytes on a repeating cycle. Any length. Uncheck 'auto' to enter your own.">
             </div>
 
             <div x-show="settings.transform.type === 'aes-ctr'">
               <div class="auto-row">
-                <label>Key (hex, 32 bytes)</label>
-                <label class="auto-label">
+                <label title="Hex-encoded AES key: 16, 24, or 32 bytes (32 = AES-256). Uncheck 'auto' to enter your own.">Key (hex, 32 bytes)</label>
+                <label class="auto-label" title="Generate a new random 32-byte key automatically.">
                   <input type="checkbox" x-model="settings.transform.aesCtr.autoKey"
                          @change="onAutoChange('aes-ctr-key')"> auto
                 </label>
               </div>
               <input type="text" x-model="settings.transform.aesCtr.key"
                      :readonly="settings.transform.aesCtr.autoKey"
-                     :class="{'readonly': settings.transform.aesCtr.autoKey}">
+                     :class="{'readonly': settings.transform.aesCtr.autoKey}"
+                     title="Hex-encoded AES key: 16, 24, or 32 bytes (32 = AES-256). Uncheck 'auto' to enter your own.">
               <div class="auto-row">
-                <label>IV (hex, 16 bytes)</label>
-                <label class="auto-label">
+                <label title="Hex-encoded initialization vector, exactly 16 bytes (one AES block). Uncheck 'auto' to enter your own.">IV (hex, 16 bytes)</label>
+                <label class="auto-label" title="Generate a new random IV automatically.">
                   <input type="checkbox" x-model="settings.transform.aesCtr.autoIv"
                          @change="onAutoChange('aes-ctr-iv')"> auto
                 </label>
               </div>
               <input type="text" x-model="settings.transform.aesCtr.iv"
                      :readonly="settings.transform.aesCtr.autoIv"
-                     :class="{'readonly': settings.transform.aesCtr.autoIv}">
+                     :class="{'readonly': settings.transform.aesCtr.autoIv}"
+                     title="Hex-encoded initialization vector, exactly 16 bytes (one AES block). Uncheck 'auto' to enter your own.">
             </div>
 
             <div x-show="settings.transform.type === 'pdf'">
-              <label>Attachment name</label>
-              <input type="text" x-model="settings.transform.pdf.filename" placeholder="attachment">
+              <label title="Filename the file is embedded under inside the PDF. Defaults to 'attachment' if left blank.">Attachment name</label>
+              <input type="text" x-model="settings.transform.pdf.filename" placeholder="attachment"
+                     title="Filename the file is embedded under inside the PDF. Defaults to 'attachment' if left blank.">
               <div class="auto-row" x-show="tab === 'download'">
-                <label class="auto-label">
+                <label class="auto-label" title="Encrypt the generated PDF (AES-256) with a random password generated fresh per download and never stored server-side. Uploaded PDFs are always unencrypted.">
                   <input type="checkbox" x-model="settings.transform.pdf.password.enabled"> Password protect
                 </label>
               </div>

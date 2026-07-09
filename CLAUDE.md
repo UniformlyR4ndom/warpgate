@@ -9,7 +9,9 @@ The server serves files through a transform that disguises the content (e.g. as 
 The browser-based frontend reverses the transform to recover the original file.
 Files can also be uploaded: the frontend applies the transform before sending, the server reverses it on receipt.
 
-The server also provides a clipboard feature for storing short text notes in a local SQLite database.
+The server also provides a clipboard feature for storing short text notes in a local SQLite database,
+and a benchmark tab for probing which transport (HTTP POST vs. WebSocket) and frame/chunk size a
+given proxy tolerates, independent of any transform.
 
 The Go module (`warpgate`, Go 1.25.0) lives at the repo root. The frontend is embedded into the binary from the `web/` subdirectory.
 
@@ -151,14 +153,24 @@ either side — these endpoints exist to isolate transport behavior from everyth
 by `simReader` (`sim.go`) for an arbitrary `[start, …)` window so ranged/chunked requests never
 materialize the whole file. `validateSimTotalSize` enforces `1 <= totalSize <= simMaxTotalSize` (100
 MiB) and that `totalSize` is large enough for its own decimal representation plus the trailing space
-to fit (e.g. `totalSize: 1` is rejected). The frontend is expected to discard the downloaded bytes
-rather than save them.
+to fit (e.g. `totalSize: 1` is rejected). The frontend never persists the downloaded bytes to disk —
+it reassembles them in memory only long enough to verify a SHA-256 hash against a locally-computed
+expected value (see "Benchmark tab" below), then discards them.
 
 **Upload** accepts a file the same way `/api/files/upload` does (gated behind `-ul-root`, even
 though nothing is written to disk — matching the operator's intent to disable upload-shaped
 features entirely via that flag) but never writes it: the received bytes are streamed straight into
 a SHA-256 hash, capped at `simMaxTotalSize`, and the hex-encoded hash is returned instead of a
 filename, so a client can verify a benchmark upload arrived intact without server-side storage.
+
+The HTTP upload's `simMaxTotalSize` cap applies to the file *content*, not the raw request body: the
+`http.MaxBytesReader` guarding `r.Body` is set to `simMaxTotalSize + multipartOverheadSlack` (64 KiB)
+because multipart/form-data framing (boundary markers, part headers) adds bytes on top of the file
+itself, and a file at exactly `simMaxTotalSize` — the UI's own max, so exactly what a user
+stress-testing the benchmark would pick — would otherwise always overflow a same-sized cap once that
+framing is counted, and get rejected as if it were too large. The actual file content is still
+hard-capped at `simMaxTotalSize`, enforced separately via `io.LimitReader(file, simMaxTotalSize+1)`
+plus an explicit length check after `io.Copy` into the hasher.
 
 Because there's no transform step requiring the full contents assembled in one place first, the WS
 upload variant hashes frames incrementally as they arrive rather than buffering them like
@@ -341,7 +353,7 @@ Handlers `handleClipList`, `handleClipNew`, `handleClipEdit`, `handleClipDelete`
 
 ## Frontend (`web/`)
 
-- `index.html` — Alpine.js v3 SPA with **Download**, **Upload**, and **Clipboard** tabs
+- `index.html` — Alpine.js v3 SPA with **Download**, **Upload**, **Clipboard**, and **Benchmark** tabs
 - `app.js` — single `filesApp()` factory function registered with Alpine; no build step required
 - `style.css` — dark theme
 - `aes.js`, `alpine.min.js`, `pdf.min.js`, `pdf.worker.min.js`, `pdf-lib.min.js` — vendored libraries
@@ -358,17 +370,21 @@ All JS libraries are served locally (embedded in the binary); no CDN requests at
 - `uploadFiles(files)` — dispatches each file to `uploadFileHTTP` or `uploadFileWS` based on `settings.backend`, in parallel, then refreshes the upload listing.
 - `load()` / `loadUploadDir()` / `loadClipboard()` — each compares the fetched data against the current state with `JSON.stringify` and only updates the reactive array on a change, preserving scroll position during auto-refresh.
 - `textToBase64` / `base64ToText` — UTF-8–safe helpers used by the clipboard tab.
+- `sha256Hex(buffer)` — wraps `crypto.subtle.digest('SHA-256', ...)`, hex-encoding via the shared `bytesToHex` helper (also used by `randomHex`). Used by the benchmark tab (see below); requires a secure context (HTTPS or localhost).
+- `runDownloadBenchmark()` / `runUploadBenchmark()` — drive the benchmark tab; see "Benchmark tab" below.
 
 ### UI settings persistence
 
 Everything under Alpine's `settings` object (auth key, backend choice, auto-refresh, confirm-delete,
-WS frame size, transform config, chunking config, and side-panel open/collapsed state) is persisted
-as one JSON blob in `localStorage["warpgate-settings"]`, restored on the next page load. Deliberately
-**not** persisted: `tab`/`pathSegments` (navigation, not configuration — a stale restored path could
-point at a since-deleted directory), `wsFrameMinKB`/`wsFrameMaxKB` (fetched fresh from
-`/api/public/settings` every load, not user configuration), and `authShowKey` (whether the auth key
-is currently unmasked — always starts masked for basic shoulder-surf hygiene, kept as a standalone
-top-level property outside `settings` specifically so it can never end up in the persisted blob).
+WS frame size, transform config, chunking config, benchmark size/chunk-size config, and side-panel
+open/collapsed state) is persisted as one JSON blob in `localStorage["warpgate-settings"]`, restored
+on the next page load. Deliberately **not** persisted: `tab`/`pathSegments` (navigation, not
+configuration — a stale restored path could point at a since-deleted directory), `wsFrameMinKB`/
+`wsFrameMaxKB` (fetched fresh from `/api/public/settings` every load, not user configuration),
+`authShowKey` (whether the auth key is currently unmasked — always starts masked for basic
+shoulder-surf hygiene, kept as a standalone top-level property outside `settings` specifically so it
+can never end up in the persisted blob), and `benchmarkResults` (a run history, not configuration —
+kept as a standalone top-level property for the same reason).
 
 - Shape: `{"version":1,"settings":{...}}` — mirrors the `settings` object exactly, so persistence is
   just "serialize `settings`, merge back into `settings`" with no separate allowlist to maintain. Any
@@ -403,9 +419,14 @@ top-level property outside `settings` specifically so it can never end up in the
 | Section   | Purpose |
 |-----------|---------|
 | Auth      | `X-Auth` key input; masked by default with a 👁 reveal toggle (reveal state itself is not persisted); change triggers listing refresh |
+| Benchmark | Benchmark tab only; Size (MB, 1-100) and Chunk size (MB, ≤ Size) for the synthetic transfer — see "Benchmark tab" below |
 | Chunking  | Enable chunked download (download tab only), set chunk size, enable File System Access API reassembly |
-| General   | Auto-refresh (polls the active tab every second; re-renders only on changes); Confirm note delete; Backend (HTTP POST/Websocket, download+upload tabs); WS frame size in KB (download+upload tabs, only when Backend is Websocket; default 4M, clamped to the server's `-ws-frame-max` via `/api/public/settings`) |
+| General   | Auto-refresh (polls the active tab every second; re-renders only on changes); Confirm note delete; Backend (HTTP POST/Websocket, download+upload+benchmark tabs); WS frame size in KB (download+upload+benchmark tabs, only when Backend is Websocket; default 4M, clamped to the server's `-ws-frame-max` via `/api/public/settings`) |
 | Transform | Select transform type and configure its parameters (auto-generate keys/IVs) |
+
+Every setting in the side panel has a `title` attribute (on both its `<label>` and its input/select)
+giving a native browser tooltip on hover — kept short (1-2 sentences) and factual, not restating the
+label text.
 
 ### Clipboard tab
 
@@ -414,13 +435,40 @@ top-level property outside `settings` specifically so it can never end up in the
 - Each note shows its timestamp and decoded text, with footer action buttons: ⬇ (download as `.txt`), 📋 (copy to system clipboard), ✏ (edit).
 - ✕ delete button in the note header; optionally prompts for confirmation (controlled by "Confirm note delete" in the General panel section).
 
+### Benchmark tab
+
+Drives `/api/sim/*` (see "Benchmark/Simulation Endpoints" above) to probe which transport/frame size
+gets through a given proxy, independent of any transform.
+
+- "Run Download Benchmark" / "Run Upload Benchmark" / "Clear results" buttons, and a results table
+  (newest run first): Direction, Backend, Size, Chunk/Frame, Duration, Throughput, Status.
+- Both directions verify a SHA-256 hash end-to-end, not just a byte count, so a proxy that corrupts
+  even a single byte in transit shows up as a failed run rather than a silently-wrong-but-"successful"
+  one:
+  - **Download**: the synthesized content is a pure function of `totalSize` (see `simReader`), so
+    `buildExpectedSimFile(totalSize)` reproduces it client-side and `sha256Hex` hashes it — no network
+    round trip needed to know the expected hash. Chunks are written into a preallocated
+    `Uint8Array(totalSize)` at the correct offset (`fetchSimChunkHTTP`/`fetchSimChunkWS` return the
+    chunk's bytes instead of just validating its length) and hashed again after the transfer; a
+    mismatch is reported as `"hash mismatch (data corrupted in transit)"`.
+  - **Upload**: `generateRandomBuffer` fills a buffer via `crypto.getRandomValues` (called in ≤64 KiB
+    slices — its per-call limit) and hashes it locally before sending; the hash the server reports
+    back (see `simUploadResponse`/`wsAck.Hash`) must match.
+  - Both directions time only the network portion — the expected/local hash is computed *before* the
+    timer starts (download) or before the upload call (upload), so local CPU hashing time doesn't
+    pollute the reported duration/throughput.
+  - `crypto.subtle` (used by `sha256Hex`) requires a secure context (HTTPS or localhost); if
+    unavailable, a run immediately fails with a message saying so rather than throwing.
+- Size (1-100 MB) and Chunk size (≤ Size) are configured in the Benchmark side-panel section; Backend
+  and (when Websocket) WS frame size are the same settings the Download/Upload tabs use.
+
 ## Go Dependencies
 
 | Package | Version | Purpose |
 |---------|---------|---------|
 | `github.com/pdfcpu/pdfcpu` | v0.13.0 | Create PDFs, add/extract attachments, AES-256 encryption |
 | `modernc.org/sqlite` | v1.53.0 | Pure-Go SQLite driver (no CGO); clipboard storage |
-| `github.com/gorilla/websocket` | v1.5.3 | WebSocket transport for `/api/files/ws/download` and `/api/files/ws/upload` |
+| `github.com/gorilla/websocket` | v1.5.3 | WebSocket transport for `/api/files/ws/{download,upload}` and `/api/sim/ws/{download,upload}` |
 
 ## Development
 

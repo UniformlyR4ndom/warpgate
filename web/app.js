@@ -200,6 +200,11 @@ function filesApp() {
       return this.bytesToHex(bytes);
     },
 
+    async sha256Hex(buffer) {
+      var digest = await window.crypto.subtle.digest('SHA-256', buffer);
+      return this.bytesToHex(new Uint8Array(digest));
+    },
+
     authHeaders() {
       var h = {};
       if (this.settings.auth.key) { h['X-Auth'] = this.settings.auth.key; }
@@ -734,9 +739,23 @@ function filesApp() {
 
     // ── Benchmark tab ──
     // Exercises /api/sim/* (no transform, no filesystem access) to probe
-    // which transport/frame size gets through a given proxy. Download
-    // discards received bytes but checks the byte count of each response;
-    // upload hashes locally and compares against the server's reported hash.
+    // which transport/frame size gets through a given proxy. Both directions
+    // verify a SHA-256 hash: download's synthetic content is a pure function
+    // of totalSize, so the client can compute the expected hash itself
+    // without any network round trip; upload compares against the hash the
+    // server reports back. A mismatch (not just a wrong byte count) is
+    // reported as a failed run.
+
+    // Mirrors simReader server-side: "<totalSize><space>" followed by 0xFF
+    // padding out to totalSize. Deterministic, so the expected hash can be
+    // computed locally before the download starts.
+    buildExpectedSimFile(totalSize) {
+      var buf = new Uint8Array(totalSize);
+      buf.fill(0xff);
+      var header = new TextEncoder().encode(String(totalSize) + ' ');
+      buf.set(header, 0);
+      return buf.buffer;
+    },
 
     clampBenchmarkSettings() {
       var b = this.settings.benchmark;
@@ -783,6 +802,7 @@ function filesApp() {
       if (buffer.byteLength !== size) {
         throw new Error('expected ' + size + ' bytes, got ' + buffer.byteLength);
       }
+      return new Uint8Array(buffer);
     },
 
     async fetchSimChunkWS(wsSession, totalSize, start, size) {
@@ -800,6 +820,7 @@ function filesApp() {
 
       wsSession.ws.send(JSON.stringify({ start: start, size: size }));
 
+      var chunk = new Uint8Array(size);
       var received = 0;
       while (received < size) {
         var raw = await wsNextMessage(wsSession.ws);
@@ -807,11 +828,14 @@ function filesApp() {
           var msg = JSON.parse(raw);
           throw new Error(msg.error || 'download failed');
         }
-        received += raw.byteLength;
+        var piece = new Uint8Array(raw);
+        chunk.set(piece, received);
+        received += piece.byteLength;
       }
       if (received !== size) {
         throw new Error('expected ' + size + ' bytes, got ' + received);
       }
+      return chunk;
     },
 
     async fetchSimChunk(wsSession, totalSize, start, size) {
@@ -828,24 +852,50 @@ function filesApp() {
       var totalSize = this.settings.benchmark.sizeMB * 1024 * 1024;
       var chunkSize = Math.min(this.settings.benchmark.chunkSizeMB * 1024 * 1024, totalSize);
       var frameSize = backend === 'ws' ? this.settings.wsFrameSizeKB * 1024 : null;
-      var wsSession = { ws: null };
-      var startTime = performance.now();
 
-      try {
-        for (var offset = 0; offset < totalSize; offset += chunkSize) {
-          var size = Math.min(chunkSize, totalSize - offset);
-          await this.fetchSimChunk(wsSession, totalSize, offset, size);
-        }
+      if (!window.crypto.subtle) {
         this.addBenchmarkResult({
           direction: 'download', backend: backend, sizeBytes: totalSize,
           chunkBytes: chunkSize, frameBytes: frameSize,
-          durationMs: performance.now() - startTime, ok: true,
+          durationMs: 0, ok: false,
+          error: 'SHA-256 hashing requires a secure context (HTTPS or localhost)',
+        });
+        this.benchmarkRunning = false;
+        return;
+      }
+
+      var wsSession = { ws: null };
+      var startTime = null; // set once the network loop actually starts
+
+      try {
+        // Deterministic from totalSize alone, so this can be computed before
+        // any request goes out and isn't counted toward the transfer time.
+        var expectedHash = await this.sha256Hex(this.buildExpectedSimFile(totalSize));
+
+        var received = new Uint8Array(totalSize);
+        startTime = performance.now();
+        for (var offset = 0; offset < totalSize; offset += chunkSize) {
+          var size  = Math.min(chunkSize, totalSize - offset);
+          var chunk = await this.fetchSimChunk(wsSession, totalSize, offset, size);
+          received.set(chunk, offset);
+        }
+        var durationMs = performance.now() - startTime;
+
+        var receivedHash = await this.sha256Hex(received.buffer);
+        var hashMatch = receivedHash === expectedHash;
+
+        this.addBenchmarkResult({
+          direction: 'download', backend: backend, sizeBytes: totalSize,
+          chunkBytes: chunkSize, frameBytes: frameSize,
+          durationMs: durationMs, ok: hashMatch,
+          error: hashMatch ? null : 'hash mismatch (data corrupted in transit)',
         });
       } catch(err) {
         this.addBenchmarkResult({
           direction: 'download', backend: backend, sizeBytes: totalSize,
           chunkBytes: chunkSize, frameBytes: frameSize,
-          durationMs: performance.now() - startTime, ok: false,
+          durationMs: startTime !== null ? performance.now() - startTime : 0,
+          ok: false,
           error: err.status ? 'HTTP ' + err.status : String(err.message || err),
         });
       } finally {
@@ -904,7 +954,6 @@ function filesApp() {
       var backend   = this.settings.backend;
       var totalSize = this.settings.benchmark.sizeMB * 1024 * 1024;
       var frameSize = backend === 'ws' ? this.settings.wsFrameSizeKB * 1024 : null;
-      var startTime = performance.now();
 
       if (!window.crypto.subtle) {
         this.addBenchmarkResult({
@@ -916,22 +965,29 @@ function filesApp() {
         return;
       }
 
-      try {
-        var buffer       = this.generateRandomBuffer(totalSize);
-        var digest       = await window.crypto.subtle.digest('SHA-256', buffer);
-        var expectedHash = this.bytesToHex(new Uint8Array(digest));
-        var hash = (backend === 'ws') ? await this.uploadSimWS(buffer) : await this.uploadSimHTTP(buffer);
-        var hashMatch = hash === expectedHash;
+      var startTime = null; // set once the network operation actually starts
 
+      try {
+        // Computed before the timer starts, so generating and hashing the
+        // buffer locally isn't counted toward the transfer time.
+        var buffer       = this.generateRandomBuffer(totalSize);
+        var expectedHash = await this.sha256Hex(buffer);
+
+        startTime = performance.now();
+        var hash = (backend === 'ws') ? await this.uploadSimWS(buffer) : await this.uploadSimHTTP(buffer);
+        var durationMs = performance.now() - startTime;
+
+        var hashMatch = hash === expectedHash;
         this.addBenchmarkResult({
           direction: 'upload', backend: backend, sizeBytes: totalSize, frameBytes: frameSize,
-          durationMs: performance.now() - startTime, ok: hashMatch,
+          durationMs: durationMs, ok: hashMatch,
           error: hashMatch ? null : 'hash mismatch (data corrupted in transit)',
         });
       } catch(err) {
         this.addBenchmarkResult({
           direction: 'upload', backend: backend, sizeBytes: totalSize, frameBytes: frameSize,
-          durationMs: performance.now() - startTime, ok: false,
+          durationMs: startTime !== null ? performance.now() - startTime : 0,
+          ok: false,
           error: err.status ? 'HTTP ' + err.status : String(err.message || err),
         });
       } finally {

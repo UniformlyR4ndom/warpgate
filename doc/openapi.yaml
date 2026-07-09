@@ -9,7 +9,9 @@ info:
     frontend applies the transform, the server reverses it.
 
     The server also provides a clipboard API for storing and retrieving short text notes, backed by
-    a local SQLite database (`warpgate.sqlite` by default, configurable with `-db`).
+    a local SQLite database (`warpgate.sqlite` by default, configurable with `-db`), and a set of
+    `/api/sim/*` benchmark endpoints that synthesize/hash data server-side (no transform, no
+    filesystem access) so a client can probe transport behavior through a given network path.
   version: "1.0.0"
 
 servers:
@@ -127,6 +129,36 @@ paths:
       responses:
         "204":
           description: Check-in recorded.
+
+  /api/public/settings:
+    get:
+      operationId: getPublicSettings
+      summary: Get server-configured limits for UI clamping
+      description: |
+        Returns server-configured limits the frontend needs to clamp its own UI inputs (currently
+        just the WebSocket frame size bounds), so a user can't pick a value the server would reject
+        anyway. Does not require authentication.
+      security: []
+      responses:
+        "200":
+          description: Server-configured limits.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [wsFrameMin, wsFrameMax]
+                properties:
+                  wsFrameMin:
+                    type: integer
+                    description: Minimum WebSocket frame size the server accepts, in bytes (fixed at 1024).
+                    example: 1024
+                  wsFrameMax:
+                    type: integer
+                    description: Maximum WebSocket frame size the server accepts, in bytes (the `-ws-frame-max` ceiling).
+                    example: 16777216
+              example:
+                wsFrameMin: 1024
+                wsFrameMax: 16777216
 
   /api/files/list:
     post:
