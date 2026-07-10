@@ -8,6 +8,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"warpgate/internal/transform"
 )
 
 type uploadResponse struct {
@@ -42,7 +44,7 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 		transformArgs = spec.Args
 	}
 
-	transformer, err := newTransformer(transformName, transformArgs)
+	transformer, err := transform.New(transformName, transformArgs)
 	if err != nil {
 		http.Error(w, "invalid transform: "+err.Error(), http.StatusBadRequest)
 		return

@@ -1,4 +1,4 @@
-package main
+package transform
 
 import (
 	"encoding/json"
@@ -21,7 +21,7 @@ var transformers = map[string]TransformerFactory{
 	"html-b64": newHTMLB64Transformer,
 }
 
-func newTransformer(name string, args json.RawMessage) (Transformer, error) {
+func New(name string, args json.RawMessage) (Transformer, error) {
 	factory, ok := transformers[name]
 	if !ok {
 		return nil, fmt.Errorf("unknown transform %q", name)

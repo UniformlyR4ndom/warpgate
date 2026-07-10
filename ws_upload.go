@@ -11,6 +11,8 @@ import (
 	"strings"
 
 	"github.com/gorilla/websocket"
+
+	"warpgate/internal/transform"
 )
 
 type wsUploadRequest struct {
@@ -62,7 +64,7 @@ func (s *Server) handleWSUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	transformer, err := newTransformer(req.Transform, req.Args)
+	transformer, err := transform.New(req.Transform, req.Args)
 	if err != nil {
 		writeWSError(conn, websocket.CloseInternalServerErr, "invalid transform: %v", err)
 		return

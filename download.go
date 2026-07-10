@@ -6,6 +6,8 @@ import (
 	"log"
 	"net/http"
 	"os"
+
+	"warpgate/internal/transform"
 )
 
 type downloadRequest struct {
@@ -40,7 +42,7 @@ func (s *Server) handleDownload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	transformer, err := newTransformer(req.Transform, req.Args)
+	transformer, err := transform.New(req.Transform, req.Args)
 	if err != nil {
 		http.Error(w, "invalid transform: "+err.Error(), http.StatusBadRequest)
 		return
