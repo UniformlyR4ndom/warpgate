@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"io"
 	"log"
@@ -119,6 +120,28 @@ func (s *Server) handleWSDownload(w http.ResponseWriter, r *http.Request) {
 		reader, err := transformer.Transform(io.LimitReader(f, chunkReq.Size))
 		if err != nil {
 			writeWSError(conn, websocket.CloseInternalServerErr, "internal error")
+			return
+		}
+
+		// The client needs the exact transformed length before it can know
+		// how many bytes to read off the wire for this chunk (it isn't
+		// always chunkReq.Size — e.g. pdf, html-b64). Transforms that can
+		// compute it without materializing their output do so (streaming is
+		// preserved); the rest are fully buffered here so the length can be
+		// measured directly.
+		var chunkLen int64
+		if st, ok := transformer.(transform.SizedTransformer); ok {
+			chunkLen = st.EncodedLen(chunkReq.Size)
+		} else {
+			data, err := io.ReadAll(reader)
+			if err != nil {
+				writeWSError(conn, websocket.CloseInternalServerErr, "internal error")
+				return
+			}
+			chunkLen = int64(len(data))
+			reader = bytes.NewReader(data)
+		}
+		if err := writeWSOK(conn, wsAck{OK: true, ChunkSize: chunkLen}); err != nil {
 			return
 		}
 

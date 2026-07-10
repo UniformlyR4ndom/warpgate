@@ -386,12 +386,20 @@ function filesApp() {
 
       wsSession.ws.send(JSON.stringify({ start: start, size: size }));
 
+      // The transformed chunk isn't always the same length as the requested
+      // plaintext size (pdf/html-b64 both expand it), so the server
+      // announces the actual byte count in a control message before sending
+      // any frames; size it from that instead of the request's own size.
+      var chunkAck = await wsNextJSON(wsSession.ws);
+      if (!chunkAck.ok) throw new Error(chunkAck.error || 'download failed');
+      var chunkSize = chunkAck.chunkSize;
+
       // The server may split one chunk across several frameSize-sized
       // binary messages instead of sending it as a single message; keep
       // reading until the full chunk has arrived.
-      var received = new Uint8Array(size);
+      var received = new Uint8Array(chunkSize);
       var offset = 0;
-      while (offset < size) {
+      while (offset < chunkSize) {
         var raw = await wsNextMessage(wsSession.ws);
         if (typeof raw === 'string') {
           var msg = JSON.parse(raw);

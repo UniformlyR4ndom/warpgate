@@ -18,6 +18,11 @@ type wsAck struct {
 	Size  int64  `json:"size,omitempty"`
 	Name  string `json:"name,omitempty"`
 	Hash  string `json:"hash,omitempty"`
+	// ChunkSize is sent once per chunk request, before its binary frames,
+	// giving the exact transformed byte length so the client knows how many
+	// bytes to read — needed because that length isn't always equal to the
+	// requested plaintext chunk size (e.g. pdf, html-b64).
+	ChunkSize int64 `json:"chunkSize,omitempty"`
 }
 
 func (s *Server) checkWSAuth(key string) bool {

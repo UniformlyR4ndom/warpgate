@@ -32,6 +32,10 @@ func (t *aesCTRTransformer) Untransform(r io.Reader) (io.Reader, error) {
 	return t.Transform(r)
 }
 
+func (t *aesCTRTransformer) EncodedLen(plaintextLen int64) int64 {
+	return plaintextLen
+}
+
 func newAESCTRTransformer(raw json.RawMessage) (Transformer, error) {
 	var args aesCTRArgs
 	if err := json.Unmarshal(raw, &args); err != nil {

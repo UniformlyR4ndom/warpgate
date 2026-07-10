@@ -38,6 +38,10 @@ func (t *xorTransformer) Untransform(r io.Reader) (io.Reader, error) {
 	return t.Transform(r)
 }
 
+func (t *xorTransformer) EncodedLen(plaintextLen int64) int64 {
+	return plaintextLen
+}
+
 func newXORTransformer(raw json.RawMessage) (Transformer, error) {
 	var args xorArgs
 	if err := json.Unmarshal(raw, &args); err != nil {

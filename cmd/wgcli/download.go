@@ -17,17 +17,6 @@ import (
 	"warpgate/internal/transform"
 )
 
-// transformsWithBrokenWSChunking are the transforms for which WS chunked
-// download is currently unsafe: see the "TODO — known bug" note under
-// "WebSocket Transport" in CLAUDE.md. Their Transform output length isn't
-// equal to the requested plaintext chunk size, and the server doesn't yet
-// announce the actual transformed length before streaming frames, so there's
-// no reliable way to know how many bytes to read for one chunk.
-var transformsWithBrokenWSChunking = map[string]bool{
-	"pdf":      true,
-	"html-b64": true,
-}
-
 func fetchDownloadChunkHTTP(g *globalFlags, remotePath string, start, size int64, transformName string, transformArgs json.RawMessage) ([]byte, error) {
 	reqBody, err := json.Marshal(struct {
 		Path      string          `json:"path"`
@@ -160,13 +149,16 @@ func downloadWS(g *globalFlags, remotePath, out string, transformName string, tr
 			return fmt.Errorf("requesting chunk at offset %d: %w", transferred, err)
 		}
 
-		// Only safe today for length-preserving transforms (id/xor/aes-ctr):
-		// the server doesn't yet announce the transformed chunk's actual
-		// byte length before streaming frames (see the CLAUDE.md TODO), so
-		// reading until reqSize bytes have arrived is only correct when
-		// Transform's output is exactly reqSize bytes long.
-		chunk := make([]byte, 0, reqSize)
-		for int64(len(chunk)) < reqSize {
+		// The transformed chunk isn't always reqSize bytes long (pdf/html-b64
+		// both expand it), so the server announces the actual byte count
+		// before sending any frames.
+		chunkAck, err := readWSAck(conn)
+		if err != nil {
+			return fmt.Errorf("reading chunk ack at offset %d: %w", transferred, err)
+		}
+
+		chunk := make([]byte, 0, chunkAck.ChunkSize)
+		for int64(len(chunk)) < chunkAck.ChunkSize {
 			mt, p, err := conn.ReadMessage()
 			if err != nil {
 				return fmt.Errorf("reading frame at offset %d: %w", transferred, err)
@@ -227,11 +219,6 @@ func runDownload(args []string) error {
 	}
 	if *backend != "http" && *backend != "ws" {
 		return fmt.Errorf("--backend must be http or ws")
-	}
-	if *backend == "ws" && transformsWithBrokenWSChunking[*transformName] {
-		return fmt.Errorf("--transform %s is not supported with --backend ws yet: chunked WS download "+
-			"doesn't know the transformed chunk's length for this transform (see the WebSocket Transport "+
-			"TODO in CLAUDE.md); use --backend http instead", *transformName)
 	}
 
 	transformArgs, err := buildTransformArgs(*transformName, *key, *iv, *password, "")

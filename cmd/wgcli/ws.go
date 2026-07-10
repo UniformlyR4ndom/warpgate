@@ -12,11 +12,12 @@ import (
 // wsAck mirrors the server's wsAck (ws.go) — the JSON envelope sent in
 // response to every WS control message.
 type wsAck struct {
-	OK    bool   `json:"ok"`
-	Error string `json:"error,omitempty"`
-	Size  int64  `json:"size,omitempty"`
-	Name  string `json:"name,omitempty"`
-	Hash  string `json:"hash,omitempty"`
+	OK        bool   `json:"ok"`
+	Error     string `json:"error,omitempty"`
+	Size      int64  `json:"size,omitempty"`
+	Name      string `json:"name,omitempty"`
+	Hash      string `json:"hash,omitempty"`
+	ChunkSize int64  `json:"chunkSize,omitempty"`
 }
 
 // wsChunkRequest mirrors the server's wsChunkRequest (ws_download.go).

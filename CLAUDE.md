@@ -118,35 +118,32 @@ independent calls. Concretely:
 
 **Download protocol:**
 1. Client → Server (text): `{"auth":"<key>","path":"...","transform":"xor","args":{...},"frameSize":1048576}`
-2. Server → Client (text): `{"ok":true,"size":12345}` or `{"ok":false,"error":"..."}`
+2. Server → Client (text): `{"ok":true,"size":12345}` or `{"ok":false,"error":"..."}` — `size` is the
+   original (plaintext) file size
 3. Client → Server (text, repeated, one at a time — no pipelining): `{"start":0,"size":1048576}` to
    request a chunk, or `{"done":true}` to end the session
-4. Server → Client (binary, one or more messages, each ≤ `frameSize`, totaling `size` bytes): the
+4. Server → Client (text): `{"ok":true,"chunkSize":N}` — `N` is the *transformed* byte length of this
+   chunk, which is not always equal to the requested plaintext `size` (`pdf`/`html-b64` both expand
+   it; see "Why `chunkSize` is announced separately" below)
+5. Server → Client (binary, one or more messages, each ≤ `frameSize`, totaling `chunkSize` bytes): the
    transformed chunk for the requested range
-5. On any error: server sends `{"ok":false,"error":"..."}` then closes
+6. On any error: server sends `{"ok":false,"error":"..."}` then closes
 
-**TODO — known bug: chunked WS download breaks for length-changing transforms (`pdf`, `html-b64`).**
-Step 2's `size` is the *plaintext* size (`f.Stat()` in `ws_download.go`), and the frontend's
-`fetchChunkWS` (`app.js`) allocates `new Uint8Array(size)` and reads binary frames until `size` bytes
-have arrived — correct only when `Transform`'s output is exactly as long as its input (true for
-`id`/`xor`/`aes-ctr`, false for `pdf`/`html-b64`). Verified empirically: a 22-byte file downloaded
-with `transform: pdf` over WS returns a single 1290-byte frame while the ack still says `size: 22`;
-in a real browser `received.set(piece, offset)` would throw `RangeError: offset is out of bounds`.
-Planned fix, not yet implemented:
-- Add `SizedTransformer` to `internal/transform` — `Transformer` plus
-  `EncodedLen(plaintextLen int64) int64`, implemented by `id`/`xor`/`aes-ctr` (`return plaintextLen`)
-  and `html-b64` (`4*ceil(n/3) + len(htmlPrefix) + len(htmlSuffix)`, sharing the same prefix/suffix
-  constants `Transform` writes). `pdf` does not implement it (its output size depends on internal PDF
-  library overhead and can't be predicted without materializing).
-- Add a `ChunkSize int64 \`json:"chunkSize,omitempty"\`` field to `wsAck` (`ws.go`); after a chunk
-  request, `handleWSDownload` sends `{"ok":true,"chunkSize":N}` *before* the binary frames — `N` from
-  `EncodedLen` when the transformer implements `SizedTransformer` (streaming preserved), otherwise
-  from fully buffering `Transform`'s output to measure it (pdf only — which already buffers
-  internally via `io.ReadAll`, so this adds no new cost there).
-- Update `fetchChunkWS` in `app.js` to read that `chunkSize` message first instead of assuming it
-  equals the requested plaintext `size`.
-- Update `ws_test.go`'s WS download tests for the new ack step; add coverage for `pdf`/`html-b64`
-  chunked over WS specifically (the existing tests only exercise `id`/`xor`, which don't hit the bug).
+**Why `chunkSize` is announced separately (step 4).** Historically the client just assumed the
+transformed chunk was exactly as long as the requested plaintext `size` and read frames until that
+many bytes arrived — true for `id`/`xor`/`aes-ctr`, but false for `pdf`/`html-b64` (both expand their
+input), which broke chunked WS download for those two transforms (verified: a 22-byte file with
+`transform: pdf` produced a 1290-byte frame while the old ack still said `size: 22`; in the browser,
+`received.set(piece, offset)` would throw `RangeError: offset is out of bounds`). The fix:
+- `internal/transform.SizedTransformer` — `Transformer` plus `EncodedLen(plaintextLen int64) int64` —
+  is implemented by `id`/`xor`/`aes-ctr` (`return plaintextLen`) and `html-b64`
+  (`4*ceil(n/3) + len(htmlPrefix) + len(htmlSuffix)`, sharing the same prefix/suffix constants
+  `Transform` writes, via `base64.StdEncoding.EncodedLen`). `pdf` does not implement it — its output
+  size depends on internal PDF library overhead and can't be predicted without materializing.
+- `handleWSDownload` (`ws_download.go`) computes `chunkSize` from `EncodedLen` when the transformer
+  implements `SizedTransformer` (streaming preserved), otherwise fully buffers `Transform`'s output via
+  `io.ReadAll` to measure it directly (pdf only — which already buffers internally, so this adds no
+  new cost there).
 - Not applicable to upload: `handleWSUpload` accumulates all frames into one buffer and calls
   `Untransform` once at `{"done":true}`, so there's no per-chunk length ambiguity on that path.
 - Not applicable to `/api/sim/ws/download`: no transform is applied there, so requested size always

@@ -1,8 +1,10 @@
 package main
 
 import (
+	"bytes"
 	"encoding/hex"
 	"encoding/json"
+	"io"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
@@ -10,6 +12,8 @@ import (
 	"testing"
 
 	"github.com/gorilla/websocket"
+
+	"warpgate/internal/transform"
 )
 
 func newWSTestServer(t *testing.T, cfg Config) *httptest.Server {
@@ -73,14 +77,25 @@ func TestWSDownloadRoundTrip(t *testing.T) {
 		if err := conn.WriteJSON(wsChunkRequest{Start: int64(len(got)), Size: size}); err != nil {
 			t.Fatalf("writing chunk request: %v", err)
 		}
-		mt, p, err := conn.ReadMessage()
-		if err != nil {
-			t.Fatalf("reading chunk: %v", err)
+		var chunkAck wsAck
+		if err := conn.ReadJSON(&chunkAck); err != nil {
+			t.Fatalf("reading chunk ack: %v", err)
 		}
-		if mt != websocket.BinaryMessage {
-			t.Fatalf("expected binary message, got type %d", mt)
+		if !chunkAck.OK || chunkAck.ChunkSize != size {
+			t.Fatalf("unexpected chunk ack: %+v (requested size %d)", chunkAck, size)
 		}
-		got = append(got, p...)
+		var chunk []byte
+		for int64(len(chunk)) < chunkAck.ChunkSize {
+			mt, p, err := conn.ReadMessage()
+			if err != nil {
+				t.Fatalf("reading chunk: %v", err)
+			}
+			if mt != websocket.BinaryMessage {
+				t.Fatalf("expected binary message, got type %d", mt)
+			}
+			chunk = append(chunk, p...)
+		}
+		got = append(got, chunk...)
 	}
 	if err := conn.WriteJSON(wsChunkRequest{Done: true}); err != nil {
 		t.Fatalf("writing done: %v", err)
@@ -131,10 +146,17 @@ func TestWSDownloadMultiFrame(t *testing.T) {
 	if err := conn.WriteJSON(wsChunkRequest{Start: 0, Size: ack.Size}); err != nil {
 		t.Fatalf("writing chunk request: %v", err)
 	}
+	var chunkAck wsAck
+	if err := conn.ReadJSON(&chunkAck); err != nil {
+		t.Fatalf("reading chunk ack: %v", err)
+	}
+	if !chunkAck.OK || chunkAck.ChunkSize != ack.Size {
+		t.Fatalf("unexpected chunk ack: %+v", chunkAck)
+	}
 
 	var got []byte
 	messageCount := 0
-	for int64(len(got)) < ack.Size {
+	for int64(len(got)) < chunkAck.ChunkSize {
 		mt, p, err := conn.ReadMessage()
 		if err != nil {
 			t.Fatalf("reading frame: %v", err)
@@ -157,6 +179,109 @@ func TestWSDownloadMultiFrame(t *testing.T) {
 
 	if err := conn.WriteJSON(wsChunkRequest{Done: true}); err != nil {
 		t.Fatalf("writing done: %v", err)
+	}
+}
+
+// TestWSDownloadChunkSizeAnnouncement is the regression test for the bug
+// where chunked WS download had no way to signal a chunk's actual
+// transformed length: pdf and html-b64 both expand their input, so a client
+// trusting the requested plaintext size to know how many bytes to read
+// would either hang (short read) or, per the frontend's actual historical
+// behavior, throw trying to write more bytes than it allocated for.
+func TestWSDownloadChunkSizeAnnouncement(t *testing.T) {
+	root := t.TempDir()
+	content := []byte("hello from the chunk-size announcement test")
+	if err := os.WriteFile(filepath.Join(root, "note.txt"), content, 0o644); err != nil {
+		t.Fatalf("writing test file: %v", err)
+	}
+
+	ts := newWSTestServer(t, Config{Root: root, NoAuth: true, WSFrameMax: 16 * 1024 * 1024})
+
+	htmlB64Args, err := json.Marshal(map[string]string{"key": "000102030405060708090a0b0c0d0e0f"})
+	if err != nil {
+		t.Fatalf("marshaling html-b64 args: %v", err)
+	}
+
+	for _, tc := range []struct {
+		name      string
+		transform string
+		args      json.RawMessage
+	}{
+		{"pdf", "pdf", nil},
+		{"html-b64", "html-b64", htmlB64Args},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			conn, _, err := websocket.DefaultDialer.Dial(wsURL(ts, "/api/files/ws/download"), nil)
+			if err != nil {
+				t.Fatalf("dial: %v", err)
+			}
+			defer conn.Close()
+
+			if err := conn.WriteJSON(wsDownloadRequest{Path: "note.txt", Transform: tc.transform, Args: tc.args}); err != nil {
+				t.Fatalf("writing request: %v", err)
+			}
+			var ack wsAck
+			if err := conn.ReadJSON(&ack); err != nil {
+				t.Fatalf("reading ack: %v", err)
+			}
+			if !ack.OK || ack.Size != int64(len(content)) {
+				t.Fatalf("unexpected ack: %+v", ack)
+			}
+
+			if err := conn.WriteJSON(wsChunkRequest{Start: 0, Size: ack.Size}); err != nil {
+				t.Fatalf("writing chunk request: %v", err)
+			}
+			var chunkAck wsAck
+			if err := conn.ReadJSON(&chunkAck); err != nil {
+				t.Fatalf("reading chunk ack: %v", err)
+			}
+			// The whole point: the announced length must NOT equal the
+			// plaintext size for these two transforms.
+			if !chunkAck.OK || chunkAck.ChunkSize <= ack.Size {
+				t.Fatalf("expected chunkSize to exceed plaintext size %d, got %+v", ack.Size, chunkAck)
+			}
+
+			var got []byte
+			for int64(len(got)) < chunkAck.ChunkSize {
+				mt, p, err := conn.ReadMessage()
+				if err != nil {
+					t.Fatalf("reading frame: %v", err)
+				}
+				if mt != websocket.BinaryMessage {
+					t.Fatalf("expected binary message, got type %d", mt)
+				}
+				got = append(got, p...)
+			}
+			if int64(len(got)) != chunkAck.ChunkSize {
+				t.Fatalf("read %d bytes but chunkAck announced %d", len(got), chunkAck.ChunkSize)
+			}
+
+			transformer, err := transform.New(tc.transform, tc.args)
+			if err != nil {
+				t.Fatalf("constructing transform: %v", err)
+			}
+			if st, ok := transformer.(transform.SizedTransformer); ok {
+				if want := st.EncodedLen(ack.Size); chunkAck.ChunkSize != want {
+					t.Fatalf("chunkSize %d does not match EncodedLen %d", chunkAck.ChunkSize, want)
+				}
+			}
+
+			decoded, err := transformer.Untransform(bytes.NewReader(got))
+			if err != nil {
+				t.Fatalf("untransform: %v", err)
+			}
+			decodedBytes, err := io.ReadAll(decoded)
+			if err != nil {
+				t.Fatalf("reading decoded: %v", err)
+			}
+			if string(decodedBytes) != string(content) {
+				t.Fatalf("decoded mismatch: got %q, want %q", decodedBytes, content)
+			}
+
+			if err := conn.WriteJSON(wsChunkRequest{Done: true}); err != nil {
+				t.Fatalf("writing done: %v", err)
+			}
+		})
 	}
 }
 

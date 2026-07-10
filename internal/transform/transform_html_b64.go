@@ -10,6 +10,14 @@ import (
 	"strings"
 )
 
+// htmlB64Prefix and htmlB64Suffix bracket the base64 payload in the wrapper
+// HTML; Transform and EncodedLen must stay in lockstep, so both read from
+// these constants rather than duplicating the literal template.
+const (
+	htmlB64Prefix = "<!DOCTYPE html><html><body>\n" + `<img src="data:image/jpeg;base64,`
+	htmlB64Suffix = `">` + "\n" + "</body></html>"
+)
+
 type htmlB64Args struct {
 	Key string `json:"key"`
 }
@@ -34,10 +42,12 @@ func (t *htmlB64Transformer) Transform(r io.Reader) (io.Reader, error) {
 		return nil, fmt.Errorf("html-b64: reading data: %w", err)
 	}
 	encoded := base64.StdEncoding.EncodeToString(xorBytes(data, t.key))
-	html := "<!DOCTYPE html><html><body>\n" +
-		`<img src="data:image/jpeg;base64,` + encoded + `">` + "\n" +
-		"</body></html>"
+	html := htmlB64Prefix + encoded + htmlB64Suffix
 	return strings.NewReader(html), nil
+}
+
+func (t *htmlB64Transformer) EncodedLen(plaintextLen int64) int64 {
+	return int64(len(htmlB64Prefix)) + int64(base64.StdEncoding.EncodedLen(int(plaintextLen))) + int64(len(htmlB64Suffix))
 }
 
 func (t *htmlB64Transformer) Untransform(r io.Reader) (io.Reader, error) {
