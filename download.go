@@ -6,16 +6,37 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"unicode"
 
 	"warpgate/internal/transform"
 )
 
 type downloadRequest struct {
-	Path      string          `json:"path"`
-	Start     int64           `json:"start"`
-	Size      int64           `json:"size"`
-	Transform string          `json:"transform"`
-	Args      json.RawMessage `json:"args"`
+	Path        string          `json:"path"`
+	Start       int64           `json:"start"`
+	Size        int64           `json:"size"`
+	Transform   string          `json:"transform"`
+	Args        json.RawMessage `json:"args"`
+	ContentType string          `json:"contentType"`
+}
+
+// maxContentTypeLen bounds a client-supplied Content-Type override; actual
+// MIME types are well under this, so it only rejects garbage input.
+const maxContentTypeLen = 255
+
+// validContentType rejects control characters and empty/oversized input; it
+// isn't a full MIME-type grammar check, just a boundary sanity check on
+// otherwise-arbitrary client input reflected into a response header.
+func validContentType(s string) bool {
+	if s == "" || len(s) > maxContentTypeLen {
+		return false
+	}
+	for _, r := range s {
+		if unicode.IsControl(r) {
+			return false
+		}
+	}
+	return true
 }
 
 func (s *Server) handleDownload(w http.ResponseWriter, r *http.Request) {
@@ -48,6 +69,11 @@ func (s *Server) handleDownload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if req.ContentType != "" && !validContentType(req.ContentType) {
+		http.Error(w, "invalid contentType", http.StatusBadRequest)
+		return
+	}
+
 	f, err := os.Open(target)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -76,6 +102,9 @@ func (s *Server) handleDownload(w http.ResponseWriter, r *http.Request) {
 	type contentTyper interface{ ContentType() string }
 	if ctr, ok := transformer.(contentTyper); ok {
 		ct = ctr.ContentType()
+	}
+	if req.ContentType != "" {
+		ct = req.ContentType
 	}
 	w.Header().Set("Content-Type", ct)
 	if _, err := io.Copy(w, reader); err != nil {

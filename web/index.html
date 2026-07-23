@@ -50,9 +50,9 @@
             <span class="section-arrow" x-text="settings.panel.benchmarkOpen ? '▾' : '▸'"></span>Benchmark
           </h2>
           <div x-show="settings.panel.benchmarkOpen">
-            <label title="Total size of the synthetic file transferred by the benchmark (1-100 MB). Nothing is read from or written to disk - all data is synthesized.">Size (MB)</label>
-            <input type="number" x-model.number="settings.benchmark.sizeMB" min="1" max="100"
-                   title="Total size of the synthetic file transferred by the benchmark (1-100 MB). Nothing is read from or written to disk - all data is synthesized.">
+            <label title="Total size of the synthetic file transferred by the benchmark (1-1024 MB). Nothing is read from or written to disk - all data is synthesized.">Size (MB)</label>
+            <input type="number" x-model.number="settings.benchmark.sizeMB" min="1" max="1024"
+                   title="Total size of the synthetic file transferred by the benchmark (1-1024 MB). Nothing is read from or written to disk - all data is synthesized.">
             <label title="Splits the download benchmark into multiple {start,size} requests of this size, simulating a chunked transfer. Not used by the upload benchmark, which always sends the whole file in one request.">Chunk size (MB)</label>
             <input type="number" x-model.number="settings.benchmark.chunkSizeMB" min="1" :max="settings.benchmark.sizeMB"
                    title="Splits the download benchmark into multiple {start,size} requests of this size, simulating a chunked transfer. Not used by the upload benchmark, which always sends the whole file in one request.">
@@ -108,6 +108,25 @@
               <input type="number" x-model.number="settings.wsFrameSizeKB"
                      :min="wsFrameMinKB" :max="wsFrameMaxKB"
                      title="Maximum size of each WebSocket frame. Clamped to the range the server allows.">
+            </div>
+            <div x-show="tab === 'download' && settings.backend === 'http'">
+              <label title="Overrides the Content-Type header on the download response. WebSocket downloads have no HTTP headers, so this only applies to the HTTP POST backend.">Content-Type</label>
+              <select x-model="settings.contentType.preset"
+                      title="Overrides the Content-Type header on the download response. WebSocket downloads have no HTTP headers, so this only applies to the HTTP POST backend.">
+                <option value="auto">Auto (transform default)</option>
+                <option value="application/octet-stream">application/octet-stream</option>
+                <option value="application/pdf">application/pdf</option>
+                <option value="image/jpeg">image/jpeg</option>
+                <option value="image/png">image/png</option>
+                <option value="application/zip">application/zip</option>
+                <option value="application/json">application/json</option>
+                <option value="text/html">text/html</option>
+                <option value="video/mp4">video/mp4</option>
+                <option value="custom">Custom…</option>
+              </select>
+              <input type="text" x-show="settings.contentType.preset === 'custom'"
+                     x-model="settings.contentType.custom" placeholder="e.g. application/vnd.custom-type"
+                     title="Custom Content-Type value to send with the download request.">
             </div>
           </div>
         </section>
@@ -261,9 +280,15 @@
               </div>
               <div class="clip-text" x-text="base64ToText(item.data)"></div>
               <div class="clip-footer">
-                <button class="clip-copy clip-download" @click="downloadClip(item)" title="Download note">⬇</button>
-                <button class="clip-copy" @click="copyClip(item.data)" title="Copy to clipboard">📋</button>
-                <button class="clip-copy" @click="editClip(item)" title="Edit note">✏</button>
+                <button class="clip-action" @click="downloadClip(item)" title="Download note">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+                </button>
+                <button class="clip-action" @click="copyClip(item.data)" title="Copy to clipboard">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                </button>
+                <button class="clip-action" @click="editClip(item)" title="Edit note">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"></path></svg>
+                </button>
               </div>
             </div>
           </template>
@@ -276,6 +301,12 @@
           <button class="choose-btn" @click="runDownloadBenchmark()" :disabled="benchmarkRunning">Run Download Benchmark</button>
           <button class="choose-btn" @click="runUploadBenchmark()" :disabled="benchmarkRunning">Run Upload Benchmark</button>
           <button class="choose-btn" @click="clearBenchmarkResults()" :disabled="benchmarkResults.length === 0">Clear results</button>
+        </div>
+        <div class="bench-preparing" x-show="benchmarkPreparing" :class="{ 'bench-preparing-indeterminate': benchmarkPrepProgress === null }"
+             x-text="benchmarkPrepProgress !== null ? ('Generating test data… ' + Math.round(benchmarkPrepProgress * 100) + '%') : 'Hashing test data…'"></div>
+        <div class="bench-progress" x-show="benchmarkProgress !== null && !benchmarkPreparing">
+          <div class="bench-progress-fill" :style="'width:' + Math.round(benchmarkProgress * 100) + '%'"></div>
+          <span class="bench-progress-label" x-text="Math.round(benchmarkProgress * 100) + '%'"></span>
         </div>
         <table x-show="benchmarkResults.length > 0">
           <thead>

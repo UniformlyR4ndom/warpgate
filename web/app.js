@@ -31,6 +31,23 @@ async function wsNextJSON(ws) {
   return JSON.parse(raw);
 }
 
+// ws.send() queues data locally and returns immediately, so a tight send
+// loop with no await point runs to completion in one synchronous stretch —
+// the browser never gets a chance to repaint, and the whole file piles up
+// in the socket's local buffer regardless of how fast the network actually
+// drains it. Waiting for bufferedAmount to fall under maxBuffered before
+// each send paces sends to real transport throughput (letting progress UI
+// update as frames actually leave) and caps how much unsent data can queue
+// in memory at once.
+function wsWaitForDrain(ws, maxBuffered) {
+  return new Promise(function(resolve) {
+    (function check() {
+      if (ws.bufferedAmount <= maxBuffered) { resolve(); return; }
+      setTimeout(check, 0);
+    })();
+  });
+}
+
 const SETTINGS_STORAGE_KEY = 'warpgate-settings';
 const SETTINGS_VERSION = 1;
 
@@ -66,6 +83,9 @@ function filesApp() {
     uploadError: null,
     benchmarkResults: [],
     benchmarkRunning: false,
+    benchmarkProgress: null, // not persisted: null (no bar) or a 0-1 fraction while a multi-step run is active
+    benchmarkPreparing: false, // not persisted: true while generating/hashing test data, before the timed transfer starts
+    benchmarkPrepProgress: null, // not persisted: 0-1 during chunked buffer generation (real signal), null during hashing (no incremental API)
     clipItems: [],
     clipText: '',
     clipEditId: null,
@@ -97,6 +117,10 @@ function filesApp() {
       autoRefresh: false,
       confirmDelete: true,
       wsFrameSizeKB: 4096, // 4M default, clamped to the server's max in init()
+      contentType: {
+        preset: 'auto', // 'auto' = let the transform pick, 'custom' = use `custom`, anything else = the literal value
+        custom: '',
+      },
       transform: {
         type: 'id',
         xor:    { auto: true,  key: '' },
@@ -341,10 +365,21 @@ function filesApp() {
       return this.fetchChunkHTTP(path, start, size);
     },
 
+    // resolveContentTypeOverride returns the Content-Type override to send
+    // with an HTTP download request, or null to let the server pick one
+    // from the transform (see download.go's contentTyper fallback).
+    resolveContentTypeOverride() {
+      var c = this.settings.contentType;
+      if (c.preset === 'auto') return null;
+      if (c.preset === 'custom') return c.custom.trim() || null;
+      return c.preset;
+    },
+
     async fetchChunkHTTP(path, start, size) {
       var t = this.settings.transform;
-      var password   = (t.type === 'pdf'      && t.pdf.password.enabled) ? this.randomHex(10) : null;
-      var htmlB64Key = (t.type === 'html-b64') ? this.randomHex(16) : null;
+      var password     = (t.type === 'pdf'      && t.pdf.password.enabled) ? this.randomHex(10) : null;
+      var htmlB64Key   = (t.type === 'html-b64') ? this.randomHex(16) : null;
+      var contentType  = this.resolveContentTypeOverride();
       var body = {
         path:      path,
         start:     start,
@@ -352,6 +387,7 @@ function filesApp() {
         transform: t.type,
         args:      this.buildTransformArgs(password, htmlB64Key),
       };
+      if (contentType) body.contentType = contentType;
       var res = await fetch('/api/files/download', {
         method:  'POST',
         headers: Object.assign({ 'Content-Type': 'application/json' }, this.authHeaders()),
@@ -730,6 +766,7 @@ function filesApp() {
         // applying Untransform once.
         var bytes = new Uint8Array(buffer);
         for (var offset = 0; offset < bytes.length; offset += frameSize) {
+          await wsWaitForDrain(ws, frameSize);
           ws.send(bytes.slice(offset, offset + frameSize));
         }
         ws.send(JSON.stringify({ done: true }));
@@ -768,7 +805,7 @@ function filesApp() {
     clampBenchmarkSettings() {
       var b = this.settings.benchmark;
       if (!(b.sizeMB >= 1))   { b.sizeMB = 1; }
-      if (b.sizeMB > 100)     { b.sizeMB = 100; }
+      if (b.sizeMB > 1024)    { b.sizeMB = 1024; }
       if (!(b.chunkSizeMB >= 1)) { b.chunkSizeMB = 1; }
       if (b.chunkSizeMB > b.sizeMB) { b.chunkSizeMB = b.sizeMB; }
     },
@@ -799,7 +836,7 @@ function filesApp() {
       return parts.length ? parts.join(' / ') : '-';
     },
 
-    async fetchSimChunkHTTP(totalSize, start, size) {
+    async fetchSimChunkHTTP(totalSize, start, size, onProgress) {
       var res = await fetch('/api/sim/download', {
         method:  'POST',
         headers: Object.assign({ 'Content-Type': 'application/json' }, this.authHeaders()),
@@ -810,10 +847,11 @@ function filesApp() {
       if (buffer.byteLength !== size) {
         throw new Error('expected ' + size + ' bytes, got ' + buffer.byteLength);
       }
+      if (onProgress) onProgress(buffer.byteLength);
       return new Uint8Array(buffer);
     },
 
-    async fetchSimChunkWS(wsSession, totalSize, start, size) {
+    async fetchSimChunkWS(wsSession, totalSize, start, size, onProgress) {
       if (!wsSession.ws) {
         var ws = await wsOpen(this.wsBaseURL() + '/api/sim/ws/download');
         ws.send(JSON.stringify({
@@ -839,6 +877,7 @@ function filesApp() {
         var piece = new Uint8Array(raw);
         chunk.set(piece, received);
         received += piece.byteLength;
+        if (onProgress) onProgress(piece.byteLength);
       }
       if (received !== size) {
         throw new Error('expected ' + size + ' bytes, got ' + received);
@@ -846,9 +885,9 @@ function filesApp() {
       return chunk;
     },
 
-    async fetchSimChunk(wsSession, totalSize, start, size) {
-      if (this.settings.backend === 'ws') { return this.fetchSimChunkWS(wsSession, totalSize, start, size); }
-      return this.fetchSimChunkHTTP(totalSize, start, size);
+    async fetchSimChunk(wsSession, totalSize, start, size, onProgress) {
+      if (this.settings.backend === 'ws') { return this.fetchSimChunkWS(wsSession, totalSize, start, size, onProgress); }
+      return this.fetchSimChunkHTTP(totalSize, start, size, onProgress);
     },
 
     async runDownloadBenchmark() {
@@ -875,16 +914,30 @@ function filesApp() {
       var wsSession = { ws: null };
       var startTime = null; // set once the network loop actually starts
 
+      // A bar is only shown when the run has more than one real network
+      // step: multiple HTTP chunk requests, or (WS) multiple chunks and/or
+      // multiple frames within a chunk.
+      var hasSteps = (backend === 'ws') ? (chunkSize < totalSize || frameSize < totalSize) : (chunkSize < totalSize);
+      this.benchmarkProgress = hasSteps ? 0 : null;
+      var bytesDone = 0;
+      var self = this;
+      var onProgress = function(n) {
+        bytesDone += n;
+        if (hasSteps) self.benchmarkProgress = Math.min(1, bytesDone / totalSize);
+      };
+
       try {
         // Deterministic from totalSize alone, so this can be computed before
         // any request goes out and isn't counted toward the transfer time.
+        this.benchmarkPreparing = true;
         var expectedHash = await this.sha256Hex(this.buildExpectedSimFile(totalSize));
+        this.benchmarkPreparing = false;
 
         var received = new Uint8Array(totalSize);
         startTime = performance.now();
         for (var offset = 0; offset < totalSize; offset += chunkSize) {
           var size  = Math.min(chunkSize, totalSize - offset);
-          var chunk = await this.fetchSimChunk(wsSession, totalSize, offset, size);
+          var chunk = await this.fetchSimChunk(wsSession, totalSize, offset, size, onProgress);
           received.set(chunk, offset);
         }
         var durationMs = performance.now() - startTime;
@@ -909,16 +962,28 @@ function filesApp() {
       } finally {
         this.closeWSSession(wsSession);
         this.benchmarkRunning = false;
+        this.benchmarkProgress = null;
+        this.benchmarkPreparing = false;
+        this.benchmarkPrepProgress = null;
       }
     },
 
-    // crypto.getRandomValues rejects requests over 65536 bytes in one call.
-    generateRandomBuffer(totalSize) {
+    // crypto.getRandomValues rejects requests over 65536 bytes in one call,
+    // so a large buffer needs many synchronous calls; yielding periodically
+    // keeps the tab responsive instead of blocking the main thread for the
+    // whole loop.
+    async generateRandomBuffer(totalSize, onProgress) {
       var buf = new Uint8Array(totalSize);
       var CHUNK = 65536;
+      var lastYield = performance.now();
       for (var offset = 0; offset < totalSize; offset += CHUNK) {
         var len = Math.min(CHUNK, totalSize - offset);
         window.crypto.getRandomValues(buf.subarray(offset, offset + len));
+        if (onProgress) onProgress(len);
+        if (performance.now() - lastYield > 16) {
+          await new Promise(function(resolve) { setTimeout(resolve, 0); });
+          lastYield = performance.now();
+        }
       }
       return buf.buffer;
     },
@@ -932,7 +997,7 @@ function filesApp() {
       return data.hash;
     },
 
-    async uploadSimWS(buffer) {
+    async uploadSimWS(buffer, onProgress) {
       var frameSize = this.settings.wsFrameSizeKB * 1024;
       var ws = await wsOpen(this.wsBaseURL() + '/api/sim/ws/upload');
       try {
@@ -942,7 +1007,10 @@ function filesApp() {
 
         var bytes = new Uint8Array(buffer);
         for (var offset = 0; offset < bytes.length; offset += frameSize) {
-          ws.send(bytes.slice(offset, offset + frameSize));
+          await wsWaitForDrain(ws, frameSize);
+          var slice = bytes.slice(offset, offset + frameSize);
+          ws.send(slice);
+          if (onProgress) onProgress(slice.byteLength);
         }
         ws.send(JSON.stringify({ done: true }));
 
@@ -975,14 +1043,33 @@ function filesApp() {
 
       var startTime = null; // set once the network operation actually starts
 
+      // Only the WS backend has real intermediate steps (one send per
+      // frame); HTTP upload is a single fetch() with no progress event.
+      var hasSteps = (backend === 'ws') && (frameSize < totalSize);
+      this.benchmarkProgress = hasSteps ? 0 : null;
+      var bytesDone = 0;
+      var self = this;
+      var onProgress = function(n) {
+        bytesDone += n;
+        if (hasSteps) self.benchmarkProgress = Math.min(1, bytesDone / totalSize);
+      };
+
       try {
         // Computed before the timer starts, so generating and hashing the
         // buffer locally isn't counted toward the transfer time.
-        var buffer       = this.generateRandomBuffer(totalSize);
+        this.benchmarkPreparing = true;
+        this.benchmarkPrepProgress = 0;
+        var prepBytesDone = 0;
+        var buffer = await this.generateRandomBuffer(totalSize, function(n) {
+          prepBytesDone += n;
+          self.benchmarkPrepProgress = Math.min(1, prepBytesDone / totalSize);
+        });
+        this.benchmarkPrepProgress = null; // hashing has no incremental progress API
         var expectedHash = await this.sha256Hex(buffer);
+        this.benchmarkPreparing = false;
 
         startTime = performance.now();
-        var hash = (backend === 'ws') ? await this.uploadSimWS(buffer) : await this.uploadSimHTTP(buffer);
+        var hash = (backend === 'ws') ? await this.uploadSimWS(buffer, onProgress) : await this.uploadSimHTTP(buffer);
         var durationMs = performance.now() - startTime;
 
         var hashMatch = hash === expectedHash;
@@ -1000,6 +1087,9 @@ function filesApp() {
         });
       } finally {
         this.benchmarkRunning = false;
+        this.benchmarkProgress = null;
+        this.benchmarkPreparing = false;
+        this.benchmarkPrepProgress = null;
       }
     },
   };

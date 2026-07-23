@@ -2,6 +2,37 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Comment Policy
+
+Default to no comment at all; add one only when skipping it would leave a reader
+surprised or misled. When a comment is warranted, it must:
+
+1. Be brief — no more than the fact and, if needed, a short reason why.
+2. State only what is true and non-obvious about the code it annotates — if the code
+   already shows it, the comment isn't earning its place.
+3. Never narrate history — no past bugs, no design alternatives once tried.
+4. Never narrate relationships to other code — no "only called from X," no "same as Y
+   does it," no caller/sibling enumeration. Describe this code, not the rest of the
+   codebase.
+
+## Duplication Policy
+
+Default to sharing logic that two or more call sites must always change together;
+default to leaving logic separate when it only resembles another spot today. When
+consolidating:
+
+1. Extract only when a bug fix or behavior change would have to be applied
+   identically everywhere it currently appears — that's one piece of logic, not
+   several accidental copies of it.
+2. Don't force a shared abstraction to swallow a genuine per-caller difference (e.g.
+   a different data shape) via an extra parameter or branch — two separate copies are
+   usually clearer than one that needs a flag to behave differently per caller.
+3. When refactoring several files at once, judge each small pure helper on its own —
+   don't bundle a genuinely shared one in with a neighbor whose reason for staying
+   separate doesn't actually apply to it.
+4. Prefer a few similar lines over a new shared file/hook for something used in
+   exactly one place today; extract once a second real use exists.
+
 ## Project Overview
 
 Warpgate is a file server designed to bypass restrictive web proxies that inspect traffic content.
@@ -14,6 +45,8 @@ and a benchmark tab for probing which transport (HTTP POST vs. WebSocket) and fr
 given proxy tolerates, independent of any transform.
 
 The Go module (`warpgate`, Go 1.25.0) lives at the repo root. The frontend is embedded into the binary from the `web/` subdirectory.
+`cmd/wgcli` is a same-module Go CLI client that exercises the HTTP/WS API from the command line
+(mainly for testing); see the `wgcli` skill for usage details.
 
 ## Architecture
 
@@ -47,13 +80,21 @@ The full API is documented in `doc/openapi.yaml`.
 
 ```json
 {
-  "path":      "relative/path/to/file",
-  "start":     0,
-  "size":      1048576,
-  "transform": "pdf",
-  "args":      { "filename": "attachment", "password": "abc123" }
+  "path":        "relative/path/to/file",
+  "start":       0,
+  "size":        1048576,
+  "transform":   "pdf",
+  "args":        { "filename": "attachment", "password": "abc123" },
+  "contentType": "image/jpeg"
 }
 ```
+
+`contentType` is optional and overrides the response's `Content-Type` header in place of the
+transform's own default (see the `contentTyper` interface above). `validContentType` (`download.go`)
+rejects control characters and anything over 255 bytes with a 400; an empty/omitted value keeps the
+transform's default. Only meaningful for the HTTP backend — WS downloads have no HTTP response
+headers, so the frontend's Content-Type control (General panel section) is hidden whenever
+`settings.backend === 'ws'`.
 
 ### `/api/files/upload` multipart form
 
@@ -175,7 +216,7 @@ either side — these endpoints exist to isolate transport behavior from everyth
 **Download** synthesizes a file server-side instead of reading one from `-root`: the content is
 `<totalSize-as-decimal><space><0xFF padding>`, out to `totalSize` bytes total, generated on the fly
 by `simReader` (`sim.go`) for an arbitrary `[start, …)` window so ranged/chunked requests never
-materialize the whole file. `validateSimTotalSize` enforces `1 <= totalSize <= simMaxTotalSize` (100
+materialize the whole file. `validateSimTotalSize` enforces `1 <= totalSize <= simMaxTotalSize` (1024
 MiB) and that `totalSize` is large enough for its own decimal representation plus the trailing space
 to fit (e.g. `totalSize: 1` is rejected). The frontend never persists the downloaded bytes to disk —
 it reassembles them in memory only long enough to verify a SHA-256 hash against a locally-computed
@@ -261,12 +302,17 @@ The primary use-case is bypassing deep-packet inspection proxies. Recommended de
 
 ## Transform System
 
-### Interface (`transform.go`)
+Implemented in the `warpgate/internal/transform` package (`internal/transform/`), imported by both
+the server (`download.go`, `upload.go`, `ws_download.go`, `ws_upload.go`) and `cmd/wgcli` — this
+guarantees the CLI test client's encode/decode behavior can't drift from the server's, since there's
+no separate reimplementation.
+
+### Interface (`internal/transform/transform.go`)
 
 ```go
 type Transformer interface {
-    Transform(r io.Reader) (io.Reader, error)   // encode — used on download
-    Untransform(r io.Reader) (io.Reader, error) // decode — used on upload
+    Transform(r io.Reader) (io.Reader, error)   // encode (download path)
+    Untransform(r io.Reader) (io.Reader, error) // decode (upload path)
 }
 ```
 
@@ -275,7 +321,13 @@ type Transformer interface {
 For symmetric transforms (XOR, AES-CTR) `Untransform` delegates to `Transform`.
 For asymmetric transforms (PDF) they are separate operations.
 
-New transforms are registered in the `transformers` map in `transform.go`:
+A transformer may optionally implement `ContentType() string`; `handleDownload` (`download.go`)
+checks for this via a local `contentTyper` interface and uses the returned value as the HTTP
+response's `Content-Type`, falling back to `application/octet-stream` for transforms that don't
+implement it. `html-b64` and `pdf` both implement it (`text/html; charset=utf-8` and
+`application/pdf` respectively), matching the disguised content they actually produce.
+
+New transforms are registered in the `transformers` map in `internal/transform/transform.go`:
 ```go
 var transformers = map[string]TransformerFactory{
     "id":       newIDTransformer,
@@ -286,11 +338,11 @@ var transformers = map[string]TransformerFactory{
 }
 ```
 
-### id (`transform_id.go`)
+### id (`internal/transform/transform_id.go`)
 
 No-op. Both methods return the reader unchanged. Args: none.
 
-### XOR (`transform_xor.go`)
+### XOR (`internal/transform/transform_xor.go`)
 
 Streams data XOR-ed with a repeating key. Symmetric.
 Implemented as a streaming `xorReader` wrapping an `io.Reader`.
@@ -298,7 +350,7 @@ Args: `{"key": "<hex>"}` — key repeats cyclically, any length.
 
 Frontend: byte loop using `hexToBytes`; same loop for upload encode and download decode.
 
-### AES-CTR (`transform_aes.go`)
+### AES-CTR (`internal/transform/transform_aes.go`)
 
 Streams data through AES in CTR mode via Go's `crypto/cipher`. Symmetric.
 Args: `{"key": "<hex>", "iv": "<hex>"}`.
@@ -306,7 +358,7 @@ Key must be 16, 24, or 32 bytes; IV must be exactly 16 bytes (one AES block).
 
 Frontend: uses `aes-js` (`web/aes.js`) — `ModeOfOperation.ctr`. Key and IV auto-generated randomly when "auto" is ticked.
 
-### PDF (`transform_pdf.go` / frontend)
+### PDF (`internal/transform/transform_pdf.go` / frontend)
 
 **Asymmetric** — encode and decode are different operations.
 
@@ -327,7 +379,7 @@ Reads the PDF into memory, calls `api.ExtractAttachmentsRaw` and returns `attach
 
 Args: `{"filename": "<name>", "password": "<hex>"}`. Password applies to downloads only.
 
-### HTML/Base64 (`transform_html_b64.go` / frontend)
+### HTML/Base64 (`internal/transform/transform_html_b64.go` / frontend)
 
 **Symmetric** — XOR is applied before base64 encoding; the same XOR reverses it.
 
@@ -443,9 +495,9 @@ kept as a standalone top-level property for the same reason).
 | Section   | Purpose |
 |-----------|---------|
 | Auth      | `X-Auth` key input; masked by default with a 👁 reveal toggle (reveal state itself is not persisted); change triggers listing refresh |
-| Benchmark | Benchmark tab only; Size (MB, 1-100) and Chunk size (MB, ≤ Size) for the synthetic transfer — see "Benchmark tab" below |
+| Benchmark | Benchmark tab only; Size (MB, 1-1024) and Chunk size (MB, ≤ Size) for the synthetic transfer — see "Benchmark tab" below |
 | Chunking  | Enable chunked download (download tab only), set chunk size, enable File System Access API reassembly |
-| General   | Auto-refresh (polls the active tab every second; re-renders only on changes); Confirm note delete; Backend (HTTP POST/Websocket, download+upload+benchmark tabs); WS frame size in KB (download+upload+benchmark tabs, only when Backend is Websocket; default 4M, clamped to the server's `-ws-frame-max` via `/api/public/settings`) |
+| General   | Auto-refresh (polls the active tab every second; re-renders only on changes); Confirm note delete; Backend (HTTP POST/Websocket, download+upload+benchmark tabs); WS frame size in KB (download+upload+benchmark tabs, only when Backend is Websocket; default 4M, clamped to the server's `-ws-frame-max` via `/api/public/settings`); Content-Type (download tab only, only when Backend is HTTP POST — a preset dropdown of common MIME types plus "Custom…", overriding the download response's `Content-Type` header; see `/api/files/download`'s `contentType` field above) |
 | Transform | Select transform type and configure its parameters (auto-generate keys/IVs) |
 
 Every setting in the side panel has a `title` attribute (on both its `<label>` and its input/select)
@@ -483,7 +535,7 @@ gets through a given proxy, independent of any transform.
     pollute the reported duration/throughput.
   - `crypto.subtle` (used by `sha256Hex`) requires a secure context (HTTPS or localhost); if
     unavailable, a run immediately fails with a message saying so rather than throwing.
-- Size (1-100 MB) and Chunk size (≤ Size) are configured in the Benchmark side-panel section; Backend
+- Size (1-1024 MB) and Chunk size (≤ Size) are configured in the Benchmark side-panel section; Backend
   and (when Websocket) WS frame size are the same settings the Download/Upload tabs use.
 
 ## Go Dependencies
@@ -497,8 +549,8 @@ gets through a given proxy, independent of any transform.
 ## Development
 
 ```bash
-# Run
-go run ./...
+# Run (cmd/wgcli is a second main package, so ./... is ambiguous for `go run`)
+go run .
 
 # Build
 go build ./...
@@ -508,6 +560,11 @@ go test ./...
 
 # Lint (install golangci-lint if needed)
 golangci-lint run
+
+# End-to-end verification (builds warpgate + wgcli, exercises every transform/backend
+# combo plus clipboard and edge cases against a throwaway server instance)
+python3 test/e2e_suite.py --quick   # fast sanity run
+python3 test/e2e_suite.py           # full run, up to 1G files; see test/README.md
 ```
 
 ### Flags

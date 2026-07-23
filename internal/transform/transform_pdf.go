@@ -40,6 +40,8 @@ type pdfTransformer struct {
 	password string
 }
 
+func (t *pdfTransformer) ContentType() string { return "application/pdf" }
+
 func (t *pdfTransformer) Transform(r io.Reader) (io.Reader, error) {
 	data, err := io.ReadAll(r)
 	if err != nil {

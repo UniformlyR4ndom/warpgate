@@ -8,7 +8,7 @@ import (
 
 // simMaxTotalSize is the largest synthetic file /api/sim/download will
 // generate or /api/sim/upload will accept.
-const simMaxTotalSize = 100 * 1024 * 1024 // 100 MiB
+const simMaxTotalSize = 1024 * 1024 * 1024 // 1024 MiB
 
 // validateSimTotalSize checks a client-requested synthetic file size against
 // simMaxTotalSize and against the minimum size needed for the "<size> "

@@ -258,6 +258,14 @@ paths:
                   example: aes-ctr
                 args:
                   $ref: '#/components/schemas/TransformArgs'
+                contentType:
+                  type: string
+                  maxLength: 255
+                  description: |
+                    Overrides the response's `Content-Type` header, in place of the transform's own
+                    default. Must not contain control characters. Omit (or send an empty string) to
+                    keep the transform's default.
+                  example: image/jpeg
             examples:
               id:
                 summary: No transform
@@ -309,9 +317,15 @@ paths:
         "200":
           description: |
             Transformed file data. The `Content-Type` depends on the transform:
-            `text/html; charset=utf-8` for `html-b64`, `application/octet-stream` for all others.
+            `text/html; charset=utf-8` for `html-b64`, `application/pdf` for `pdf`,
+            `application/octet-stream` for all others — unless overridden by `contentType` in the
+            request body.
           content:
             application/octet-stream:
+              schema:
+                type: string
+                format: binary
+            application/pdf:
               schema:
                 type: string
                 format: binary
@@ -321,7 +335,8 @@ paths:
         "400":
           description: |
             Invalid request — malformed JSON, path traversal, non-positive `size`, unknown
-            transform name, or invalid transform args (e.g. wrong key length).
+            transform name, invalid transform args (e.g. wrong key length), or a non-empty
+            `contentType` that's over 255 bytes or contains control characters.
         "401":
           description: Missing or invalid `X-Auth` header.
         "404":
@@ -397,8 +412,8 @@ paths:
 
         The synthesized file's content is `<totalSize-as-decimal><space><0xFF padding>`, out to
         `totalSize` bytes total. `totalSize` must be large enough for its own decimal
-        representation plus the space to fit (e.g. `totalSize: 1` is rejected), and at most 100 MiB
-        (104857600 bytes).
+        representation plus the space to fit (e.g. `totalSize: 1` is rejected), and at most 1024 MiB
+        (1073741824 bytes).
 
         As with `/api/files/download`, set `start=0` and `size` equal to `totalSize` for a single
         request, or issue multiple requests with successive `start` offsets to simulate a chunked
@@ -463,7 +478,7 @@ paths:
 
         This endpoint is only available when the server was started with `-ul-root`
         (matching `/api/files/upload`'s gating), even though nothing is written to disk. If not
-        configured, the endpoint returns 404. The upload is capped at 100 MiB (104857600 bytes).
+        configured, the endpoint returns 404. The upload is capped at 1024 MiB (1073741824 bytes).
       requestBody:
         required: true
         content:
@@ -490,7 +505,7 @@ paths:
                     description: SHA-256 hash of the received bytes, hex-encoded.
                     example: 3a7bd3e2360a3d29eea436fcfb7e44c735d117c42d1c1835420b6b9942dd4f1
         "400":
-          description: Invalid request — malformed multipart form or file exceeds 100 MiB.
+          description: Invalid request — malformed multipart form or file exceeds 1024 MiB.
         "401":
           description: Missing or invalid `X-Auth` header.
         "404":

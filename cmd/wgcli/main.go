@@ -24,6 +24,8 @@ func main() {
 		err = runDownload(args)
 	case "upload":
 		err = runUpload(args)
+	case "clip":
+		err = runClip(args)
 	case "-h", "--help", "help":
 		usage()
 		return
@@ -52,6 +54,7 @@ Commands:
   list      [flags] [remote-dir]              list files/directories
   download  [flags] <remote-path>              download, reversing the transform
   upload    [flags] <local-file>                upload, applying the transform
+  clip      list|new|edit|delete               manage clipboard notes
 
 Run "wgcli <command> -h" for command-specific flags.
 `)
