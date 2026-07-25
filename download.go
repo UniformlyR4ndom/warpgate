@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"path/filepath"
 	"unicode"
 
 	"warpgate/internal/transform"
@@ -37,6 +38,27 @@ func validContentType(s string) bool {
 		}
 	}
 	return true
+}
+
+// downloadBlockedByUpload reports whether target — an already-resolved
+// absolute download path — exactly matches the output path of an
+// in-progress chunked upload session. Comparing resolved absolute paths
+// (rather than, say, special-casing "-root equals -ul-root") makes this
+// correct regardless of how the two roots relate: a download into a
+// subdirectory can never match, since uploads always land flat under
+// -ul-root, and it also covers -ul-root nested inside -root or the two
+// being unrelated (where lockedNames is empty or its paths never resolve
+// under absRoot, so nothing is ever blocked).
+func (s *Server) downloadBlockedByUpload(target string) bool {
+	if s.absUlRoot == "" {
+		return false
+	}
+	for name := range s.uploadSessions.lockedNames() {
+		if filepath.Join(s.absUlRoot, name) == target {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Server) handleDownload(w http.ResponseWriter, r *http.Request) {
@@ -71,6 +93,11 @@ func (s *Server) handleDownload(w http.ResponseWriter, r *http.Request) {
 
 	if req.ContentType != "" && !validContentType(req.ContentType) {
 		http.Error(w, "invalid contentType", http.StatusBadRequest)
+		return
+	}
+
+	if s.downloadBlockedByUpload(target) {
+		http.Error(w, "file is mid-upload", http.StatusConflict)
 		return
 	}
 

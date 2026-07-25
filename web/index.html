@@ -53,32 +53,50 @@
             <label title="Total size of the synthetic file transferred by the benchmark (1-1024 MB). Nothing is read from or written to disk - all data is synthesized.">Size (MB)</label>
             <input type="number" x-model.number="settings.benchmark.sizeMB" min="1" max="1024"
                    title="Total size of the synthetic file transferred by the benchmark (1-1024 MB). Nothing is read from or written to disk - all data is synthesized.">
-            <label title="Splits the download benchmark into multiple {start,size} requests of this size, simulating a chunked transfer. Not used by the upload benchmark, which always sends the whole file in one request.">Chunk size (MB)</label>
+            <label title="Splits the benchmark transfer into multiple requests of this size, simulating a chunked transfer: {start,size} requests for download, chunked-upload sessions for upload (HTTP backend only; Websocket upload always sends the whole file as one connection's frames).">Chunk size (MB)</label>
             <input type="number" x-model.number="settings.benchmark.chunkSizeMB" min="1" :max="settings.benchmark.sizeMB"
-                   title="Splits the download benchmark into multiple {start,size} requests of this size, simulating a chunked transfer. Not used by the upload benchmark, which always sends the whole file in one request.">
+                   title="Splits the benchmark transfer into multiple requests of this size, simulating a chunked transfer: {start,size} requests for download, chunked-upload sessions for upload (HTTP backend only; Websocket upload always sends the whole file as one connection's frames).">
           </div>
         </section>
 
-        <section class="panel-section" x-show="tab === 'download'">
+        <section class="panel-section" x-show="tab === 'download' || tab === 'upload'">
           <h2 class="section-header" @click="settings.panel.chunkingOpen = !settings.panel.chunkingOpen">
             <span class="section-arrow" x-text="settings.panel.chunkingOpen ? '▾' : '▸'"></span>Chunking
           </h2>
           <div x-show="settings.panel.chunkingOpen">
-            <label class="auto-label"
-                   title="Split a file download into multiple sequential requests instead of one, useful for very large files or flaky connections.">
-              <input type="checkbox" x-model="settings.chunking.enabled"> Enable chunking
-            </label>
-            <div x-show="settings.chunking.enabled">
-              <label title="Size of each downloaded chunk, in megabytes.">Chunk size (MB)</label>
-              <input type="number" x-model="settings.chunking.chunkSize" min="1"
-                     title="Size of each downloaded chunk, in megabytes.">
+            <div x-show="tab === 'download'">
               <label class="auto-label"
-                     :class="{'disabled': !hasFileSystemAccess}"
-                     :title="hasFileSystemAccess ? 'Write chunks directly to a single file on disk as they arrive (File System Access API) instead of downloading each chunk as a separate file.' : 'File System Access API is required for efficient reassembly'">
-                <input type="checkbox"
-                       x-model="settings.chunking.reassemble"
-                       :disabled="!hasFileSystemAccess"> Reassemble chunks
+                     title="Split a file download into multiple sequential requests instead of one, useful for very large files or flaky connections.">
+                <input type="checkbox" x-model="settings.chunking.enabled"> Enable chunking
               </label>
+              <div x-show="settings.chunking.enabled">
+                <label title="Size of each downloaded chunk, in megabytes.">Chunk size (MB)</label>
+                <input type="number" x-model="settings.chunking.chunkSize" min="1"
+                       title="Size of each downloaded chunk, in megabytes.">
+                <label class="auto-label"
+                       :class="{'disabled': !hasFileSystemAccess}"
+                       :title="hasFileSystemAccess ? 'Write chunks directly to a single file on disk as they arrive (File System Access API) instead of downloading each chunk as a separate file.' : 'File System Access API is required for efficient reassembly'">
+                  <input type="checkbox"
+                         x-model="settings.chunking.reassemble"
+                         :disabled="!hasFileSystemAccess"> Reassemble chunks
+                </label>
+              </div>
+            </div>
+            <div x-show="tab === 'upload'">
+              <div x-show="settings.backend === 'http'">
+                <label class="auto-label"
+                       title="Split a file upload into multiple sequential requests instead of one, useful for very large files or flaky connections. HTTP POST backend only.">
+                  <input type="checkbox" x-model="settings.uploadChunking.enabled"> Enable chunking
+                </label>
+                <div x-show="settings.uploadChunking.enabled">
+                  <label title="Size of each uploaded chunk, in megabytes.">Chunk size (MB)</label>
+                  <input type="number" x-model="settings.uploadChunking.chunkSizeMB" min="1"
+                         title="Size of each uploaded chunk, in megabytes.">
+                </div>
+              </div>
+              <div x-show="settings.backend === 'ws'" class="upload-empty">
+                Chunked upload is only available on the HTTP POST backend.
+              </div>
             </div>
           </div>
         </section>
@@ -209,6 +227,18 @@
 
       <div x-show="tab === 'download'">
         <div x-show="error" class="error" x-text="error"></div>
+        <div class="transfer-list" x-show="transfers.some(t => t.direction === 'download')">
+          <template x-for="t in transfers.filter(t => t.direction === 'download')" :key="t.id">
+            <div class="transfer-row">
+              <span class="transfer-name" x-text="t.name"></span>
+              <div class="progress-bar" x-show="t.progress !== null">
+                <div class="progress-bar-fill" :style="'width:' + Math.round(t.progress * 100) + '%'"></div>
+                <span class="progress-bar-label" x-text="Math.round(t.progress * 100) + '%'"></span>
+              </div>
+              <div class="progress-caption progress-caption-pulse" x-show="t.progress === null">Downloading…</div>
+            </div>
+          </template>
+        </div>
         <table x-show="!error">
           <thead>
             <tr><th>Name</th><th class="col-size">Size</th></tr>
@@ -243,6 +273,18 @@
           <button class="choose-btn" @click="triggerFileInput()">choose files</button>
           <input type="file" id="ulFileInput" style="display:none" multiple
                  @change="uploadFiles($event.target.files); $event.target.value = ''">
+        </div>
+        <div class="transfer-list" x-show="transfers.some(t => t.direction === 'upload')">
+          <template x-for="t in transfers.filter(t => t.direction === 'upload')" :key="t.id">
+            <div class="transfer-row">
+              <span class="transfer-name" x-text="t.name"></span>
+              <div class="progress-bar" x-show="t.progress !== null">
+                <div class="progress-bar-fill" :style="'width:' + Math.round(t.progress * 100) + '%'"></div>
+                <span class="progress-bar-label" x-text="Math.round(t.progress * 100) + '%'"></span>
+              </div>
+              <div class="progress-caption progress-caption-pulse" x-show="t.progress === null">Uploading…</div>
+            </div>
+          </template>
         </div>
         <table x-show="uploadEntries.length > 0">
           <thead>
@@ -302,11 +344,13 @@
           <button class="choose-btn" @click="runUploadBenchmark()" :disabled="benchmarkRunning">Run Upload Benchmark</button>
           <button class="choose-btn" @click="clearBenchmarkResults()" :disabled="benchmarkResults.length === 0">Clear results</button>
         </div>
-        <div class="bench-preparing" x-show="benchmarkPreparing" :class="{ 'bench-preparing-indeterminate': benchmarkPrepProgress === null }"
-             x-text="benchmarkPrepProgress !== null ? ('Generating test data… ' + Math.round(benchmarkPrepProgress * 100) + '%') : 'Hashing test data…'"></div>
-        <div class="bench-progress" x-show="benchmarkProgress !== null && !benchmarkPreparing">
-          <div class="bench-progress-fill" :style="'width:' + Math.round(benchmarkProgress * 100) + '%'"></div>
-          <span class="bench-progress-label" x-text="Math.round(benchmarkProgress * 100) + '%'"></span>
+        <div class="bench-progress-wrap">
+          <div class="progress-caption" x-show="benchmarkPreparing" :class="{ 'progress-caption-pulse': benchmarkPrepProgress === null }"
+               x-text="benchmarkPrepProgress !== null ? ('Generating test data… ' + Math.round(benchmarkPrepProgress * 100) + '%') : 'Hashing test data…'"></div>
+          <div class="progress-bar" x-show="benchmarkProgress !== null && !benchmarkPreparing">
+            <div class="progress-bar-fill" :style="'width:' + Math.round(benchmarkProgress * 100) + '%'"></div>
+            <span class="progress-bar-label" x-text="Math.round(benchmarkProgress * 100) + '%'"></span>
+          </div>
         </div>
         <table x-show="benchmarkResults.length > 0">
           <thead>

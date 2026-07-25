@@ -58,12 +58,12 @@ The Go module (`warpgate`, Go 1.25.0) lives at the repo root. The frontend is em
 | GET      | `/api/public/settings`  | No            | Returns `{"wsFrameMin":...,"wsFrameMax":...}`, the server's configured WS frame size bounds, for UI clamping |
 | POST     | `/api/files/list`       | Yes           | List files in the download root; body: `{"path":"subdir"}` |
 | POST     | `/api/files/download`   | Yes           | Download a (chunk of a) file with a transform applied |
-| POST     | `/api/files/upload`     | Yes           | Upload a file (requires `-ul-root`); multipart form |
+| POST     | `/api/files/upload`     | Yes           | Upload a (chunk of a) file (requires `-ul-root`); multipart form |
 | GET      | `/api/files/ul-list`    | Yes           | List files in the upload directory |
 | GET/Upgrade | `/api/files/ws/download`  | Yes (in-band) | WebSocket alternative to `/api/files/download`; see below |
 | GET/Upgrade | `/api/files/ws/upload`    | Yes (in-band) | WebSocket alternative to `/api/files/upload` (requires `-ul-root`); see below |
 | POST     | `/api/sim/download`     | Yes           | Download a chunk of a synthesized file, no transform applied; see "Benchmark/Simulation Endpoints" |
-| POST     | `/api/sim/upload`       | Yes           | Upload a file for SHA-256 hashing (requires `-ul-root`), nothing written to disk; see below |
+| POST     | `/api/sim/upload`       | Yes           | Upload a (chunk of a) file for SHA-256 hashing (requires `-ul-root`), nothing written to disk; see below |
 | GET/Upgrade | `/api/sim/ws/download`  | Yes (in-band) | WebSocket alternative to `/api/sim/download`; see below |
 | GET/Upgrade | `/api/sim/ws/upload`    | Yes (in-band) | WebSocket alternative to `/api/sim/upload` (requires `-ul-root`); see below |
 | GET      | `/api/clip/list`        | Yes           | List all clipboard notes |
@@ -99,8 +99,73 @@ headers, so the frontend's Content-Type control (General panel section) is hidde
 ### `/api/files/upload` multipart form
 
 Two parts:
-- `transform` (optional file part, JSON): `{"transform":"pdf","args":{"filename":"myfile.txt"}}`
-- `file`: the file data (already encoded by the frontend)
+- `transform` (optional file part, JSON): `{"transform":"pdf","args":{"filename":"myfile.txt"},"continuation-key":"<hex>","ul-done":true}`
+- `file`: this request's file data (already encoded by the frontend; for a chunked upload, this
+  chunk's independently-transformed bytes, not the whole file)
+
+`continuation-key` and `ul-done` are optional and enable chunked upload — splitting one file across
+several requests instead of sending it all in a single POST. `ul-done` defaults to `true` when
+omitted entirely — not just when falsy — via a `*bool` in the decode struct, specifically so a
+legacy client that has never heard of chunking (no `transform` part at all, or one that omits
+`ul-done`) gets the historical one-shot behavior automatically: the whole file in one request,
+written immediately, no session created. Sending `"ul-done":false` explicitly — even with no
+`continuation-key`, i.e. on what would otherwise be a one-shot request — opts into chunking instead;
+a plain `bool` can't make this distinction, since `false` and "absent" decode identically.
+
+**Chunked upload protocol** (HTTP POST only — no WebSocket equivalent yet; `wgcli upload`'s
+`-chunk-size` flag exercises it):
+1. First chunk: `continuation-key` omitted. Behaves like a one-shot upload — creates/overwrites the
+   target file unconditionally, discarding any prior state (even an in-progress or completed
+   session) recorded for that filename. `transform`/`args` apply to *this chunk only*: each chunk is
+   transformed independently (its own `Untransform` call), not as one transform spanning the whole
+   file, so `pdf`/`html-b64` chunks are self-contained per chunk, the same way download chunks
+   already are.
+2. If the resolved `ul-done` (see the defaulting rule above) is not `true`, the response includes a
+   `continuation-key`: more chunks are expected.
+3. Subsequent chunks: `continuation-key` set to the value from the previous response; the decoded
+   bytes are appended to the target file. Each successful non-final chunk's response carries a
+   freshly-rotated `continuation-key` for the next chunk.
+4. Final chunk: `ul-done: true`. Response omits `continuation-key`; the upload is complete.
+
+Implemented in `ul_session.go` (session/locking state, generic over any session payload type — see
+below) and `upload.go` (`handleUpload`, `handleUploadFirstChunk`, `handleUploadContinuation`). The
+identical protocol, sharing this same `ul_session.go` machinery, also powers `/api/sim/upload`'s
+chunked benchmark upload — see "Benchmark/Simulation Endpoints" below.
+
+- **Locking**: a per-filename claim (`sessionStore.tryClaim`/`release`, called via
+  `Server.uploadSessions`, a `*sessionStore[*ulSession]`) rejects a request outright (`409`) rather
+  than queuing it if another request for the same filename is already being processed —
+  deliberately simple given chunks are expected to be sent strictly one at a time, each awaited
+  before the next (`web/app.js`'s `uploadFileHTTPChunked` does this).
+- **Continuation-key rotation**: the server remembers both the current and immediately-previous key
+  for an in-progress session. A request bearing the previous key (an ack that was lost in transit,
+  so the client retried) is answered idempotently with the current key, without reprocessing — this
+  is why chunks must never be sent concurrently or out of order, since only the single
+  immediately-prior key is remembered. A key matching neither is rejected *without* touching
+  whatever, if anything, is actually on record for that filename, so a stale or superseded request
+  can never disturb a live or completed session it no longer corresponds to.
+- **Completion**: once `ul-done: true` succeeds, the session becomes a "completed" marker (keeping
+  the key that was just used) rather than being deleted outright, so a late retry of that exact
+  final request still gets an idempotent "already done" response instead of an error.
+- **Failure**: any real processing failure (a transform error only discoverable at decode time, a
+  write error, or the request exceeding `ulChunkProcessTimeout`) deletes both the partial file and
+  the entire session — there is no partial-failure recovery; the client must restart the upload from
+  scratch.
+- **Expiry**: `ulSweepExpired` purges sessions idle longer than `ulSessionIdleExpiry` (both in
+  `ul_session.go`; currently the same value as `ulChunkProcessTimeout` but an independent constant —
+  one bounds a single request's own processing time, the other bounds the gap between successive
+  chunks). An active (incomplete) session's partial file is deleted on expiry; a completed marker's
+  file is left alone, since it's already finished and correct.
+- **Listing**: `GET /api/files/ul-list` hides any filename with a non-completed session on record
+  (`Server.uploadSessions.lockedNames()`), so an in-progress upload never appears as if it were a
+  finished, correctly-sized file.
+- **Download-side locking**: `handleDownload` (`download.go`) also consults `lockedNames()` via
+  `Server.downloadBlockedByUpload`, which compares *resolved absolute paths* — `filepath.Join(s.absUlRoot,
+  name)` against the download's own resolved target — rather than special-casing "`-root` equals
+  `-ul-root`". This is what actually matters: it's correct whether the two roots are identical,
+  nested, or unrelated, since a download into a subdirectory can never collide (uploads always land
+  flat under `-ul-root`). A blocked download gets `409 Conflict`, distinct from the plain `404` a
+  never-uploaded filename gets.
 
 ## WebSocket Transport
 
@@ -113,7 +178,8 @@ end to end; chunking within that connection is optional and orthogonal to the tr
 
 Browsers cannot set the `X-Auth` header on a WebSocket handshake request, so these two routes are
 registered without the `withAuth` middleware; instead, auth is checked in-band against the `auth`
-field of the first control message sent after upgrade. An invalid key gets a
+field of the first control message sent after upgrade — like `X-Auth`, this carries the derived
+token (see "Authentication" below), not the raw key. An invalid token gets a
 `{"ok":false,"error":"unauthorized"}` message followed by a close frame with code 1008 (policy
 violation).
 
@@ -158,7 +224,7 @@ independent calls. Concretely:
   holds and would otherwise silently corrupt anything but the `id` transform.)
 
 **Download protocol:**
-1. Client → Server (text): `{"auth":"<key>","path":"...","transform":"xor","args":{...},"frameSize":1048576}`
+1. Client → Server (text): `{"auth":"<authToken>","path":"...","transform":"xor","args":{...},"frameSize":1048576}`
 2. Server → Client (text): `{"ok":true,"size":12345}` or `{"ok":false,"error":"..."}` — `size` is the
    original (plaintext) file size
 3. Client → Server (text, repeated, one at a time — no pipelining): `{"start":0,"size":1048576}` to
@@ -191,7 +257,7 @@ input), which broke chunked WS download for those two transforms (verified: a 22
   equals returned size.
 
 **Upload protocol:**
-1. Client → Server (text): `{"auth":"<key>","filename":"...","transform":"xor","args":{...},"frameSize":1048576}`
+1. Client → Server (text): `{"auth":"<authToken>","filename":"...","transform":"xor","args":{...},"frameSize":1048576}`
 2. Server → Client (text): `{"ok":true}` or `{"ok":false,"error":"..."}`
 3. Client → Server (binary, one or more messages, each ≤ `frameSize`): the transformed file's bytes,
    split purely for transport — unlike before, an individual message is *not* required to be
@@ -222,32 +288,62 @@ to fit (e.g. `totalSize: 1` is rejected). The frontend never persists the downlo
 it reassembles them in memory only long enough to verify a SHA-256 hash against a locally-computed
 expected value (see "Benchmark tab" below), then discards them.
 
-**Upload** accepts a file the same way `/api/files/upload` does (gated behind `-ul-root`, even
-though nothing is written to disk — matching the operator's intent to disable upload-shaped
-features entirely via that flag) but never writes it: the received bytes are streamed straight into
-a SHA-256 hash, capped at `simMaxTotalSize`, and the hex-encoded hash is returned instead of a
-filename, so a client can verify a benchmark upload arrived intact without server-side storage.
+**Upload** accepts a file, or one chunk of one, the same way `/api/files/upload` does (gated behind
+`-ul-root`, even though nothing is written to disk — matching the operator's intent to disable
+upload-shaped features entirely via that flag) but never writes it: the received bytes are streamed
+straight into a running SHA-256 hash, capped cumulatively at `simMaxTotalSize` across all chunks of
+one run, and the hex-encoded hash is returned once the upload completes, instead of a filename, so a
+client can verify a benchmark upload arrived intact without server-side storage.
 
 The HTTP upload's `simMaxTotalSize` cap applies to the file *content*, not the raw request body: the
 `http.MaxBytesReader` guarding `r.Body` is set to `simMaxTotalSize + multipartOverheadSlack` (64 KiB)
 because multipart/form-data framing (boundary markers, part headers) adds bytes on top of the file
 itself, and a file at exactly `simMaxTotalSize` — the UI's own max, so exactly what a user
 stress-testing the benchmark would pick — would otherwise always overflow a same-sized cap once that
-framing is counted, and get rejected as if it were too large. The actual file content is still
-hard-capped at `simMaxTotalSize`, enforced separately via `io.LimitReader(file, simMaxTotalSize+1)`
-plus an explicit length check after `io.Copy` into the hasher.
+framing is counted, and get rejected as if it were too large. This is a *per-request* cap; a chunked
+run additionally enforces the same `simMaxTotalSize` ceiling *cumulatively* via
+`simUlSession.totalBytes` (`sim_upload.go`), checked after every chunk.
 
 Because there's no transform step requiring the full contents assembled in one place first, the WS
 upload variant hashes frames incrementally as they arrive rather than buffering them like
 `handleWSUpload` does.
 
+**Chunked sim upload** (`sim_upload.go`, HTTP only) reuses the exact same `ul_session.go` machinery
+as `/api/files/upload` — see that endpoint's "Chunked upload protocol" above for the full
+`continuation-key`/`ul-done` mechanics (rotation, idempotent replay of the previous/completed key,
+locking, `ul-done` defaulting to `true` when omitted, teardown on failure, expiry) — with these
+differences:
+- No `transform`/`args` fields: the `transform` part, when present, carries only
+  `{"continuation-key":"<hex>","ul-done":true}`.
+- The `file` part's filename is a session key only — nothing is ever written to disk under it, and
+  it lives in its own namespace (`Server.simUploadSessions`, a separate `*sessionStore[*simUlSession]`
+  from `Server.uploadSessions`), so it's safe to reuse a name like `bench.bin` across runs without
+  colliding with a real upload or a previous benchmark run.
+- The session's payload is a running `hash.Hash` (`simUlSession.hasher`) plus a cumulative byte count
+  (`simUlSession.totalBytes`, checked against `simMaxTotalSize` after every chunk — see above), not a
+  reopened file: there's nothing to "append to" between requests, so the hash itself must be the
+  thing kept alive.
+- A first chunk (`continuation-key` omitted) always resets `hasher`/`totalBytes`, discarding any
+  prior session for that name — mirroring how a real first chunk unconditionally overwrites its
+  target file.
+- Every successful response is `200`, never `/api/files/upload`'s `201`-for-first-chunk — nothing is
+  ever "created" here. `hash` is present only on the response that completes the upload (a one-shot
+  request, the final chunk, or a completed-session replay); a non-final chunk's response carries
+  `continuation-key` instead, exactly like `/api/files/upload`'s `UploadResponse.ContinuationKey`.
+
+This also drives the Benchmark tab's HTTP-backend "Run Upload Benchmark" chunking — see "Benchmark
+tab" below.
+
 **HTTP request/response shapes** (see `doc/openapi.yaml` for the authoritative schema):
 - `POST /api/sim/download`: `{"totalSize":1048576,"start":0,"size":1048576}` → raw bytes
   (`application/octet-stream`)
-- `POST /api/sim/upload`: multipart form with a single `file` part → `{"hash":"<hex>"}`
+- `POST /api/sim/upload`: multipart form, `file` part required, `transform` part optional
+  (`{"continuation-key":"<hex>","ul-done":true}`) → `{"hash":"<hex>"}` on a one-shot/final/replay
+  response, `{"continuation-key":"<hex>"}` on an intermediate chunk's response — see "Chunked sim
+  upload" above.
 
 **WS download protocol:**
-1. Client → Server (text): `{"auth":"<key>","totalSize":1048576,"frameSize":1048576}`
+1. Client → Server (text): `{"auth":"<authToken>","totalSize":1048576,"frameSize":1048576}`
 2. Server → Client (text): `{"ok":true,"size":1048576}` (`size` echoes `totalSize`) or
    `{"ok":false,"error":"..."}`
 3. Client → Server (text, repeated): `{"start":0,"size":1048576}` (reuses `wsChunkRequest`, the same
@@ -257,7 +353,7 @@ upload variant hashes frames incrementally as they arrive rather than buffering 
 5. On any error: server sends `{"ok":false,"error":"..."}` then closes
 
 **WS upload protocol:**
-1. Client → Server (text): `{"auth":"<key>","frameSize":1048576}` (no filename)
+1. Client → Server (text): `{"auth":"<authToken>","frameSize":1048576}` (no filename)
 2. Server → Client (text): `{"ok":true}` or `{"ok":false,"error":"..."}`
 3. Client → Server (binary, one or more messages, each ≤ `frameSize`): raw bytes to hash; the running
    total is checked against `simMaxTotalSize` on every message, aborting the connection if exceeded
@@ -268,13 +364,21 @@ upload variant hashes frames incrementally as they arrive rather than buffering 
 ## Authentication
 
 All API endpoints except `/api/public/checkin` and `/api/public/settings` require an `X-Auth` header
-matching the server's key (the two WebSocket endpoints are also unauthenticated at the HTTP/upgrade
-level, but check the key in-band — see WebSocket Transport below).
+matching the server's derived auth token (the two WebSocket endpoints are also unauthenticated at
+the HTTP/upgrade level, but check the token in-band — see WebSocket Transport below).
 
-- Set the key with `-auth-key <key>`. If omitted and `-no-auth` is not set, a random 32-byte hex key is auto-generated and printed to the log at startup.
+The raw key configured by the operator is never sent over the wire. `internal/authhash.Hash(key)`
+(1000x-iterated SHA-256 of the key's UTF-8 bytes, chaining the raw digest each round, hex-encoded at
+the end) derives the actual token from it; both the server and every client (frontend, `wgcli`)
+compute this independently from the same raw key rather than one side transmitting a derived value
+to the other. `internal/authhash` is imported by both the server and `cmd/wgcli`, the same pattern
+`internal/transform` uses, so the two can't drift apart.
+
+- Set the key with `-auth-key <key>`. If omitted and `-no-auth` is not set, a random 32-byte hex key is auto-generated and printed to the log at startup. `Server.authHash` (`server.go`) is computed once from this key at startup, not per-request.
 - `-no-auth` disables authentication entirely (no header check).
-- The frontend persists the key as part of the unified UI settings (see "UI settings persistence" below) and restores it on reload.
-- The side panel has an **Auth** section where the user enters the key (displayed masked; a toggle reveals it). Changing it immediately refreshes the file listing.
+- The frontend persists the raw key as part of the unified UI settings (see "UI settings persistence" below) and restores it on reload; the derived token is cached separately in the non-persisted `authKeyHash` property, recomputed via `updateAuthKeyHash()` whenever the key changes (including once at `init()`, awaited before the first request goes out) rather than on every request.
+- The side panel has an **Auth** section where the user enters the raw key (displayed masked; a toggle reveals it). Changing it immediately refreshes the file listing.
+- `wgcli`'s `-auth-key` flag likewise takes the raw key; `globalFlags.authToken()` derives the token sent on the wire.
 
 Auth is enforced via `withAuth(h http.HandlerFunc) http.Handler` in `server.go`, applied at route registration time. The dispatch loop in `handler()` is unconditional.
 
@@ -439,11 +543,13 @@ All JS libraries are served locally (embedded in the binary); no CDN requests at
 ### Key frontend logic
 
 - `authHeaders()` — returns `{"X-Auth": key}` if key is non-empty, else `{}`. Merged into every API request.
-- `encodeForUpload(file)` — async; resolves to `{data: Blob, args: {}}`.
+- `encodeBytesForUpload(bytes, filename)` — async; the transform-type switch shared by the whole-file
+  and per-chunk upload paths, resolving to `{data: Blob, args: {}}` for whatever `bytes` it's given.
+- `encodeForUpload(file)` — async; reads the whole file and delegates to `encodeBytesForUpload`.
 - `decrypt(buffer, password, htmlB64Key)` — reverses the transform on a downloaded chunk's `ArrayBuffer`.
 - `fetchChunk(wsSession, path, start, size)` — dispatches to `fetchChunkHTTP` (POSTs to `/api/files/download`) or `fetchChunkWS` based on the `settings.backend` setting, calling `decrypt` on the (re)assembled response either way. `wsSession` is a plain `{ws, password, htmlB64Key}` object owned by the caller (`downloadFile`), threaded through repeated calls for the same file so the WS backend reuses one connection per file instead of opening one per chunk; `closeWSSession` ends it. Ignored for the HTTP backend.
 - Chunked downloads with optional reassembly via the File System Access API (`showSaveFilePicker`). Requires a secure context (HTTPS or localhost); the checkbox is disabled otherwise.
-- `uploadFiles(files)` — dispatches each file to `uploadFileHTTP` or `uploadFileWS` based on `settings.backend`, in parallel, then refreshes the upload listing.
+- `uploadFiles(files)` — dispatches each file to `uploadFileHTTP` or `uploadFileWS` based on `settings.backend`, in parallel, then refreshes the upload listing. `uploadFileHTTP` further dispatches to `uploadFileHTTPChunked` when `settings.uploadChunking.enabled` — HTTP backend only, see "`/api/files/upload` multipart form" above for the protocol.
 - `load()` / `loadUploadDir()` / `loadClipboard()` — each compares the fetched data against the current state with `JSON.stringify` and only updates the reactive array on a change, preserving scroll position during auto-refresh.
 - `textToBase64` / `base64ToText` — UTF-8–safe helpers used by the clipboard tab.
 - `sha256Hex(buffer)` — wraps `crypto.subtle.digest('SHA-256', ...)`, hex-encoding via the shared `bytesToHex` helper (also used by `randomHex`). Used by the benchmark tab (see below); requires a secure context (HTTPS or localhost).
@@ -496,7 +602,7 @@ kept as a standalone top-level property for the same reason).
 |-----------|---------|
 | Auth      | `X-Auth` key input; masked by default with a 👁 reveal toggle (reveal state itself is not persisted); change triggers listing refresh |
 | Benchmark | Benchmark tab only; Size (MB, 1-1024) and Chunk size (MB, ≤ Size) for the synthetic transfer — see "Benchmark tab" below |
-| Chunking  | Enable chunked download (download tab only), set chunk size, enable File System Access API reassembly |
+| Chunking  | Download tab: enable chunked download, set chunk size, enable File System Access API reassembly. Upload tab: enable chunked upload and set chunk size (HTTP POST backend only — hidden when Backend is Websocket) |
 | General   | Auto-refresh (polls the active tab every second; re-renders only on changes); Confirm note delete; Backend (HTTP POST/Websocket, download+upload+benchmark tabs); WS frame size in KB (download+upload+benchmark tabs, only when Backend is Websocket; default 4M, clamped to the server's `-ws-frame-max` via `/api/public/settings`); Content-Type (download tab only, only when Backend is HTTP POST — a preset dropdown of common MIME types plus "Custom…", overriding the download response's `Content-Type` header; see `/api/files/download`'s `contentType` field above) |
 | Transform | Select transform type and configure its parameters (auto-generate keys/IVs) |
 
@@ -529,14 +635,24 @@ gets through a given proxy, independent of any transform.
     mismatch is reported as `"hash mismatch (data corrupted in transit)"`.
   - **Upload**: `generateRandomBuffer` fills a buffer via `crypto.getRandomValues` (called in ≤64 KiB
     slices — its per-call limit) and hashes it locally before sending; the hash the server reports
-    back (see `simUploadResponse`/`wsAck.Hash`) must match.
+    back (see `simUploadResponse`/`wsAck.Hash`) must match. On the HTTP backend, when the configured
+    chunk size is smaller than the total size, `uploadSimHTTPChunked` splits the buffer across
+    several `/api/sim/upload` requests using the same continuation-key protocol as the real Upload
+    tab's `uploadFileHTTPChunked` (see "Chunked sim upload" under "Benchmark/Simulation Endpoints"
+    above) — this exercises the server's chunked-upload session machinery itself, not just the
+    transform/HTTP transport. The
+    final chunk's response carries the hash; intermediate chunks don't (`data.hash` is only set once
+    `ul-done: true` succeeds). The WS backend has no continuation-key equivalent (see "WebSocket
+    Transport" above), so `uploadSimWS` always sends the whole buffer as one connection's frames
+    regardless of the configured chunk size — only frame size (see below) varies its request shape.
   - Both directions time only the network portion — the expected/local hash is computed *before* the
     timer starts (download) or before the upload call (upload), so local CPU hashing time doesn't
     pollute the reported duration/throughput.
   - `crypto.subtle` (used by `sha256Hex`) requires a secure context (HTTPS or localhost); if
     unavailable, a run immediately fails with a message saying so rather than throwing.
-- Size (1-1024 MB) and Chunk size (≤ Size) are configured in the Benchmark side-panel section; Backend
-  and (when Websocket) WS frame size are the same settings the Download/Upload tabs use.
+- Size (1-1024 MB) and Chunk size (≤ Size) are configured in the Benchmark side-panel section; Chunk
+  size splits both download (always) and HTTP-backend upload (see above) into multiple requests.
+  Backend and (when Websocket) WS frame size are the same settings the Download/Upload tabs use.
 
 ## Go Dependencies
 

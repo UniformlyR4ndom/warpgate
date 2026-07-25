@@ -29,9 +29,11 @@ components:
       in: header
       name: X-Auth
       description: |
-        Authentication key. Configured with `-auth-key` at startup; if omitted, a random 32-byte
-        hex key is auto-generated and printed to the server log. Disable auth entirely with
-        `-no-auth`, in which case the header is not checked.
+        Not the raw key itself: 1000x-iterated SHA-256 of it (hex-encoded), derived independently
+        by client and server from the same key rather than transmitted. The underlying key is
+        configured with `-auth-key` at startup; if omitted, a random 32-byte hex key is
+        auto-generated and printed to the server log. Disable auth entirely with `-no-auth`, in
+        which case the header is not checked.
 
   schemas:
 
@@ -61,6 +63,29 @@ components:
           type: string
           description: Filename as stored on the server.
           example: document.bin
+        continuation-key:
+          type: string
+          description: |
+            Present only when more chunks are expected: absent on a plain one-shot upload, the
+            final chunk's success response, and a completed-session replay ack. See the
+            `/api/files/upload` chunked-upload description for the full protocol.
+
+    SimUploadResponse:
+      type: object
+      properties:
+        hash:
+          type: string
+          description: |
+            SHA-256 hash of the uploaded bytes, hex-encoded. Present only on the response that
+            completes the upload (a one-shot request, the final chunk, or a completed-session
+            replay) — omitted on every other response, where `continuation-key` is set instead.
+          example: 3a7bd3e2360a3d29eea436fcfb7e44c735d117c42d1c1835420b6b9942dd4f1
+        continuation-key:
+          type: string
+          description: |
+            Present only when more chunks are expected: absent on a plain one-shot upload, the
+            final chunk's success response, and a completed-session replay ack. See
+            `/api/sim/upload`'s description for the full protocol.
 
     TransformArgs:
       type: object
@@ -349,10 +374,11 @@ paths:
   /api/files/upload:
     post:
       operationId: uploadFile
-      summary: Upload a file
+      summary: Upload a (chunk of a) file
       description: |
-        Accepts a file that has already been encoded by the client using the specified transform.
-        The server reverses the transform and writes the recovered bytes to the upload root.
+        Accepts a file, or one chunk of one, that has already been encoded by the client using the
+        specified transform. The server reverses the transform and writes/appends the recovered
+        bytes to the upload root.
 
         This endpoint is only available when the server was started with `-ul-root`.
         If not configured, the endpoint returns 404.
@@ -360,9 +386,41 @@ paths:
         The request is a `multipart/form-data` with two parts:
 
         - **`transform`** (optional file part, `application/json`): describes the transform used
-          to encode the file: `{"transform":"<name>","args":{...}}`. Omit to use the `id`
-          (no-op) transform.
-        - **`file`**: the encoded file data. The part's filename is used as the stored filename.
+          to encode this request's `file` part: `{"transform":"<name>","args":{...}}`. Omit to use
+          the `id` (no-op) transform.
+        - **`file`**: this request's (chunk of) encoded file data. The part's filename is used as
+          the stored filename.
+
+        **Chunked upload** (HTTP only) splits one file across several requests instead of a single
+        POST, by adding two optional fields to the `transform` part:
+
+        - **`continuation-key`**: omitted on the first chunk; set to the value from the previous
+          response on every subsequent chunk. The first chunk always behaves like a one-shot
+          upload — creating/overwriting the target file and discarding any prior session recorded
+          for that filename — and, if not immediately done, the response carries a
+          `continuation-key` that must be echoed back on the next chunk. A request whose key
+          doesn't match what the server has on record is rejected without touching whatever, if
+          anything, actually exists for that filename.
+        - **`ul-done`**: `true` on the final chunk; `false` keeps the session open for more chunks,
+          even on the first request. **Defaults to `true`** when the field — or the whole `transform`
+          part — is omitted entirely (not just when falsy), so a legacy client that has never heard
+          of chunking gets the historical one-shot behavior automatically instead of silently opening
+          a session it will never continue. A response to a non-final chunk carries a
+          freshly-rotated `continuation-key` for the next request; the final chunk's response omits
+          it.
+
+        Chunks are transformed independently — each request's `transform`/`args` apply only to that
+        request's `file` part, the same way `pdf`/`html-b64` chunks are already self-contained on
+        the download side. Chunks must be sent one at a time, each response awaited before the
+        next request: the server holds a per-filename lock for the duration of one chunk's
+        processing and rejects (`409`) any other request for that filename in the meantime, rather
+        than queuing it. There is no partial-failure recovery — a chunk that fails deletes the
+        whole partial file and its session; the client must restart the upload from scratch.
+
+        A plain one-shot upload — no `transform` part at all, or one that omits `ul-done` — behaves
+        exactly as before chunking existed: the whole file in one request, written immediately, no
+        session created. Sending `"ul-done":false` explicitly (even with no `continuation-key`) opts
+        into chunking instead of the one-shot default.
       requestBody:
         required: true
         content:
@@ -374,16 +432,27 @@ paths:
                 transform:
                   type: string
                   description: |
-                    JSON transform spec: `{"transform":"<name>","args":{...}}`.
+                    JSON transform spec, optionally with chunking fields:
+                    `{"transform":"<name>","args":{...},"continuation-key":"<hex>","ul-done":true}`.
                     See `TransformArgs` for per-transform arg schemas.
-                  example: '{"transform":"xor","args":{"key":"deadbeefcafe1234"}}'
+                  example: '{"transform":"xor","args":{"key":"deadbeefcafe1234"},"ul-done":true}'
                 file:
                   type: string
                   format: binary
-                  description: Encoded file data. The multipart filename becomes the stored filename.
+                  description: |
+                    Encoded (chunk of) file data. The multipart filename becomes the stored
+                    filename.
       responses:
         "201":
-          description: File stored successfully.
+          description: First chunk (or the whole file, for a one-shot upload) stored successfully.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UploadResponse'
+        "200":
+          description: |
+            A non-first chunk was accepted (intermediate, final, or an idempotent replay of an
+            already-processed chunk/completed upload).
           content:
             application/json:
               schema:
@@ -391,15 +460,18 @@ paths:
         "400":
           description: |
             Invalid request — malformed multipart form, invalid transform spec JSON, invalid
-            transform args, or unusable filename.
+            transform args, unusable filename, or an unrecognized `continuation-key`.
         "401":
           description: Missing or invalid `X-Auth` header.
         "404":
           description: Upload not configured (server started without `-ul-root`).
         "405":
           description: Method not allowed.
+        "409":
+          description: Another request for this filename is currently being processed.
         "500":
-          description: Internal server error (transform failure or I/O error).
+          description: Internal server error (transform failure or I/O error) — the partial file
+            and its chunked-upload session, if any, have been deleted.
 
   /api/sim/download:
     post:
@@ -430,7 +502,7 @@ paths:
                   type: integer
                   format: int64
                   minimum: 1
-                  maximum: 104857600
+                  maximum: 1073741824
                   description: Total size of the synthesized file, in bytes.
                   example: 1048576
                 start:
@@ -469,16 +541,42 @@ paths:
   /api/sim/upload:
     post:
       operationId: simUpload
-      summary: Upload a file for hashing (benchmark)
+      summary: Upload a (chunk of a) file for hashing (benchmark)
       description: |
-        Accepts a file the same way `/api/files/upload` does, but never writes it to disk: the
-        received bytes are hashed with SHA-256 and the hash is returned, so a client can verify a
-        benchmark upload arrived intact without the server needing storage for it. No transform is
-        applied.
+        Accepts a file, or one chunk of one, the same way `/api/files/upload` does — including the
+        same chunked-upload session protocol — but never writes anything to disk: the received bytes
+        are streamed into a running SHA-256 hash, and the hex-encoded hash is returned once the
+        upload completes, so a client can verify a benchmark upload arrived intact without the
+        server needing storage for it. No transform is applied or accepted.
 
         This endpoint is only available when the server was started with `-ul-root`
         (matching `/api/files/upload`'s gating), even though nothing is written to disk. If not
-        configured, the endpoint returns 404. The upload is capped at 1024 MiB (1073741824 bytes).
+        configured, the endpoint returns 404. The cumulative upload size — across all chunks of one
+        run — is capped at 1024 MiB (1073741824 bytes).
+
+        The request is a `multipart/form-data` with two parts:
+
+        - **`transform`** (optional file part, `application/json`): carries only the chunking
+          fields, `{"continuation-key":"<hex>","ul-done":true}` — there's no `transform`/`args` field
+          here, since no transform is ever applied. Omit entirely for a plain one-shot upload.
+        - **`file`**: this request's (chunk of) raw bytes to hash. The part's filename is required
+          and identifies the upload session, but is otherwise unused — nothing is ever written to
+          disk under it. It lives in its own namespace, independent of `/api/files/upload`'s
+          sessions and of the download/upload roots' actual filenames, so it's safe to reuse a name
+          like `bench.bin` across runs.
+
+        **Chunked upload** works exactly like `/api/files/upload`'s (see that endpoint's description
+        above for the full `continuation-key`/`ul-done` protocol — including the rule that an
+        omitted `ul-done` defaults to `true`, so a plain one-shot upload with no `transform` part at
+        all behaves exactly as before chunking existed), with these differences:
+
+        - No transform, and the filename is a session key only, as described above.
+        - Every successful response is `200`, never `/api/files/upload`'s `201`-for-first-chunk,
+          since nothing is ever "created" here.
+        - `hash` (not `name`) is the payload identifying a completed upload, and is present only on
+          the response that completes it (a one-shot request, the final chunk, or a
+          completed-session replay) — a non-final chunk's response carries `continuation-key`
+          instead, exactly as `/api/files/upload`'s `UploadResponse` does.
       requestBody:
         required: true
         content:
@@ -487,31 +585,43 @@ paths:
               type: object
               required: [file]
               properties:
+                transform:
+                  type: string
+                  description: |
+                    JSON chunking spec (no `transform`/`args` fields — see the description above):
+                    `{"continuation-key":"<hex>","ul-done":true}`.
+                  example: '{"ul-done":true}'
                 file:
                   type: string
                   format: binary
-                  description: File data to hash.
+                  description: |
+                    This request's (chunk of) raw bytes to hash. The multipart filename identifies
+                    the upload session; the name itself is never used for anything else.
       responses:
         "200":
-          description: File received and hashed successfully.
+          description: |
+            Chunk accepted. `hash` is present only on the response that completes the upload (a
+            one-shot request, the final chunk, or a completed-session replay); a non-final chunk's
+            response carries `continuation-key` instead.
           content:
             application/json:
               schema:
-                type: object
-                required: [hash]
-                properties:
-                  hash:
-                    type: string
-                    description: SHA-256 hash of the received bytes, hex-encoded.
-                    example: 3a7bd3e2360a3d29eea436fcfb7e44c735d117c42d1c1835420b6b9942dd4f1
+                $ref: '#/components/schemas/SimUploadResponse'
         "400":
-          description: Invalid request — malformed multipart form or file exceeds 1024 MiB.
+          description: |
+            Invalid request — malformed multipart form, invalid transform-spec JSON, missing/invalid
+            filename, an unrecognized `continuation-key`, or the cumulative upload exceeds 1024 MiB.
         "401":
           description: Missing or invalid `X-Auth` header.
         "404":
           description: Upload not configured (server started without `-ul-root`).
         "405":
           description: Method not allowed.
+        "409":
+          description: Another request for this filename (session) is currently being processed.
+        "500":
+          description: Internal server error (read error or key-generation failure) — the whole
+            session, if any, has been discarded.
 
   /api/files/ul-list:
     get:

@@ -26,7 +26,7 @@ type wsAck struct {
 }
 
 func (s *Server) checkWSAuth(key string) bool {
-	return s.cfg.NoAuth || key == s.cfg.Key
+	return s.cfg.NoAuth || key == s.authHash
 }
 
 // resolveFrameSize validates a client-requested per-transfer WS frame size

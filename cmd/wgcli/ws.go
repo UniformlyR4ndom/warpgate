@@ -3,6 +3,7 @@ package main
 import (
 	"crypto/tls"
 	"fmt"
+	"io"
 	"net/url"
 	"strings"
 
@@ -70,4 +71,29 @@ func readWSAck(conn *websocket.Conn) (wsAck, error) {
 		return ack, fmt.Errorf("server error: %s", ack.Error)
 	}
 	return ack, nil
+}
+
+// writeWSBinaryFrames splits r into frameSize-sized binary WS frames (1 MiB
+// if frameSize is unset). Frames are a purely transport-level split — an
+// individual message doesn't need to be independently decodable (see
+// CLAUDE.md's WebSocket Transport / Upload protocol).
+func writeWSBinaryFrames(conn *websocket.Conn, r io.Reader, frameSize int64) error {
+	if frameSize <= 0 {
+		frameSize = 1 << 20
+	}
+	buf := make([]byte, frameSize)
+	for {
+		n, rerr := io.ReadFull(r, buf)
+		if n > 0 {
+			if werr := conn.WriteMessage(websocket.BinaryMessage, buf[:n]); werr != nil {
+				return fmt.Errorf("writing frame: %w", werr)
+			}
+		}
+		if rerr == io.EOF || rerr == io.ErrUnexpectedEOF {
+			return nil
+		}
+		if rerr != nil {
+			return fmt.Errorf("reading data: %w", rerr)
+		}
+	}
 }

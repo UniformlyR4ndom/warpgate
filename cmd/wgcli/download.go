@@ -117,7 +117,7 @@ func downloadWS(g *globalFlags, remotePath, out string, transformName string, tr
 		Transform string          `json:"transform"`
 		Args      json.RawMessage `json:"args,omitempty"`
 		FrameSize int64           `json:"frameSize,omitempty"`
-	}{g.authKey, remotePath, transformName, transformArgs, frameSize})
+	}{g.authToken(), remotePath, transformName, transformArgs, frameSize})
 	if err != nil {
 		return err
 	}

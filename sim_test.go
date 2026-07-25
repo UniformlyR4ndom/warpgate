@@ -218,6 +218,36 @@ func TestSimUploadHTTP(t *testing.T) {
 	}
 }
 
+func TestSimUploadExplicitUlDoneFalseStartsChunking(t *testing.T) {
+	ulRoot := t.TempDir()
+	ts := newSimTestServer(t, Config{Root: t.TempDir(), UlRoot: ulRoot, NoAuth: true})
+
+	// Unlike an omitted transform part (TestSimUploadHTTP, one-shot), an
+	// explicit "ul-done":false opts into chunking: the response carries a
+	// continuation-key instead of a hash.
+	content := []byte("some content")
+	body, contentType := multipartChunkedUpload(t, "id", "bench.bin", content, "", false)
+	resp, err := http.Post(ts.URL+"/api/sim/upload", contentType, body)
+	if err != nil {
+		t.Fatalf("POST: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		b, _ := io.ReadAll(resp.Body)
+		t.Fatalf("status %d: %s", resp.StatusCode, b)
+	}
+	var got simUploadResponse
+	if err := json.NewDecoder(resp.Body).Decode(&got); err != nil {
+		t.Fatalf("decoding response: %v", err)
+	}
+	if got.Hash != "" {
+		t.Fatalf("expected no hash on a non-final response, got %q", got.Hash)
+	}
+	if got.ContinuationKey == "" {
+		t.Fatalf("expected a continuation-key")
+	}
+}
+
 func TestSimUploadHTTPTooLarge(t *testing.T) {
 	ulRoot := t.TempDir()
 	ts := newSimTestServer(t, Config{Root: t.TempDir(), UlRoot: ulRoot, NoAuth: true})

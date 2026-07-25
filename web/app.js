@@ -36,25 +36,93 @@ async function wsNextJSON(ws) {
 // the browser never gets a chance to repaint, and the whole file piles up
 // in the socket's local buffer regardless of how fast the network actually
 // drains it. Waiting for bufferedAmount to fall under maxBuffered before
-// each send paces sends to real transport throughput (letting progress UI
-// update as frames actually leave) and caps how much unsent data can queue
-// in memory at once.
+// each send paces sends to real transport throughput and caps how much
+// unsent data can queue in memory at once.
+//
+// The wait always resolves via a real timer, even when the buffer is
+// already drained (the common case on a fast connection): an
+// already-resolved promise only yields a microtask, and a chain of
+// microtask-only awaits never gives the browser a chance to paint. Without
+// forcing a real macrotask here, a fast enough connection turns the whole
+// send loop into one unbroken microtask stretch — the underlying progress
+// data still updates correctly on every iteration, but nothing is ever
+// painted until the transfer is already done, so the progress bar appears
+// to jump straight from 0% to 100%.
 function wsWaitForDrain(ws, maxBuffered) {
   return new Promise(function(resolve) {
     (function check() {
-      if (ws.bufferedAmount <= maxBuffered) { resolve(); return; }
+      if (ws.bufferedAmount <= maxBuffered) { setTimeout(resolve, 0); return; }
       setTimeout(check, 0);
     })();
   });
 }
 
+// Sent as several frameSize-sized messages instead of one, purely a
+// wire-transport concern — the receiving end reassembles them before
+// treating the data as a single unit.
+async function sendWSBinary(ws, buffer, frameSize, onProgress) {
+  var bytes = new Uint8Array(buffer);
+  for (var offset = 0; offset < bytes.length; offset += frameSize) {
+    await wsWaitForDrain(ws, frameSize);
+    var slice = bytes.slice(offset, offset + frameSize);
+    ws.send(slice);
+    if (onProgress) onProgress(slice.byteLength);
+  }
+}
+
+// The sending end may split the data across several binary messages instead
+// of one, purely a wire-transport concern; keep reading until totalLen bytes
+// have arrived.
+async function receiveWSBinary(ws, totalLen, onProgress) {
+  var out = new Uint8Array(totalLen);
+  var received = 0;
+  while (received < totalLen) {
+    var raw = await wsNextMessage(ws);
+    if (typeof raw === 'string') {
+      var msg = JSON.parse(raw);
+      throw new Error(msg.error || 'download failed');
+    }
+    var piece = new Uint8Array(raw);
+    out.set(piece, received);
+    received += piece.byteLength;
+    if (onProgress) onProgress(piece.byteLength);
+  }
+  return out;
+}
+
+// Reads a fetch Response body incrementally so callers can report progress
+// as bytes arrive, instead of only learning the total once the whole body
+// has buffered (res.arrayBuffer()'s behavior).
+async function readBodyWithProgress(response, onProgress) {
+  if (!response.body || !response.body.getReader) {
+    var buf = await response.arrayBuffer();
+    if (onProgress) onProgress(buf.byteLength);
+    return buf;
+  }
+  var reader = response.body.getReader();
+  var chunks = [];
+  var received = 0;
+  while (true) {
+    var result = await reader.read();
+    if (result.done) break;
+    chunks.push(result.value);
+    received += result.value.byteLength;
+    if (onProgress) onProgress(result.value.byteLength);
+  }
+  var out = new Uint8Array(received);
+  var offset = 0;
+  for (var i = 0; i < chunks.length; i++) {
+    out.set(chunks[i], offset);
+    offset += chunks[i].byteLength;
+  }
+  return out.buffer;
+}
+
 const SETTINGS_STORAGE_KEY = 'warpgate-settings';
 const SETTINGS_VERSION = 1;
 
-// mergeSettings copies fields from source onto target, recursing into
-// nested plain objects, but only for keys that already exist on target —
-// this ignores stale/unknown fields from an older schema version instead
-// of blindly grafting them on.
+// Only copies keys that already exist on target, ignoring stale/unknown
+// fields from an older schema version instead of grafting them on.
 function mergeSettings(target, source) {
   if (!source || typeof source !== 'object') return;
   for (var key in source) {
@@ -81,6 +149,7 @@ function filesApp() {
     tab: 'download',
     uploadEntries: [],
     uploadError: null,
+    transfers: [], // not persisted: active download/upload progress rows, one per in-flight file
     benchmarkResults: [],
     benchmarkRunning: false,
     benchmarkProgress: null, // not persisted: null (no bar) or a 0-1 fraction while a multi-step run is active
@@ -91,6 +160,7 @@ function filesApp() {
     clipEditId: null,
     clipError: null,
     authShowKey: false, // not persisted: always start masked
+    authKeyHash: '', // not persisted: derived from settings.auth.key, recomputed on change
     wsFrameMinKB: 1,
     wsFrameMaxKB: 262144, // 256M; generous fallback ceiling until /api/public/settings responds
 
@@ -107,16 +177,14 @@ function filesApp() {
       { id: 'html-b64', label: 'HTML (base64)' },
     ],
 
-    // Everything in `settings` is persisted to localStorage as one JSON
-    // object (see loadSettings/saveSettings) — keep it that way, i.e. don't
-    // add non-serializable values (functions, DOM refs) here, and put any
-    // new UI-configurable value under this object rather than top-level.
+    // Everything here is persisted to localStorage as one JSON object — keep
+    // values serializable and put new UI-configurable fields here, not top-level.
     settings: {
       auth: { key: '' },
       backend: 'http',
       autoRefresh: false,
       confirmDelete: true,
-      wsFrameSizeKB: 4096, // 4M default, clamped to the server's max in init()
+      wsFrameSizeKB: 4096, // 4M default, clamped to the server's max
       contentType: {
         preset: 'auto', // 'auto' = let the transform pick, 'custom' = use `custom`, anything else = the literal value
         custom: '',
@@ -132,6 +200,10 @@ function filesApp() {
         chunkSize: 100,
         reassemble: false,
       },
+      uploadChunking: {
+        enabled:     false,
+        chunkSizeMB: 100,
+      },
       benchmark: {
         sizeMB: 10,
         chunkSizeMB: 4,
@@ -146,17 +218,16 @@ function filesApp() {
       },
     },
 
-    init() {
+    async init() {
       this.loadSettings();
       this.applyAuto();
+      await this.updateAuthKeyHash();
       this.load();
 
       // x-model on a <select> whose <option>s come from x-for tries to apply
       // the restored value before those options exist in the DOM yet; a
       // native <select>.value assignment to a not-yet-existing option is a
       // silent no-op with no automatic retry once the option appears.
-      // $nextTick alone isn't late enough to guarantee this; a 0ms timeout
-      // (a full macrotask later) reliably is. Force a resync once settled.
       setTimeout(() => {
         this.$refs.backendSelect.value = this.settings.backend;
         this.$refs.transformTypeSelect.value = this.settings.transform.type;
@@ -177,7 +248,8 @@ function filesApp() {
       this.applyAutoRefresh(this.settings.autoRefresh); // in case restored as true
       this.$watch('settings.autoRefresh', (enabled) => this.applyAutoRefresh(enabled));
 
-      this.$watch('settings.auth.key', () => {
+      this.$watch('settings.auth.key', async () => {
+        await this.updateAuthKeyHash();
         this.load();
         if (this.tab === 'upload') this.loadUploadDir();
       });
@@ -229,10 +301,33 @@ function filesApp() {
       return this.bytesToHex(new Uint8Array(digest));
     },
 
+    // The raw key is never sent to the server; this is the value that is.
+    async hashAuthKey(key) {
+      var data = new TextEncoder().encode(key);
+      for (var i = 0; i < 1000; i++) {
+        data = new Uint8Array(await window.crypto.subtle.digest('SHA-256', data));
+      }
+      return this.bytesToHex(data);
+    },
+
+    // Cached rather than recomputed per request — 1000 sequential digest
+    // calls per fetch/WS message would add real latency.
+    async updateAuthKeyHash() {
+      this.authKeyHash = this.settings.auth.key ? await this.hashAuthKey(this.settings.auth.key) : '';
+    },
+
     authHeaders() {
       var h = {};
-      if (this.settings.auth.key) { h['X-Auth'] = this.settings.auth.key; }
+      if (this.settings.auth.key) { h['X-Auth'] = this.authKeyHash; }
       return h;
+    },
+
+    jsonHeaders() {
+      return Object.assign({ 'Content-Type': 'application/json' }, this.authHeaders());
+    },
+
+    assertOk(res) {
+      if (!res.ok) throw Object.assign(new Error('HTTP ' + res.status), { status: res.status });
     },
 
     wsBaseURL() {
@@ -281,6 +376,18 @@ function filesApp() {
       return result;
     },
 
+    bytesToBinaryString(bytes) {
+      var binary = '';
+      for (var i = 0; i < bytes.length; i++) { binary += String.fromCharCode(bytes[i]); }
+      return binary;
+    },
+
+    binaryStringToBytes(binary) {
+      var bytes = new Uint8Array(binary.length);
+      for (var i = 0; i < binary.length; i++) { bytes[i] = binary.charCodeAt(i); }
+      return bytes;
+    },
+
     decryptAESCTR(buffer) {
       var t    = this.settings.transform.aesCtr;
       var key  = Array.from(this.hexToBytes(t.key));
@@ -299,9 +406,7 @@ function filesApp() {
       var end = html.indexOf('"', start);
       if (end === -1) { return Promise.reject(new Error('html-b64: unterminated payload')); }
       var b64 = html.slice(start, end);
-      var binary = atob(b64);
-      var bytes = new Uint8Array(binary.length);
-      for (var i = 0; i < binary.length; i++) { bytes[i] = binary.charCodeAt(i); }
+      var bytes = this.binaryStringToBytes(atob(b64));
       return Promise.resolve(this.applyXOR(bytes, this.hexToBytes(keyHex)));
     },
 
@@ -344,6 +449,35 @@ function filesApp() {
       return ('000' + i).slice(-3);
     },
 
+    addTransfer(direction, name) {
+      var t = { id: Date.now() + '-' + Math.random().toString(36).slice(2), direction: direction, name: name, progress: null };
+      this.transfers.push(t);
+      // Re-read the pushed element instead of returning `t` directly: Alpine's
+      // reactivity wraps array elements in a proxy on access, and mutating the
+      // raw `t` reference later (transfer.progress = ...) would bypass that
+      // proxy's setter, silently updating the data without ever notifying
+      // Alpine to re-render the bound x-show/x-text in the DOM.
+      return this.transfers[this.transfers.length - 1];
+    },
+
+    removeTransfer(t) {
+      var idx = this.transfers.indexOf(t);
+      if (idx !== -1) { this.transfers.splice(idx, 1); }
+    },
+
+    // totalSize is the plaintext size from the listing; transforms that
+    // expand their output (pdf, html-b64) make the real byte count run
+    // slightly ahead of it, so the fraction is clamped rather than exact.
+    // A non-positive totalSize (e.g. an empty file) has no meaningful
+    // fraction, so the bar stays indeterminate instead of dividing by zero.
+    makeTransferProgress(transfer, totalSize) {
+      var bytesDone = 0;
+      return function(n) {
+        bytesDone += n;
+        transfer.progress = totalSize > 0 ? Math.min(1, bytesDone / totalSize) : null;
+      };
+    },
+
     triggerDownload(data, filename) {
       var blob = new Blob([data]);
       var url  = URL.createObjectURL(blob);
@@ -354,20 +488,13 @@ function filesApp() {
       URL.revokeObjectURL(url);
     },
 
-    // fetchChunk fetches one chunk of a file. wsSession is a plain object
-    // ({ws, password, htmlB64Key}, all initially null) owned by the caller
-    // and threaded through repeated calls for the same file; when
-    // this.settings.backend === 'ws' the first call opens a WebSocket connection and
-    // caches it there, subsequent calls reuse it, and the caller must call
-    // closeWSSession(wsSession) once done. Ignored for the HTTP backend.
-    async fetchChunk(wsSession, path, start, size) {
-      if (this.settings.backend === 'ws') { return this.fetchChunkWS(wsSession, path, start, size); }
-      return this.fetchChunkHTTP(path, start, size);
+    // wsSession is a mutable cache ({ws, password, htmlB64Key}), reused across
+    // chunk calls for the same file on the ws backend; unused on http.
+    async fetchChunk(wsSession, path, start, size, onProgress) {
+      if (this.settings.backend === 'ws') { return this.fetchChunkWS(wsSession, path, start, size, onProgress); }
+      return this.fetchChunkHTTP(path, start, size, onProgress);
     },
 
-    // resolveContentTypeOverride returns the Content-Type override to send
-    // with an HTTP download request, or null to let the server pick one
-    // from the transform (see download.go's contentTyper fallback).
     resolveContentTypeOverride() {
       var c = this.settings.contentType;
       if (c.preset === 'auto') return null;
@@ -375,7 +502,7 @@ function filesApp() {
       return c.preset;
     },
 
-    async fetchChunkHTTP(path, start, size) {
+    async fetchChunkHTTP(path, start, size, onProgress) {
       var t = this.settings.transform;
       var password     = (t.type === 'pdf'      && t.pdf.password.enabled) ? this.randomHex(10) : null;
       var htmlB64Key   = (t.type === 'html-b64') ? this.randomHex(16) : null;
@@ -390,15 +517,15 @@ function filesApp() {
       if (contentType) body.contentType = contentType;
       var res = await fetch('/api/files/download', {
         method:  'POST',
-        headers: Object.assign({ 'Content-Type': 'application/json' }, this.authHeaders()),
+        headers: this.jsonHeaders(),
         body:    JSON.stringify(body),
       });
-      if (!res.ok) throw Object.assign(new Error('HTTP ' + res.status), { status: res.status });
-      var buffer = await res.arrayBuffer();
+      this.assertOk(res);
+      var buffer = await readBodyWithProgress(res, onProgress);
       return this.decrypt(buffer, password, htmlB64Key);
     },
 
-    async fetchChunkWS(wsSession, path, start, size) {
+    async fetchChunkWS(wsSession, path, start, size, onProgress) {
       if (!wsSession.ws) {
         var t          = this.settings.transform;
         var password   = (t.type === 'pdf'      && t.pdf.password.enabled) ? this.randomHex(10) : null;
@@ -406,7 +533,7 @@ function filesApp() {
 
         var ws = await wsOpen(this.wsBaseURL() + '/api/files/ws/download');
         ws.send(JSON.stringify({
-          auth:      this.settings.auth.key,
+          auth:      this.authKeyHash,
           path:      path,
           transform: t.type,
           args:      this.buildTransformArgs(password, htmlB64Key),
@@ -430,21 +557,7 @@ function filesApp() {
       if (!chunkAck.ok) throw new Error(chunkAck.error || 'download failed');
       var chunkSize = chunkAck.chunkSize;
 
-      // The server may split one chunk across several frameSize-sized
-      // binary messages instead of sending it as a single message; keep
-      // reading until the full chunk has arrived.
-      var received = new Uint8Array(chunkSize);
-      var offset = 0;
-      while (offset < chunkSize) {
-        var raw = await wsNextMessage(wsSession.ws);
-        if (typeof raw === 'string') {
-          var msg = JSON.parse(raw);
-          throw new Error(msg.error || 'download failed');
-        }
-        var piece = new Uint8Array(raw);
-        received.set(piece, offset);
-        offset += piece.byteLength;
-      }
+      var received = await receiveWSBinary(wsSession.ws, chunkSize, onProgress);
       return this.decrypt(received.buffer, wsSession.password, wsSession.htmlB64Key);
     },
 
@@ -458,9 +571,11 @@ function filesApp() {
 
     async downloadFile(entry) {
       this.error = null;
-      var path      = this.pathSegments.concat([entry.name]).join('/');
-      var chunking  = this.settings.chunking;
-      var wsSession = { ws: null, password: null, htmlB64Key: null };
+      var path       = this.pathSegments.concat([entry.name]).join('/');
+      var chunking   = this.settings.chunking;
+      var wsSession  = { ws: null, password: null, htmlB64Key: null };
+      var transfer   = this.addTransfer('download', entry.name);
+      var onProgress = this.makeTransferProgress(transfer, entry.size);
 
       if (chunking.enabled) {
         var chunkBytes = chunking.chunkSize * 1024 * 1024;
@@ -474,7 +589,7 @@ function filesApp() {
               for (var i = 0; i < numChunks; i++) {
                 var start = i * chunkBytes;
                 var size  = Math.min(chunkBytes, entry.size - start);
-                var data  = await this.fetchChunk(wsSession, path, start, size);
+                var data  = await this.fetchChunk(wsSession, path, start, size, onProgress);
                 await writable.write(data);
               }
               await writable.close();
@@ -488,6 +603,7 @@ function filesApp() {
             }
           } finally {
             this.closeWSSession(wsSession);
+            this.removeTransfer(transfer);
           }
         } else {
           var self = this;
@@ -496,24 +612,26 @@ function filesApp() {
               for (var i = 0; i < numChunks; i++) {
                 var start = i * chunkBytes;
                 var size  = Math.min(chunkBytes, entry.size - start);
-                var data  = await self.fetchChunk(wsSession, path, start, size);
+                var data  = await self.fetchChunk(wsSession, path, start, size, onProgress);
                 self.triggerDownload(data, entry.name + '.' + self.padIndex(i));
               }
             } catch(err) {
               self.error = 'Chunk failed: ' + (err.status ? 'HTTP ' + err.status : err);
             } finally {
               self.closeWSSession(wsSession);
+              self.removeTransfer(transfer);
             }
           })();
         }
       } else {
         try {
-          var data = await this.fetchChunk(wsSession, path, 0, entry.size);
+          var data = await this.fetchChunk(wsSession, path, 0, entry.size, onProgress);
           this.triggerDownload(data, entry.name);
         } catch(err) {
           this.error = 'Download failed: ' + (err.status ? 'HTTP ' + err.status : err);
         } finally {
           this.closeWSSession(wsSession);
+          this.removeTransfer(transfer);
         }
       }
     },
@@ -522,19 +640,21 @@ function filesApp() {
       return this.pathSegments.join('/');
     },
 
+    updateIfChanged(prop, data) {
+      if (JSON.stringify(data) !== JSON.stringify(this[prop])) { this[prop] = data; }
+    },
+
     async load() {
       this.error = null;
       try {
         var res = await fetch('/api/files/list', {
           method:  'POST',
-          headers: Object.assign({ 'Content-Type': 'application/json' }, this.authHeaders()),
+          headers: this.jsonHeaders(),
           body:    JSON.stringify({ path: this.currentPath() }),
         });
         if (!res.ok) throw new Error('HTTP ' + res.status);
         var data = await res.json();
-        if (JSON.stringify(data) !== JSON.stringify(this.entries)) {
-          this.entries = data;
-        }
+        this.updateIfChanged('entries', data);
       } catch(err) {
         this.error = 'Failed to load directory (' + err.message + ')';
       }
@@ -562,9 +682,7 @@ function filesApp() {
           return;
         }
         var data = (await res.json()) || [];
-        if (JSON.stringify(data) !== JSON.stringify(this.uploadEntries)) {
-          this.uploadEntries = data;
-        }
+        this.updateIfChanged('uploadEntries', data);
       } catch(err) {
         this.uploadEntries = [];
         this.uploadError = 'Failed to load upload directory (' + err.message + ')';
@@ -579,16 +697,11 @@ function filesApp() {
 
     textToBase64(str) {
       var bytes = new TextEncoder().encode(str);
-      var binary = '';
-      for (var i = 0; i < bytes.length; i++) { binary += String.fromCharCode(bytes[i]); }
-      return btoa(binary);
+      return btoa(this.bytesToBinaryString(bytes));
     },
 
     base64ToText(b64) {
-      var binary = atob(b64);
-      var bytes = new Uint8Array(binary.length);
-      for (var i = 0; i < binary.length; i++) { bytes[i] = binary.charCodeAt(i); }
-      return new TextDecoder().decode(bytes);
+      return new TextDecoder().decode(this.binaryStringToBytes(atob(b64)));
     },
 
     formatTS(ts) {
@@ -610,9 +723,7 @@ function filesApp() {
         var res = await fetch('/api/clip/list', { headers: this.authHeaders() });
         if (!res.ok) throw new Error('HTTP ' + res.status);
         var data = await res.json();
-        if (JSON.stringify(data) !== JSON.stringify(this.clipItems)) {
-          this.clipItems = data;
-        }
+        this.updateIfChanged('clipItems', data);
       } catch(err) {
         this.clipError = 'Failed to load clipboard (' + err.message + ')';
       }
@@ -627,7 +738,7 @@ function filesApp() {
         if (editing) { body.id = this.clipEditId; }
         var res = await fetch(url, {
           method:  'POST',
-          headers: Object.assign({ 'Content-Type': 'application/json' }, this.authHeaders()),
+          headers: this.jsonHeaders(),
           body:    JSON.stringify(body),
         });
         if (!res.ok) throw new Error('HTTP ' + res.status);
@@ -657,7 +768,7 @@ function filesApp() {
       try {
         var res = await fetch('/api/clip/delete', {
           method:  'DELETE',
-          headers: Object.assign({ 'Content-Type': 'application/json' }, this.authHeaders()),
+          headers: this.jsonHeaders(),
           body:    JSON.stringify({ id: id }),
         });
         if (!res.ok) throw new Error('HTTP ' + res.status);
@@ -679,71 +790,121 @@ function filesApp() {
       });
     },
 
-    async encodeForUpload(file) {
+    // Shared by the whole-file (encodeForUpload) and per-chunk upload paths:
+    // each chunk of a chunked upload is transformed independently, calling
+    // this once per chunk with that chunk's own byte range.
+    async encodeBytesForUpload(bytes, filename) {
       var t = this.settings.transform;
       if (t.type === 'xor') {
-        var buf     = await file.arrayBuffer();
-        var encoded = this.applyXOR(new Uint8Array(buf), this.hexToBytes(t.xor.key));
+        var encoded = this.applyXOR(bytes, this.hexToBytes(t.xor.key));
         return { data: new Blob([encoded]), args: { key: t.xor.key } };
       }
       if (t.type === 'aes-ctr') {
-        var buf    = await file.arrayBuffer();
         var key    = Array.from(this.hexToBytes(t.aesCtr.key));
         var iv     = Array.from(this.hexToBytes(t.aesCtr.iv));
         var aesCtr = new aesjs.ModeOfOperation.ctr(key, new aesjs.Counter(iv));
-        return { data: new Blob([aesCtr.encrypt(new Uint8Array(buf))]), args: { key: t.aesCtr.key, iv: t.aesCtr.iv } };
+        return { data: new Blob([aesCtr.encrypt(bytes)]), args: { key: t.aesCtr.key, iv: t.aesCtr.iv } };
       }
       if (t.type === 'pdf') {
-        var filename = t.pdf.filename || file.name;
-        var buf      = await file.arrayBuffer();
-        var pdfBytes = await this.createPDFWithAttachment(new Uint8Array(buf), filename);
+        var pdfBytes = await this.createPDFWithAttachment(bytes, filename);
         return { data: new Blob([pdfBytes], { type: 'application/pdf' }), args: { filename: filename } };
       }
       if (t.type === 'html-b64') {
-        var buf    = await file.arrayBuffer();
         var keyHex = this.randomHex(16);
-        var xored  = this.applyXOR(new Uint8Array(buf), this.hexToBytes(keyHex));
-        var binary = '';
-        for (var i = 0; i < xored.length; i++) { binary += String.fromCharCode(xored[i]); }
+        var xored  = this.applyXOR(bytes, this.hexToBytes(keyHex));
         var html = '<!DOCTYPE html><html><body>\n' +
-                   '<img src="data:image/jpeg;base64,' + btoa(binary) + '">\n' +
+                   '<img src="data:image/jpeg;base64,' + btoa(this.bytesToBinaryString(xored)) + '">\n' +
                    '</body></html>';
         return { data: new Blob([html], { type: 'text/html' }), args: { key: keyHex } };
       }
-      return { data: file, args: {} };
+      return { data: new Blob([bytes]), args: {} };
+    },
+
+    async encodeForUpload(file) {
+      var buf      = await file.arrayBuffer();
+      var filename = this.settings.transform.pdf.filename || file.name;
+      return this.encodeBytesForUpload(new Uint8Array(buf), filename);
     },
 
     async uploadFiles(files) {
       this.uploadError = null;
       var self = this;
       var promises = Array.from(files).map(async function(file) {
+        var transfer   = self.addTransfer('upload', file.name);
+        var onProgress = self.makeTransferProgress(transfer, file.size);
         try {
           if (self.settings.backend === 'ws') {
-            await self.uploadFileWS(file);
+            await self.uploadFileWS(file, onProgress);
           } else {
-            await self.uploadFileHTTP(file);
+            await self.uploadFileHTTP(file, onProgress);
           }
         } catch(err) {
           self.uploadError = 'Upload of "' + file.name + '" failed: ' +
             (err.status ? 'HTTP ' + err.status : err);
+        } finally {
+          self.removeTransfer(transfer);
         }
       });
       await Promise.all(promises);
       this.loadUploadDir();
     },
 
-    async uploadFileHTTP(file) {
+    // A single-request HTTP upload has no progress event (fetch doesn't
+    // expose upload streaming), so onProgress only fires here when
+    // forwarded to the chunked path below.
+    async uploadFileHTTP(file, onProgress) {
+      if (this.settings.uploadChunking.enabled) { return this.uploadFileHTTPChunked(file, onProgress); }
+
       var t      = this.settings.transform;
       var result = await this.encodeForUpload(file);
-      var spec   = JSON.stringify({ transform: t.type, args: result.args });
+      var spec   = JSON.stringify({ transform: t.type, args: result.args, 'ul-done': true });
       var fd     = new FormData();
       fd.append('transform', new Blob([spec], { type: 'application/json' }), 'transform.json');
       fd.append('file', result.data, file.name);
       var res = await fetch('/api/files/upload', { method: 'POST', headers: this.authHeaders(), body: fd });
-      if (!res.ok) throw Object.assign(new Error('HTTP ' + res.status), { status: res.status });
+      this.assertOk(res);
     },
 
-    async uploadFileWS(file) {
+    // Chunks are sent strictly one at a time, each awaited before the next
+    // is encoded/sent — the server's per-filename lock rejects concurrent
+    // requests outright rather than queuing them, and its continuation-key
+    // only ever recognizes the immediately-next chunk.
+    async uploadFileHTTPChunked(file, onProgress) {
+      var t         = this.settings.transform;
+      var chunkSize = this.settings.uploadChunking.chunkSizeMB * 1024 * 1024;
+      var buf       = await file.arrayBuffer();
+      var bytes     = new Uint8Array(buf);
+      var filename  = t.pdf.filename || file.name;
+
+      var continuationKey = '';
+      var offset = 0;
+      var done   = false;
+      while (!done) {
+        var end   = Math.min(offset + chunkSize, bytes.length);
+        var slice = bytes.subarray(offset, end);
+        done      = end >= bytes.length;
+
+        var result = await this.encodeBytesForUpload(slice, filename);
+        var spec = JSON.stringify({
+          transform: t.type,
+          args: result.args,
+          'continuation-key': continuationKey,
+          'ul-done': done,
+        });
+        var fd = new FormData();
+        fd.append('transform', new Blob([spec], { type: 'application/json' }), 'transform.json');
+        fd.append('file', result.data, file.name);
+        var res = await fetch('/api/files/upload', { method: 'POST', headers: this.authHeaders(), body: fd });
+        this.assertOk(res);
+        var data = await res.json();
+        continuationKey = data['continuation-key'] || '';
+
+        if (onProgress) onProgress(slice.byteLength);
+        offset = end;
+      }
+    },
+
+    async uploadFileWS(file, onProgress) {
       var t         = this.settings.transform;
       var result    = await this.encodeForUpload(file);
       var buffer    = await result.data.arrayBuffer();
@@ -752,7 +913,7 @@ function filesApp() {
       var ws = await wsOpen(this.wsBaseURL() + '/api/files/ws/upload');
       try {
         ws.send(JSON.stringify({
-          auth:      this.settings.auth.key,
+          auth:      this.authKeyHash,
           filename:  file.name,
           transform: t.type,
           args:      result.args,
@@ -761,14 +922,7 @@ function filesApp() {
         var ack = await wsNextJSON(ws);
         if (!ack.ok) throw new Error(ack.error || 'upload failed');
 
-        // Send as several frameSize-sized messages instead of one, purely a
-        // wire-transport concern — the server reassembles them before
-        // applying Untransform once.
-        var bytes = new Uint8Array(buffer);
-        for (var offset = 0; offset < bytes.length; offset += frameSize) {
-          await wsWaitForDrain(ws, frameSize);
-          ws.send(bytes.slice(offset, offset + frameSize));
-        }
+        await sendWSBinary(ws, buffer, frameSize, onProgress);
         ws.send(JSON.stringify({ done: true }));
 
         var final = await wsNextJSON(ws);
@@ -815,6 +969,30 @@ function filesApp() {
       this.benchmarkResults.unshift(result);
     },
 
+    formatBenchmarkError(err) {
+      return err.status ? 'HTTP ' + err.status : String(err.message || err);
+    },
+
+    makeBenchmarkProgress(totalSize, hasSteps) {
+      var self = this;
+      var bytesDone = 0;
+      return function(n) {
+        bytesDone += n;
+        if (hasSteps) self.benchmarkProgress = Math.min(1, bytesDone / totalSize);
+      };
+    },
+
+    benchmarkResultBase(direction, backend, totalSize, frameSize, extra) {
+      return Object.assign({ direction: direction, backend: backend, sizeBytes: totalSize, frameBytes: frameSize }, extra);
+    },
+
+    resetBenchmarkFlags() {
+      this.benchmarkRunning = false;
+      this.benchmarkProgress = null;
+      this.benchmarkPreparing = false;
+      this.benchmarkPrepProgress = null;
+    },
+
     clearBenchmarkResults() {
       this.benchmarkResults = [];
     },
@@ -839,10 +1017,10 @@ function filesApp() {
     async fetchSimChunkHTTP(totalSize, start, size, onProgress) {
       var res = await fetch('/api/sim/download', {
         method:  'POST',
-        headers: Object.assign({ 'Content-Type': 'application/json' }, this.authHeaders()),
+        headers: this.jsonHeaders(),
         body:    JSON.stringify({ totalSize: totalSize, start: start, size: size }),
       });
-      if (!res.ok) throw Object.assign(new Error('HTTP ' + res.status), { status: res.status });
+      this.assertOk(res);
       var buffer = await res.arrayBuffer();
       if (buffer.byteLength !== size) {
         throw new Error('expected ' + size + ' bytes, got ' + buffer.byteLength);
@@ -855,7 +1033,7 @@ function filesApp() {
       if (!wsSession.ws) {
         var ws = await wsOpen(this.wsBaseURL() + '/api/sim/ws/download');
         ws.send(JSON.stringify({
-          auth:      this.settings.auth.key,
+          auth:      this.authKeyHash,
           totalSize: totalSize,
           frameSize: this.settings.wsFrameSizeKB * 1024,
         }));
@@ -866,23 +1044,7 @@ function filesApp() {
 
       wsSession.ws.send(JSON.stringify({ start: start, size: size }));
 
-      var chunk = new Uint8Array(size);
-      var received = 0;
-      while (received < size) {
-        var raw = await wsNextMessage(wsSession.ws);
-        if (typeof raw === 'string') {
-          var msg = JSON.parse(raw);
-          throw new Error(msg.error || 'download failed');
-        }
-        var piece = new Uint8Array(raw);
-        chunk.set(piece, received);
-        received += piece.byteLength;
-        if (onProgress) onProgress(piece.byteLength);
-      }
-      if (received !== size) {
-        throw new Error('expected ' + size + ' bytes, got ' + received);
-      }
-      return chunk;
+      return receiveWSBinary(wsSession.ws, size, onProgress);
     },
 
     async fetchSimChunk(wsSession, totalSize, start, size, onProgress) {
@@ -899,15 +1061,14 @@ function filesApp() {
       var totalSize = this.settings.benchmark.sizeMB * 1024 * 1024;
       var chunkSize = Math.min(this.settings.benchmark.chunkSizeMB * 1024 * 1024, totalSize);
       var frameSize = backend === 'ws' ? this.settings.wsFrameSizeKB * 1024 : null;
+      var base      = this.benchmarkResultBase('download', backend, totalSize, frameSize, { chunkBytes: chunkSize });
 
       if (!window.crypto.subtle) {
-        this.addBenchmarkResult({
-          direction: 'download', backend: backend, sizeBytes: totalSize,
-          chunkBytes: chunkSize, frameBytes: frameSize,
+        this.addBenchmarkResult(Object.assign({}, base, {
           durationMs: 0, ok: false,
           error: 'SHA-256 hashing requires a secure context (HTTPS or localhost)',
-        });
-        this.benchmarkRunning = false;
+        }));
+        this.resetBenchmarkFlags();
         return;
       }
 
@@ -919,12 +1080,7 @@ function filesApp() {
       // multiple frames within a chunk.
       var hasSteps = (backend === 'ws') ? (chunkSize < totalSize || frameSize < totalSize) : (chunkSize < totalSize);
       this.benchmarkProgress = hasSteps ? 0 : null;
-      var bytesDone = 0;
-      var self = this;
-      var onProgress = function(n) {
-        bytesDone += n;
-        if (hasSteps) self.benchmarkProgress = Math.min(1, bytesDone / totalSize);
-      };
+      var onProgress = this.makeBenchmarkProgress(totalSize, hasSteps);
 
       try {
         // Deterministic from totalSize alone, so this can be computed before
@@ -945,26 +1101,19 @@ function filesApp() {
         var receivedHash = await this.sha256Hex(received.buffer);
         var hashMatch = receivedHash === expectedHash;
 
-        this.addBenchmarkResult({
-          direction: 'download', backend: backend, sizeBytes: totalSize,
-          chunkBytes: chunkSize, frameBytes: frameSize,
+        this.addBenchmarkResult(Object.assign({}, base, {
           durationMs: durationMs, ok: hashMatch,
           error: hashMatch ? null : 'hash mismatch (data corrupted in transit)',
-        });
+        }));
       } catch(err) {
-        this.addBenchmarkResult({
-          direction: 'download', backend: backend, sizeBytes: totalSize,
-          chunkBytes: chunkSize, frameBytes: frameSize,
+        this.addBenchmarkResult(Object.assign({}, base, {
           durationMs: startTime !== null ? performance.now() - startTime : 0,
           ok: false,
-          error: err.status ? 'HTTP ' + err.status : String(err.message || err),
-        });
+          error: this.formatBenchmarkError(err),
+        }));
       } finally {
         this.closeWSSession(wsSession);
-        this.benchmarkRunning = false;
-        this.benchmarkProgress = null;
-        this.benchmarkPreparing = false;
-        this.benchmarkPrepProgress = null;
+        this.resetBenchmarkFlags();
       }
     },
 
@@ -992,26 +1141,52 @@ function filesApp() {
       var fd = new FormData();
       fd.append('file', new Blob([buffer]), 'bench.bin');
       var res = await fetch('/api/sim/upload', { method: 'POST', headers: this.authHeaders(), body: fd });
-      if (!res.ok) throw Object.assign(new Error('HTTP ' + res.status), { status: res.status });
+      this.assertOk(res);
       var data = await res.json();
       return data.hash;
+    },
+
+    // Splits the buffer across several /api/sim/upload requests using the
+    // same continuation-key protocol as uploadFileHTTPChunked, so the
+    // benchmark can exercise the chunked-upload session machinery itself
+    // (HTTP backend only — see CLAUDE.md's WebSocket Transport section for
+    // why there's no WS equivalent of this protocol).
+    async uploadSimHTTPChunked(buffer, chunkSize, onProgress) {
+      var bytes = new Uint8Array(buffer);
+      var continuationKey = '';
+      var offset = 0;
+      var done = false;
+      var hash = null;
+      while (!done) {
+        var end   = Math.min(offset + chunkSize, bytes.length);
+        var slice = bytes.subarray(offset, end);
+        done      = end >= bytes.length;
+
+        var spec = JSON.stringify({ 'continuation-key': continuationKey, 'ul-done': done });
+        var fd = new FormData();
+        fd.append('transform', new Blob([spec], { type: 'application/json' }), 'transform.json');
+        fd.append('file', new Blob([slice]), 'bench.bin');
+        var res = await fetch('/api/sim/upload', { method: 'POST', headers: this.authHeaders(), body: fd });
+        this.assertOk(res);
+        var data = await res.json();
+        continuationKey = data['continuation-key'] || '';
+        if (data.hash) hash = data.hash;
+
+        if (onProgress) onProgress(slice.byteLength);
+        offset = end;
+      }
+      return hash;
     },
 
     async uploadSimWS(buffer, onProgress) {
       var frameSize = this.settings.wsFrameSizeKB * 1024;
       var ws = await wsOpen(this.wsBaseURL() + '/api/sim/ws/upload');
       try {
-        ws.send(JSON.stringify({ auth: this.settings.auth.key, frameSize: frameSize }));
+        ws.send(JSON.stringify({ auth: this.authKeyHash, frameSize: frameSize }));
         var ack = await wsNextJSON(ws);
         if (!ack.ok) throw new Error(ack.error || 'upload failed');
 
-        var bytes = new Uint8Array(buffer);
-        for (var offset = 0; offset < bytes.length; offset += frameSize) {
-          await wsWaitForDrain(ws, frameSize);
-          var slice = bytes.slice(offset, offset + frameSize);
-          ws.send(slice);
-          if (onProgress) onProgress(slice.byteLength);
-        }
+        await sendWSBinary(ws, buffer, frameSize, onProgress);
         ws.send(JSON.stringify({ done: true }));
 
         var final = await wsNextJSON(ws);
@@ -1030,29 +1205,27 @@ function filesApp() {
       var backend   = this.settings.backend;
       var totalSize = this.settings.benchmark.sizeMB * 1024 * 1024;
       var frameSize = backend === 'ws' ? this.settings.wsFrameSizeKB * 1024 : null;
+      // Chunked upload (the continuation-key session protocol) is HTTP-only.
+      var chunkSize = backend === 'http' ? Math.min(this.settings.benchmark.chunkSizeMB * 1024 * 1024, totalSize) : null;
+      var base      = this.benchmarkResultBase('upload', backend, totalSize, frameSize, chunkSize ? { chunkBytes: chunkSize } : {});
 
       if (!window.crypto.subtle) {
-        this.addBenchmarkResult({
-          direction: 'upload', backend: backend, sizeBytes: totalSize, frameBytes: frameSize,
+        this.addBenchmarkResult(Object.assign({}, base, {
           durationMs: 0, ok: false,
           error: 'SHA-256 hashing requires a secure context (HTTPS or localhost)',
-        });
-        this.benchmarkRunning = false;
+        }));
+        this.resetBenchmarkFlags();
         return;
       }
 
       var startTime = null; // set once the network operation actually starts
-
-      // Only the WS backend has real intermediate steps (one send per
-      // frame); HTTP upload is a single fetch() with no progress event.
-      var hasSteps = (backend === 'ws') && (frameSize < totalSize);
-      this.benchmarkProgress = hasSteps ? 0 : null;
-      var bytesDone = 0;
       var self = this;
-      var onProgress = function(n) {
-        bytesDone += n;
-        if (hasSteps) self.benchmarkProgress = Math.min(1, bytesDone / totalSize);
-      };
+
+      // Real intermediate steps: one send per WS frame, or one POST per
+      // HTTP chunk. A single-request HTTP upload has no progress event.
+      var hasSteps = (backend === 'ws') ? (frameSize < totalSize) : (chunkSize < totalSize);
+      this.benchmarkProgress = hasSteps ? 0 : null;
+      var onProgress = this.makeBenchmarkProgress(totalSize, hasSteps);
 
       try {
         // Computed before the timer starts, so generating and hashing the
@@ -1069,27 +1242,29 @@ function filesApp() {
         this.benchmarkPreparing = false;
 
         startTime = performance.now();
-        var hash = (backend === 'ws') ? await this.uploadSimWS(buffer, onProgress) : await this.uploadSimHTTP(buffer);
+        var hash;
+        if (backend === 'ws') {
+          hash = await this.uploadSimWS(buffer, onProgress);
+        } else if (chunkSize < totalSize) {
+          hash = await this.uploadSimHTTPChunked(buffer, chunkSize, onProgress);
+        } else {
+          hash = await this.uploadSimHTTP(buffer);
+        }
         var durationMs = performance.now() - startTime;
 
         var hashMatch = hash === expectedHash;
-        this.addBenchmarkResult({
-          direction: 'upload', backend: backend, sizeBytes: totalSize, frameBytes: frameSize,
+        this.addBenchmarkResult(Object.assign({}, base, {
           durationMs: durationMs, ok: hashMatch,
           error: hashMatch ? null : 'hash mismatch (data corrupted in transit)',
-        });
+        }));
       } catch(err) {
-        this.addBenchmarkResult({
-          direction: 'upload', backend: backend, sizeBytes: totalSize, frameBytes: frameSize,
+        this.addBenchmarkResult(Object.assign({}, base, {
           durationMs: startTime !== null ? performance.now() - startTime : 0,
           ok: false,
-          error: err.status ? 'HTTP ' + err.status : String(err.message || err),
-        });
+          error: this.formatBenchmarkError(err),
+        }));
       } finally {
-        this.benchmarkRunning = false;
-        this.benchmarkProgress = null;
-        this.benchmarkPreparing = false;
-        this.benchmarkPrepProgress = null;
+        this.resetBenchmarkFlags();
       }
     },
   };

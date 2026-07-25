@@ -20,12 +20,16 @@ func main() {
 	switch cmd {
 	case "list":
 		err = runList(args)
+	case "ul-list":
+		err = runUlList(args)
 	case "download":
 		err = runDownload(args)
 	case "upload":
 		err = runUpload(args)
 	case "clip":
 		err = runClip(args)
+	case "sim":
+		err = runSim(args)
 	case "-h", "--help", "help":
 		usage()
 		return
@@ -52,9 +56,11 @@ parsing at the first non-flag argument).
 
 Commands:
   list      [flags] [remote-dir]              list files/directories
+  ul-list   [flags]                            list the upload directory
   download  [flags] <remote-path>              download, reversing the transform
   upload    [flags] <local-file>                upload, applying the transform
   clip      list|new|edit|delete               manage clipboard notes
+  sim       download|upload [flags]             probe transport via a synthetic file/buffer (no filesystem I/O, no transform)
 
 Run "wgcli <command> -h" for command-specific flags.
 `)

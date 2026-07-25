@@ -6,6 +6,8 @@ import (
 	"io"
 	"net/http"
 	"strings"
+
+	"warpgate/internal/authhash"
 )
 
 // globalFlags holds the flags common to every subcommand: where the server
@@ -24,6 +26,15 @@ func addGlobalFlags(fs *flag.FlagSet) *globalFlags {
 	return g
 }
 
+// authToken derives the value actually sent to the server (X-Auth header or
+// WS auth field) from -auth-key, so the raw key itself is never transmitted.
+func (g *globalFlags) authToken() string {
+	if g.authKey == "" {
+		return ""
+	}
+	return authhash.Hash(g.authKey)
+}
+
 func (g *globalFlags) httpClient() *http.Client {
 	tr := &http.Transport{}
 	if g.insecure {
@@ -37,8 +48,8 @@ func (g *globalFlags) newRequest(method, path string, body io.Reader) (*http.Req
 	if err != nil {
 		return nil, err
 	}
-	if g.authKey != "" {
-		req.Header.Set("X-Auth", g.authKey)
+	if token := g.authToken(); token != "" {
+		req.Header.Set("X-Auth", token)
 	}
 	return req, nil
 }

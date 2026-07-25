@@ -10,8 +10,11 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/gorilla/websocket"
+
+	"warpgate/internal/authhash"
 )
 
 type Server struct {
@@ -23,6 +26,10 @@ type Server struct {
 	clientCAs  *x509.CertPool
 	clientFP   []byte
 	wsUpgrader websocket.Upgrader
+	authHash   string
+
+	uploadSessions    *sessionStore[*ulSession]
+	simUploadSessions *sessionStore[*simUlSession]
 }
 
 func NewServer(cfg Config, db *DB) (*Server, error) {
@@ -49,6 +56,7 @@ func NewServer(cfg Config, db *DB) (*Server, error) {
 			ReadBufferSize:  cfg.WSFrameMax,
 			WriteBufferSize: cfg.WSFrameMax,
 		},
+		authHash: authhash.Hash(cfg.Key),
 	}
 
 	if cfg.ClientRoot != "" {
@@ -93,18 +101,32 @@ func NewServer(cfg Config, db *DB) (*Server, error) {
 			return nil, fmt.Errorf("resolving upload root: %w", err)
 		}
 		s.absUlRoot = absUlRoot
+		s.uploadSessions = newSessionStore[*ulSession]()
+		s.simUploadSessions = newSessionStore[*simUlSession]()
 		s.mux.Handle("/api/files/upload", s.withAuth(s.handleUpload))
 		s.mux.Handle("/api/files/ul-list", s.withAuth(s.handleUlList))
 		s.mux.Handle("/api/files/ws/upload", http.HandlerFunc(s.handleWSUpload))
 		s.mux.Handle("/api/sim/upload", s.withAuth(s.handleSimUpload))
 		s.mux.Handle("/api/sim/ws/upload", http.HandlerFunc(s.handleSimWSUpload))
+		go s.ulSweepExpired()
 	}
 	return s, nil
 }
 
+// ulSweepExpired runs for the life of the server, purging idle
+// chunked-upload sessions from both the real-upload and sim-upload stores.
+func (s *Server) ulSweepExpired() {
+	ticker := time.NewTicker(ulSweepInterval)
+	defer ticker.Stop()
+	for range ticker.C {
+		s.uploadSessions.sweepExpired(s.abortUploadSession)
+		s.simUploadSessions.sweepExpired(nil) // nothing to clean up beyond the map entry
+	}
+}
+
 func (s *Server) withAuth(h http.HandlerFunc) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !s.cfg.NoAuth && r.Header.Get("X-Auth") != s.cfg.Key {
+		if !s.cfg.NoAuth && r.Header.Get("X-Auth") != s.authHash {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}

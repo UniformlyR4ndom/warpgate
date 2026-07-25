@@ -1,3 +1,14 @@
+:root {
+  --accent: #4ec9b0;
+  --text: #d4d4d4;
+  --muted: #888;
+  --dim: #666;
+  --faint: #555;
+  --border: #3a4750;
+  --input-bg: #2f3d44;
+  --error: #f44747;
+}
+
 * {
   box-sizing: border-box;
 }
@@ -7,7 +18,7 @@ body {
   margin: 0;
   padding: 0;
   background: #263238;
-  color: #d4d4d4;
+  color: var(--text);
   display: flex;
   flex-direction: column;
   height: 100vh;
@@ -15,7 +26,7 @@ body {
 
 header {
   padding: 1rem 1.5rem;
-  border-bottom: 1px solid #3a4750;
+  border-bottom: 1px solid var(--border);
   flex-shrink: 0;
 }
 
@@ -27,11 +38,11 @@ h1 {
 
 .breadcrumb {
   font-size: 0.9rem;
-  color: #888;
+  color: var(--muted);
 }
 
 .crumb {
-  color: #4ec9b0;
+  color: var(--accent);
   cursor: pointer;
 }
 
@@ -58,7 +69,7 @@ h1 {
   flex-direction: row;
   width: 260px;
   min-width: 260px;
-  border-right: 1px solid #3a4750;
+  border-right: 1px solid var(--border);
   transition: min-width 0.2s ease, width 0.2s ease;
   overflow: hidden;
 }
@@ -73,8 +84,8 @@ h1 {
   width: 32px;
   background: none;
   border: none;
-  border-right: 1px solid #3a4750;
-  color: #888;
+  border-right: 1px solid var(--border);
+  color: var(--muted);
   cursor: pointer;
   font-size: 0.75rem;
   padding: 0;
@@ -84,7 +95,7 @@ h1 {
 }
 
 .panel-toggle:hover {
-  color: #d4d4d4;
+  color: var(--text);
 }
 
 .panel-content {
@@ -100,14 +111,14 @@ h1 {
 .section-header {
   font-size: 0.85rem;
   font-weight: normal;
-  color: #888;
+  color: var(--muted);
   margin: 0 0 0.5rem 0;
   cursor: pointer;
   user-select: none;
 }
 
 .section-header:hover {
-  color: #d4d4d4;
+  color: var(--text);
 }
 
 .section-arrow {
@@ -118,7 +129,7 @@ h1 {
 label {
   display: block;
   font-size: 0.8rem;
-  color: #888;
+  color: var(--muted);
   margin: 0.5rem 0 0.2rem 0;
 }
 
@@ -130,7 +141,7 @@ label {
 
 .auto-label {
   font-size: 0.8rem;
-  color: #888;
+  color: var(--muted);
   margin: 0.5rem 0 0.2rem 0;
   cursor: pointer;
 }
@@ -150,8 +161,8 @@ label {
 }
 
 input.readonly {
-  color: #666;
-  border-color: #3a4750;
+  color: var(--dim);
+  border-color: var(--border);
   cursor: default;
 }
 
@@ -173,7 +184,7 @@ input.readonly {
   flex-shrink: 0;
   background: none;
   border: none;
-  color: #888;
+  color: var(--muted);
   cursor: pointer;
   font-size: 1rem;
   padding: 0 0.2rem;
@@ -181,16 +192,16 @@ input.readonly {
 }
 
 .key-toggle:hover {
-  color: #d4d4d4;
+  color: var(--text);
 }
 
 input[type="text"],
 input[type="number"],
 select {
   width: 100%;
-  background: #2f3d44;
-  border: 1px solid #3a4750;
-  color: #d4d4d4;
+  background: var(--input-bg);
+  border: 1px solid var(--border);
+  color: var(--text);
   font-family: monospace;
   font-size: 0.85rem;
   padding: 0.3rem 0.4rem;
@@ -199,8 +210,8 @@ select {
 input[type="text"]:focus,
 input[type="number"]:focus,
 select:focus {
-  outline: 1px solid #4ec9b0;
-  border-color: #4ec9b0;
+  outline: 1px solid var(--accent);
+  border-color: var(--accent);
 }
 
 /* ── File listing ── */
@@ -218,10 +229,10 @@ table {
 
 th {
   text-align: left;
-  color: #888;
+  color: var(--muted);
   font-weight: normal;
   padding: 0.25rem 1rem 0.25rem 0;
-  border-bottom: 1px solid #3a4750;
+  border-bottom: 1px solid var(--border);
 }
 
 .entry td {
@@ -230,7 +241,7 @@ th {
 
 .col-size {
   text-align: right;
-  color: #888;
+  color: var(--muted);
   white-space: nowrap;
   width: 6rem;
 }
@@ -241,7 +252,7 @@ th {
 }
 
 .entry.dir td {
-  color: #4ec9b0;
+  color: var(--accent);
 }
 
 .entry.file td {
@@ -259,7 +270,7 @@ th {
 }
 
 .error {
-  color: #f44747;
+  color: var(--error);
   padding: 1rem 0;
 }
 
@@ -267,7 +278,7 @@ th {
 
 .tabs {
   display: flex;
-  border-bottom: 1px solid #3a4750;
+  border-bottom: 1px solid var(--border);
   margin-bottom: 1rem;
 }
 
@@ -275,7 +286,7 @@ th {
   background: none;
   border: none;
   border-bottom: 2px solid transparent;
-  color: #888;
+  color: var(--muted);
   cursor: pointer;
   font-family: monospace;
   font-size: 0.9rem;
@@ -284,19 +295,82 @@ th {
 }
 
 .tab-btn:hover {
-  color: #d4d4d4;
+  color: var(--text);
 }
 
 .tab-btn.active {
-  border-bottom-color: #4ec9b0;
-  color: #4ec9b0;
+  border-bottom-color: var(--accent);
+  color: var(--accent);
+}
+
+/* ── Progress bar (shared: benchmark tab + real download/upload transfers) ── */
+
+.progress-caption {
+  color: var(--muted);
+  font-size: 0.8rem;
+  margin-bottom: 1rem;
+}
+
+.progress-caption-pulse {
+  animation: progress-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes progress-pulse {
+  0%, 100% { opacity: 0.5; }
+  50%      { opacity: 1; }
+}
+
+.progress-bar {
+  position: relative;
+  height: 1.1rem;
+  background: var(--input-bg);
+  border: 1px solid var(--border);
+  overflow: hidden;
+}
+
+.progress-bar-fill {
+  height: 100%;
+  background: var(--accent);
+  transition: width 0.15s linear;
+}
+
+.progress-bar-label {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.75rem;
+  color: var(--text);
+  mix-blend-mode: difference;
+}
+
+/* ── Transfer list (shared: download tab + upload tab) ── */
+
+.transfer-list {
+  margin-bottom: 1rem;
+}
+
+.transfer-row {
+  margin-bottom: 0.5rem;
+}
+
+.transfer-row:last-child {
+  margin-bottom: 1rem;
+}
+
+.transfer-name {
+  display: block;
+  font-size: 0.8rem;
+  color: var(--muted);
+  margin-bottom: 0.2rem;
 }
 
 /* ── Upload tab ── */
 
 .drop-zone {
-  border: 2px dashed #3a4750;
-  color: #666;
+  border: 2px dashed var(--border);
+  color: var(--dim);
   margin-bottom: 1rem;
   padding: 2rem;
   text-align: center;
@@ -304,14 +378,14 @@ th {
 }
 
 .drop-zone.drag-active {
-  border-color: #4ec9b0;
-  color: #4ec9b0;
+  border-color: var(--accent);
+  color: var(--accent);
 }
 
 .choose-btn {
   background: none;
-  border: 1px solid #555;
-  color: #d4d4d4;
+  border: 1px solid var(--faint);
+  color: var(--text);
   cursor: pointer;
   font-family: monospace;
   font-size: 0.85rem;
@@ -319,12 +393,12 @@ th {
 }
 
 .choose-btn:hover {
-  border-color: #4ec9b0;
-  color: #4ec9b0;
+  border-color: var(--accent);
+  color: var(--accent);
 }
 
 .upload-empty {
-  color: #555;
+  color: var(--faint);
   font-size: 0.85rem;
   padding: 1rem 0;
 }
@@ -341,9 +415,9 @@ th {
 .clip-textarea {
   width: 100%;
   height: 25vh;
-  background: #2f3d44;
-  border: 1px solid #3a4750;
-  color: #d4d4d4;
+  background: var(--input-bg);
+  border: 1px solid var(--border);
+  color: var(--text);
   font-family: monospace;
   font-size: 0.85rem;
   padding: 0.5rem;
@@ -360,12 +434,12 @@ th {
 }
 
 .clip-textarea:focus {
-  outline: 1px solid #4ec9b0;
-  border-color: #4ec9b0;
+  outline: 1px solid var(--accent);
+  border-color: var(--accent);
 }
 
 .clip-item {
-  border: 1px solid #3a4750;
+  border: 1px solid var(--border);
   margin-bottom: 0.75rem;
   padding: 0.5rem 0.75rem;
 }
@@ -379,13 +453,13 @@ th {
 
 .clip-ts {
   font-size: 0.75rem;
-  color: #666;
+  color: var(--dim);
 }
 
 .clip-delete {
   background: none;
   border: none;
-  color: #666;
+  color: var(--dim);
   cursor: pointer;
   font-size: 0.75rem;
   padding: 0 0.2rem;
@@ -398,7 +472,7 @@ th {
 
 .clip-text {
   font-size: 0.85rem;
-  color: #d4d4d4;
+  color: var(--text);
   white-space: pre-wrap;
   word-break: break-word;
 }
@@ -416,12 +490,12 @@ th {
   cursor: pointer;
   padding: 0;
   line-height: 1;
-  color: #888;
+  color: var(--muted);
   transition: color 0.15s;
 }
 
 .clip-action:hover {
-  color: #4ec9b0;
+  color: var(--accent);
 }
 
 .clip-action svg {
@@ -438,45 +512,8 @@ th {
   margin-bottom: 1rem;
 }
 
-.bench-preparing {
-  color: #888;
-  font-size: 0.8rem;
+.bench-progress-wrap {
   margin-bottom: 1rem;
-}
-
-.bench-preparing-indeterminate {
-  animation: bench-pulse 1.4s ease-in-out infinite;
-}
-
-@keyframes bench-pulse {
-  0%, 100% { opacity: 0.5; }
-  50%      { opacity: 1; }
-}
-
-.bench-progress {
-  position: relative;
-  height: 1.1rem;
-  background: #2f3d44;
-  border: 1px solid #3a4750;
-  margin-bottom: 1rem;
-  overflow: hidden;
-}
-
-.bench-progress-fill {
-  height: 100%;
-  background: #4ec9b0;
-  transition: width 0.15s linear;
-}
-
-.bench-progress-label {
-  position: absolute;
-  inset: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 0.75rem;
-  color: #d4d4d4;
-  mix-blend-mode: difference;
 }
 
 .bench-row td {
@@ -484,9 +521,9 @@ th {
 }
 
 .bench-ok {
-  color: #4ec9b0;
+  color: var(--accent);
 }
 
 .bench-fail {
-  color: #f44747;
+  color: var(--error);
 }
