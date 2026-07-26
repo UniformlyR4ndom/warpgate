@@ -26,29 +26,29 @@ func (s *Server) handleSimWSDownload(w http.ResponseWriter, r *http.Request) {
 	}
 	defer conn.Close()
 
-	req, err := readWSControl[wsSimDownloadRequest](conn)
+	req, encrypted, err := readWSControl[wsSimDownloadRequest](s, conn)
 	if err != nil {
 		log.Printf("sim ws download: reading control message: %v", err)
 		return
 	}
 
 	if !s.checkWSAuth(req.Auth) {
-		writeWSError(conn, websocket.ClosePolicyViolation, "unauthorized")
+		s.writeWSError(conn, encrypted, websocket.ClosePolicyViolation, "unauthorized")
 		return
 	}
 
 	frameSize, err := s.resolveFrameSize(req.FrameSize)
 	if err != nil {
-		writeWSError(conn, websocket.ClosePolicyViolation, "%v", err)
+		s.writeWSError(conn, encrypted, websocket.ClosePolicyViolation, "%v", err)
 		return
 	}
 
 	if err := validateSimTotalSize(req.TotalSize); err != nil {
-		writeWSError(conn, websocket.CloseInternalServerErr, "%v", err)
+		s.writeWSError(conn, encrypted, websocket.CloseInternalServerErr, "%v", err)
 		return
 	}
 
-	if err := writeWSOK(conn, wsAck{OK: true, Size: req.TotalSize}); err != nil {
+	if err := s.writeWSOK(conn, encrypted, wsAck{OK: true, Size: req.TotalSize}); err != nil {
 		return
 	}
 
@@ -56,7 +56,7 @@ func (s *Server) handleSimWSDownload(w http.ResponseWriter, r *http.Request) {
 	frameBuf := make([]byte, frameSize)
 
 	for {
-		chunkReq, err := readWSControl[wsChunkRequest](conn)
+		chunkReq, _, err := readWSControl[wsChunkRequest](s, conn)
 		if err != nil {
 			if !websocket.IsCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway) {
 				log.Printf("sim ws download: reading chunk request: %v", err)
@@ -68,7 +68,7 @@ func (s *Server) handleSimWSDownload(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if chunkReq.Start < 0 || chunkReq.Size <= 0 {
-			writeWSError(conn, websocket.CloseInternalServerErr, "size must be positive")
+			s.writeWSError(conn, encrypted, websocket.CloseInternalServerErr, "size must be positive")
 			return
 		}
 

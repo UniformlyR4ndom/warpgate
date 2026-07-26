@@ -41,10 +41,8 @@ func (s *Server) abortUploadSession(name string, _ *ulSession) {
 	}
 }
 
-func writeUploadResponse(w http.ResponseWriter, status int, filename, continuationKey string) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(uploadResponse{Name: filename, ContinuationKey: continuationKey})
+func (s *Server) writeUploadResponse(w http.ResponseWriter, encrypted bool, status int, filename, continuationKey string) {
+	s.encodeParamsResponse(w, encrypted, status, uploadResponse{Name: filename, ContinuationKey: continuationKey})
 }
 
 // handleUpload serves both a plain one-shot upload (no continuation-key,
@@ -79,6 +77,9 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 	// the field completes immediately instead of silently starting a
 	// chunked session it will never continue.
 	done := true
+	// wasEncrypted stays false when there's no "transform" part at all (a
+	// legacy client): no signal either way means a plaintext response.
+	wasEncrypted := false
 	if tf, _, err := r.FormFile("transform"); err == nil {
 		defer tf.Close()
 		var spec struct {
@@ -87,8 +88,9 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 			ContinuationKey string          `json:"continuation-key"`
 			Done            *bool           `json:"ul-done"`
 		}
-		if err := json.NewDecoder(tf).Decode(&spec); err != nil {
-			http.Error(w, "invalid transform spec", http.StatusBadRequest)
+		wasEncrypted, err = s.decodeParams(tf, &spec)
+		if err != nil {
+			http.Error(w, "invalid transform spec", http.StatusUnauthorized)
 			return
 		}
 		transformName = spec.Transform
@@ -133,7 +135,7 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if continuationKey == "" {
-		s.handleUploadFirstChunk(w, transformer, transformName, file, filename, targetPath, sess, done)
+		s.handleUploadFirstChunk(w, transformer, transformName, file, filename, targetPath, sess, done, wasEncrypted)
 		return
 	}
 
@@ -141,14 +143,14 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 	case ulKeyCompleted:
 		sess.expiresAt = time.Now().Add(ulSessionIdleExpiry)
 		s.uploadSessions.release(filename, false)
-		writeUploadResponse(w, http.StatusOK, filename, "")
+		s.writeUploadResponse(w, wasEncrypted, http.StatusOK, filename, "")
 	case ulKeyPrevious:
 		nextKey := sess.currentKey
 		sess.expiresAt = time.Now().Add(ulSessionIdleExpiry)
 		s.uploadSessions.release(filename, false)
-		writeUploadResponse(w, http.StatusOK, filename, nextKey)
+		s.writeUploadResponse(w, wasEncrypted, http.StatusOK, filename, nextKey)
 	case ulKeyCurrent:
-		s.handleUploadContinuation(w, transformer, transformName, file, filename, targetPath, sess, done)
+		s.handleUploadContinuation(w, transformer, transformName, file, filename, targetPath, sess, done, wasEncrypted)
 	default: // ulKeyUnrecognized
 		// wasNew means nothing legitimate exists for this filename yet, so
 		// there's nothing worth keeping; otherwise this stale/unknown key
@@ -162,7 +164,7 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 // always behaves like today's one-shot upload (unconditionally overwriting
 // whatever, if anything, was at targetPath — including any stale session
 // recorded for filename, which sess may represent).
-func (s *Server) handleUploadFirstChunk(w http.ResponseWriter, transformer transform.Transformer, transformName string, file multipart.File, filename, targetPath string, sess *ulSession, done bool) {
+func (s *Server) handleUploadFirstChunk(w http.ResponseWriter, transformer transform.Transformer, transformName string, file multipart.File, filename, targetPath string, sess *ulSession, done, encrypted bool) {
 	f, err := os.Create(targetPath)
 	if err != nil {
 		log.Printf("error creating upload file %q: %v", targetPath, err)
@@ -194,7 +196,7 @@ func (s *Server) handleUploadFirstChunk(w http.ResponseWriter, transformer trans
 	if done {
 		log.Printf("uploaded %q to %q", filename, targetPath)
 		s.uploadSessions.release(filename, true)
-		writeUploadResponse(w, http.StatusCreated, filename, "")
+		s.writeUploadResponse(w, encrypted, http.StatusCreated, filename, "")
 		return
 	}
 
@@ -210,12 +212,12 @@ func (s *Server) handleUploadFirstChunk(w http.ResponseWriter, transformer trans
 	sess.previousKey = ""
 	sess.expiresAt = time.Now().Add(ulSessionIdleExpiry)
 	s.uploadSessions.release(filename, false)
-	writeUploadResponse(w, http.StatusCreated, filename, key)
+	s.writeUploadResponse(w, encrypted, http.StatusCreated, filename, key)
 }
 
 // handleUploadContinuation handles a request whose continuation-key matched
 // sess.currentKey — the expected next chunk of an already-started upload.
-func (s *Server) handleUploadContinuation(w http.ResponseWriter, transformer transform.Transformer, transformName string, file multipart.File, filename, targetPath string, sess *ulSession, done bool) {
+func (s *Server) handleUploadContinuation(w http.ResponseWriter, transformer transform.Transformer, transformName string, file multipart.File, filename, targetPath string, sess *ulSession, done, encrypted bool) {
 	f, err := os.OpenFile(targetPath, os.O_APPEND|os.O_WRONLY, 0o644)
 	if err != nil {
 		log.Printf("error opening upload file %q for continuation: %v", targetPath, err)
@@ -251,7 +253,7 @@ func (s *Server) handleUploadContinuation(w http.ResponseWriter, transformer tra
 		sess.previousKey = ""
 		sess.expiresAt = time.Now().Add(ulSessionIdleExpiry)
 		s.uploadSessions.release(filename, false)
-		writeUploadResponse(w, http.StatusOK, filename, "")
+		s.writeUploadResponse(w, encrypted, http.StatusOK, filename, "")
 		return
 	}
 
@@ -266,7 +268,7 @@ func (s *Server) handleUploadContinuation(w http.ResponseWriter, transformer tra
 	sess.currentKey = key
 	sess.expiresAt = time.Now().Add(ulSessionIdleExpiry)
 	s.uploadSessions.release(filename, false)
-	writeUploadResponse(w, http.StatusOK, filename, key)
+	s.writeUploadResponse(w, encrypted, http.StatusOK, filename, key)
 }
 
 func (s *Server) handleUlList(w http.ResponseWriter, r *http.Request) {
@@ -294,6 +296,6 @@ func (s *Server) handleUlList(w http.ResponseWriter, r *http.Request) {
 		files = append(files, e)
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(files)
+	encrypted := !s.cfg.NoAuth && r.URL.Query().Has("e")
+	s.encodeParamsResponse(w, encrypted, http.StatusOK, files)
 }

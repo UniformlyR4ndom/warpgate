@@ -42,6 +42,10 @@
               <button type="button" class="key-toggle" @click="authShowKey = !authShowKey"
                       :title="authShowKey ? 'Hide key' : 'Show key'">👁</button>
             </div>
+            <label class="auto-label" :class="{'disabled': !settings.auth.key}"
+                   title="Encrypt JSON request bodies and WebSocket control messages using a key derived from the auth key, so a proxy inspecting plaintext traffic can't read transform keys or paths. Requires an auth key.">
+              <input type="checkbox" x-model="settings.paramCrypt.enabled" :disabled="!settings.auth.key"> Parameter obfuscation
+            </label>
           </div>
         </section>
 
@@ -387,6 +391,7 @@
   <script src="pdf.min.js"></script>
   <script src="pdf-lib.min.js"></script>
   <script src="aes.js"></script>
+  <script src="sha256.js"></script>
   <script src="app.js"></script>
   <script defer src="alpine.min.js"></script>
 </body>

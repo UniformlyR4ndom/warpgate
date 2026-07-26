@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/json"
 	"net/http"
 	"os"
 )
@@ -47,8 +46,9 @@ func (s *Server) handleList(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req listRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "invalid JSON body", http.StatusBadRequest)
+	wasEncrypted, err := s.decodeParams(r.Body, &req)
+	if err != nil {
+		http.Error(w, "invalid request body", http.StatusUnauthorized)
 		return
 	}
 
@@ -68,6 +68,5 @@ func (s *Server) handleList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(entries)
+	s.encodeParamsResponse(w, wasEncrypted, http.StatusOK, entries)
 }

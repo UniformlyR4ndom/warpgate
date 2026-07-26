@@ -3,16 +3,28 @@
 package authhash
 
 import (
+	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
 )
 
 const iterations = 1000
 
-// Hash returns the hex-encoded result of applying SHA-256 to key's UTF-8
-// bytes, then to that digest, repeated iterations times total.
+// label domain-separates this derivation from any other value derived from
+// the same raw key — internal/paramcrypt.DeriveKeys's two labeled subkeys in
+// particular — so knowing one gives no information about, and can't be
+// confused with, the other.
+const label = "warpgate-auth-token-v1"
+
+// Hash returns the hex-encoded result of seeding with HMAC-SHA256(key,
+// label), then applying plain SHA-256 to that seed repeated iterations
+// times total.
 func Hash(key string) string {
-	h := sha256.Sum256([]byte(key))
+	mac := hmac.New(sha256.New, []byte(key))
+	mac.Write([]byte(label))
+	seed := mac.Sum(nil)
+
+	h := sha256.Sum256(seed)
 	for i := 1; i < iterations; i++ {
 		h = sha256.Sum256(h[:])
 	}

@@ -5,7 +5,6 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"flag"
 	"fmt"
 	"hash"
@@ -66,7 +65,7 @@ func checkSimHash(expected, actual string) error {
 // response body directly, without buffering it — there's nothing to write
 // to disk, only a running hash to update.
 func hashSimChunkHTTP(g *globalFlags, h hash.Hash, totalSize, start, size int64) error {
-	reqBody, err := json.Marshal(struct {
+	reqBody, err := g.encodeBody(struct {
 		TotalSize int64 `json:"totalSize"`
 		Start     int64 `json:"start"`
 		Size      int64 `json:"size"`
@@ -134,18 +133,14 @@ func simDownloadWS(g *globalFlags, totalSize, chunkSize, frameSize int64) error 
 	}
 	defer conn.Close()
 
-	initReq, err := json.Marshal(struct {
+	if err := writeWSJSON(conn, g, struct {
 		Auth      string `json:"auth,omitempty"`
 		TotalSize int64  `json:"totalSize"`
 		FrameSize int64  `json:"frameSize,omitempty"`
-	}{g.authToken(), totalSize, frameSize})
-	if err != nil {
-		return err
-	}
-	if err := conn.WriteMessage(websocket.TextMessage, initReq); err != nil {
+	}{g.authToken(), totalSize, frameSize}); err != nil {
 		return fmt.Errorf("sending initial request: %w", err)
 	}
-	if _, err := readWSAck(conn); err != nil {
+	if _, err := readWSAck(conn, g); err != nil {
 		return err
 	}
 
@@ -163,7 +158,7 @@ func simDownloadWS(g *globalFlags, totalSize, chunkSize, frameSize int64) error 
 			reqSize = remaining
 		}
 
-		if err := conn.WriteJSON(wsChunkRequest{Start: transferred, Size: reqSize}); err != nil {
+		if err := writeWSJSON(conn, g, wsChunkRequest{Start: transferred, Size: reqSize}); err != nil {
 			return fmt.Errorf("requesting chunk at offset %d: %w", transferred, err)
 		}
 
@@ -178,7 +173,7 @@ func simDownloadWS(g *globalFlags, totalSize, chunkSize, frameSize int64) error 
 			}
 			if mt != websocket.BinaryMessage {
 				var errAck wsAck
-				if jsonErr := json.Unmarshal(p, &errAck); jsonErr == nil && errAck.Error != "" {
+				if jsonErr := g.decodeJSON(p, &errAck); jsonErr == nil && errAck.Error != "" {
 					return fmt.Errorf("server error: %s", errAck.Error)
 				}
 				return fmt.Errorf("expected binary frame at offset %d, got message type %d", transferred, mt)
@@ -190,7 +185,7 @@ func simDownloadWS(g *globalFlags, totalSize, chunkSize, frameSize int64) error 
 		transferred += reqSize
 	}
 
-	_ = conn.WriteJSON(wsChunkRequest{Done: true})
+	_ = writeWSJSON(conn, g, wsChunkRequest{Done: true})
 	elapsed := time.Since(start)
 
 	printSimResult("downloaded", totalSize, elapsed)
@@ -250,10 +245,14 @@ func postSimUploadChunk(g *globalFlags, chunkData io.Reader, continuationKey str
 	if err != nil {
 		return "", "", err
 	}
-	if err := json.NewEncoder(specPart).Encode(struct {
+	specBody, err := g.encodeBody(struct {
 		ContinuationKey string `json:"continuation-key,omitempty"`
 		Done            bool   `json:"ul-done"`
-	}{continuationKey, done}); err != nil {
+	}{continuationKey, done})
+	if err != nil {
+		return "", "", err
+	}
+	if _, err := specPart.Write(specBody); err != nil {
 		return "", "", err
 	}
 
@@ -281,16 +280,19 @@ func postSimUploadChunk(g *globalFlags, chunkData io.Reader, continuationKey str
 	}
 	defer resp.Body.Close()
 
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", "", err
+	}
 	if resp.StatusCode != http.StatusOK {
-		errBody, _ := io.ReadAll(resp.Body)
-		return "", "", fmt.Errorf("%s: %s", resp.Status, strings.TrimSpace(string(errBody)))
+		return "", "", fmt.Errorf("%s: %s", resp.Status, strings.TrimSpace(string(respBody)))
 	}
 
 	var result struct {
 		Hash            string `json:"hash"`
 		ContinuationKey string `json:"continuation-key"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	if err := g.decodeJSON(respBody, &result); err != nil {
 		return "", "", err
 	}
 	return result.Hash, result.ContinuationKey, nil
@@ -366,17 +368,13 @@ func simUploadWS(g *globalFlags, totalSize, frameSize int64) error {
 	}
 	defer conn.Close()
 
-	initReq, err := json.Marshal(struct {
+	if err := writeWSJSON(conn, g, struct {
 		Auth      string `json:"auth,omitempty"`
 		FrameSize int64  `json:"frameSize,omitempty"`
-	}{g.authToken(), frameSize})
-	if err != nil {
-		return err
-	}
-	if err := conn.WriteMessage(websocket.TextMessage, initReq); err != nil {
+	}{g.authToken(), frameSize}); err != nil {
 		return fmt.Errorf("sending initial request: %w", err)
 	}
-	if _, err := readWSAck(conn); err != nil {
+	if _, err := readWSAck(conn, g); err != nil {
 		return err
 	}
 
@@ -385,13 +383,13 @@ func simUploadWS(g *globalFlags, totalSize, frameSize int64) error {
 		return err
 	}
 
-	if err := conn.WriteJSON(struct {
+	if err := writeWSJSON(conn, g, struct {
 		Done bool `json:"done"`
 	}{true}); err != nil {
 		return fmt.Errorf("sending done message: %w", err)
 	}
 
-	ack, err := readWSAck(conn)
+	ack, err := readWSAck(conn, g)
 	if err != nil {
 		return err
 	}

@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/json"
 	"io"
 	"log"
 	"net/http"
@@ -23,8 +22,8 @@ func (s *Server) handleSimDownload(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req simDownloadRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "invalid JSON body", http.StatusBadRequest)
+	if _, err := s.decodeParams(r.Body, &req); err != nil {
+		http.Error(w, "invalid request body", http.StatusUnauthorized)
 		return
 	}
 

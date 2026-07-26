@@ -2,7 +2,6 @@ package main
 
 import (
 	"encoding/base64"
-	"encoding/json"
 	"net/http"
 )
 
@@ -14,8 +13,9 @@ func (s *Server) handleClipNew(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Data string `json:"data"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "invalid request body", http.StatusBadRequest)
+	wasEncrypted, err := s.decodeParams(r.Body, &req)
+	if err != nil {
+		http.Error(w, "invalid request body", http.StatusUnauthorized)
 		return
 	}
 	raw, err := base64.StdEncoding.DecodeString(req.Data)
@@ -28,8 +28,7 @@ func (s *Server) handleClipNew(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "internal server error", http.StatusInternalServerError)
 		return
 	}
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(struct {
+	s.encodeParamsResponse(w, wasEncrypted, http.StatusOK, struct {
 		ID int64 `json:"id"`
 		TS int64 `json:"ts"`
 	}{id, ts})
@@ -44,8 +43,8 @@ func (s *Server) handleClipEdit(w http.ResponseWriter, r *http.Request) {
 		ID   int64  `json:"id"`
 		Data string `json:"data"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "invalid request body", http.StatusBadRequest)
+	if _, err := s.decodeParams(r.Body, &req); err != nil {
+		http.Error(w, "invalid request body", http.StatusUnauthorized)
 		return
 	}
 	raw, err := base64.StdEncoding.DecodeString(req.Data)
@@ -73,8 +72,8 @@ func (s *Server) handleClipDelete(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		ID int64 `json:"id"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "invalid request body", http.StatusBadRequest)
+	if _, err := s.decodeParams(r.Body, &req); err != nil {
+		http.Error(w, "invalid request body", http.StatusUnauthorized)
 		return
 	}
 	found, err := s.db.DeleteClipboard(req.ID)
@@ -102,6 +101,6 @@ func (s *Server) handleClipList(w http.ResponseWriter, r *http.Request) {
 	if items == nil {
 		items = []ClipItem{}
 	}
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(items)
+	encrypted := !s.cfg.NoAuth && r.URL.Query().Has("e")
+	s.encodeParamsResponse(w, encrypted, http.StatusOK, items)
 }

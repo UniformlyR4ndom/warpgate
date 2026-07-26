@@ -25,10 +25,14 @@ function wsNextMessage(ws) {
   });
 }
 
-async function wsNextJSON(ws) {
+// decrypt is null for a plaintext connection, or a bound Alpine method
+// (this.decryptParams) for one whose handshake was encrypted — decided once
+// per connection by the caller, not re-detected per message, since the
+// server only ever encrypts an ack in reply to an encrypted request.
+async function wsNextJSON(ws, decrypt) {
   var raw = await wsNextMessage(ws);
   if (typeof raw !== 'string') throw new Error('expected JSON control message, got binary');
-  return JSON.parse(raw);
+  return decrypt ? decrypt(raw) : JSON.parse(raw);
 }
 
 // ws.send() queues data locally and returns immediately, so a tight send
@@ -161,6 +165,8 @@ function filesApp() {
     clipError: null,
     authShowKey: false, // not persisted: always start masked
     authKeyHash: '', // not persisted: derived from settings.auth.key, recomputed on change
+    paramEncKeyBytes: null, // not persisted: derived from settings.auth.key, recomputed on change
+    paramMacKeyBytes: null, // not persisted: derived from settings.auth.key, recomputed on change
     wsFrameMinKB: 1,
     wsFrameMaxKB: 262144, // 256M; generous fallback ceiling until /api/public/settings responds
 
@@ -181,6 +187,7 @@ function filesApp() {
     // values serializable and put new UI-configurable fields here, not top-level.
     settings: {
       auth: { key: '' },
+      paramCrypt: { enabled: false },
       backend: 'http',
       autoRefresh: false,
       confirmDelete: true,
@@ -222,6 +229,7 @@ function filesApp() {
       this.loadSettings();
       this.applyAuto();
       await this.updateAuthKeyHash();
+      this.updateParamCryptKeys();
       this.load();
 
       // x-model on a <select> whose <option>s come from x-for tries to apply
@@ -250,6 +258,7 @@ function filesApp() {
 
       this.$watch('settings.auth.key', async () => {
         await this.updateAuthKeyHash();
+        this.updateParamCryptKeys();
         this.load();
         if (this.tab === 'upload') this.loadUploadDir();
       });
@@ -302,9 +311,15 @@ function filesApp() {
     },
 
     // The raw key is never sent to the server; this is the value that is.
+    // Mirrors internal/authhash.Hash exactly: a labeled HMAC-SHA256 round
+    // (domain-separating this from paramEncKeyBytes/paramMacKeyBytes below,
+    // which are derived from the same raw key via their own distinct
+    // labels) seeds 1000 rounds of plain SHA-256.
     async hashAuthKey(key) {
-      var data = new TextEncoder().encode(key);
-      for (var i = 0; i < 1000; i++) {
+      var keyBytes = new TextEncoder().encode(key);
+      var seed = this.hmacSha256Bytes(keyBytes, new TextEncoder().encode('warpgate-auth-token-v1'));
+      var data = new Uint8Array(await window.crypto.subtle.digest('SHA-256', seed));
+      for (var i = 1; i < 1000; i++) {
         data = new Uint8Array(await window.crypto.subtle.digest('SHA-256', data));
       }
       return this.bytesToHex(data);
@@ -316,6 +331,30 @@ function filesApp() {
       this.authKeyHash = this.settings.auth.key ? await this.hashAuthKey(this.settings.auth.key) : '';
     },
 
+    // js-sha256 (not crypto.subtle — parameter encryption must work over
+    // plain HTTP, where crypto.subtle is unavailable) accepts Uint8Array
+    // directly; .array() returns a plain Array, wrapped here for callers
+    // that treat it as bytes.
+    hmacSha256Bytes(keyBytes, msgBytes) {
+      return new Uint8Array(sha256.hmac.array(keyBytes, msgBytes));
+    },
+
+    // Derives the two subkeys used to encrypt request control-parameter
+    // JSON blobs (see encryptParams below), via labeled HMAC-SHA256 from
+    // the same raw auth key used for X-Auth — but with distinct labels, so
+    // this derivation is unrelated to (and can't be reversed into)
+    // authKeyHash. Cached like authKeyHash, recomputed only on key change.
+    updateParamCryptKeys() {
+      if (!this.settings.auth.key) {
+        this.paramEncKeyBytes = null;
+        this.paramMacKeyBytes = null;
+        return;
+      }
+      var keyBytes = new TextEncoder().encode(this.settings.auth.key);
+      this.paramEncKeyBytes = this.hmacSha256Bytes(keyBytes, new TextEncoder().encode('warpgate-param-enc-v1'));
+      this.paramMacKeyBytes = this.hmacSha256Bytes(keyBytes, new TextEncoder().encode('warpgate-param-mac-v1'));
+    },
+
     authHeaders() {
       var h = {};
       if (this.settings.auth.key) { h['X-Auth'] = this.authKeyHash; }
@@ -324,6 +363,80 @@ function filesApp() {
 
     jsonHeaders() {
       return Object.assign({ 'Content-Type': 'application/json' }, this.authHeaders());
+    },
+
+    paramEncryptEnabled() {
+      return this.settings.paramCrypt.enabled && !!this.paramEncKeyBytes;
+    },
+
+    // Encrypts obj as the wire format the server auto-detects: base64(nonce
+    // || AES-CTR(obj) || HMAC-SHA256(nonce||ciphertext)). Reuses the same
+    // aes-js CTR construction as the AES-CTR file-content transform
+    // (decryptAESCTR below); the nonce is drawn fresh per call since a
+    // (key, nonce) pair must never repeat under CTR.
+    encryptParams(obj) {
+      var plaintext = new TextEncoder().encode(JSON.stringify(obj));
+      var nonce = new Uint8Array(16);
+      window.crypto.getRandomValues(nonce); // fine without a secure context, unlike crypto.subtle
+      var ctr = new aesjs.ModeOfOperation.ctr(Array.from(this.paramEncKeyBytes), new aesjs.Counter(Array.from(nonce)));
+      var combined = new Uint8Array(16 + plaintext.length);
+      combined.set(nonce, 0);
+      combined.set(ctr.encrypt(plaintext), 16);
+      var mac = this.hmacSha256Bytes(Array.from(this.paramMacKeyBytes), Array.from(combined));
+      var full = new Uint8Array(combined.length + mac.length);
+      full.set(combined, 0);
+      full.set(mac, combined.length);
+      return btoa(this.bytesToBinaryString(full));
+    },
+
+    // Fixed-time byte comparison for MAC verification — avoids leaking how
+    // many leading bytes matched via a short-circuiting compare.
+    constantTimeEqualBytes(a, b) {
+      if (a.length !== b.length) return false;
+      var diff = 0;
+      for (var i = 0; i < a.length; i++) { diff |= a[i] ^ b[i]; }
+      return diff === 0;
+    },
+
+    // Reverses encryptParams: decodes+verifies+decrypts a server response
+    // blob back into the JSON value it was built from. The server only ever
+    // encrypts a response when the request it's answering arrived encrypted
+    // (see decodeResponseJSON/sendWSControl below for how callers know to
+    // call this instead of parsing plain JSON).
+    decryptParams(blob) {
+      var raw = this.binaryStringToBytes(atob(blob));
+      if (raw.length < 16 + 32) throw new Error('response authentication failed');
+      var body = raw.slice(0, raw.length - 32);
+      var mac  = raw.slice(raw.length - 32);
+      var expected = this.hmacSha256Bytes(Array.from(this.paramMacKeyBytes), Array.from(body));
+      if (!this.constantTimeEqualBytes(expected, mac)) throw new Error('response authentication failed');
+      var nonce = body.slice(0, 16);
+      var ciphertext = body.slice(16);
+      var ctr = new aesjs.ModeOfOperation.ctr(Array.from(this.paramEncKeyBytes), new aesjs.Counter(Array.from(nonce)));
+      return JSON.parse(new TextDecoder().decode(ctr.decrypt(ciphertext)));
+    },
+
+    // The value to use as a request body for obj: an encrypted blob when
+    // parameter encryption is enabled, plain JSON otherwise. Every JSON
+    // request body and WS control message routes through this (or
+    // sendWSControl below, which wraps it) instead of calling
+    // JSON.stringify directly, so the server's auto-detect always sees a
+    // consistent choice.
+    encodeBody(obj) {
+      return this.paramEncryptEnabled() ? this.encryptParams(obj) : JSON.stringify(obj);
+    },
+
+    sendWSControl(ws, obj) {
+      ws.send(this.encodeBody(obj));
+    },
+
+    // Parses a fetch Response body as JSON, decrypting first if the request
+    // it's answering was itself encrypted (the server only ever encrypts a
+    // response under that condition, so callers must know and pass it in —
+    // there's no auto-detection on this side, unlike the server's).
+    async decodeResponseJSON(res, encrypted) {
+      if (!encrypted) return res.json();
+      return this.decryptParams(await res.text());
     },
 
     assertOk(res) {
@@ -518,7 +631,7 @@ function filesApp() {
       var res = await fetch('/api/files/download', {
         method:  'POST',
         headers: this.jsonHeaders(),
-        body:    JSON.stringify(body),
+        body:    this.encodeBody(body),
       });
       this.assertOk(res);
       var buffer = await readBodyWithProgress(res, onProgress);
@@ -532,28 +645,30 @@ function filesApp() {
         var htmlB64Key = (t.type === 'html-b64') ? this.randomHex(16) : null;
 
         var ws = await wsOpen(this.wsBaseURL() + '/api/files/ws/download');
-        ws.send(JSON.stringify({
+        var encrypted = this.paramEncryptEnabled();
+        this.sendWSControl(ws, {
           auth:      this.authKeyHash,
           path:      path,
           transform: t.type,
           args:      this.buildTransformArgs(password, htmlB64Key),
           frameSize: this.settings.wsFrameSizeKB * 1024,
-        }));
-        var ack = await wsNextJSON(ws);
+        });
+        var ack = await wsNextJSON(ws, encrypted ? this.decryptParams.bind(this) : null);
         if (!ack.ok) { ws.close(); throw new Error(ack.error || 'download failed'); }
 
         wsSession.ws         = ws;
         wsSession.password   = password;
         wsSession.htmlB64Key = htmlB64Key;
+        wsSession.encrypted  = encrypted;
       }
 
-      wsSession.ws.send(JSON.stringify({ start: start, size: size }));
+      this.sendWSControl(wsSession.ws, { start: start, size: size });
 
       // The transformed chunk isn't always the same length as the requested
       // plaintext size (pdf/html-b64 both expand it), so the server
       // announces the actual byte count in a control message before sending
       // any frames; size it from that instead of the request's own size.
-      var chunkAck = await wsNextJSON(wsSession.ws);
+      var chunkAck = await wsNextJSON(wsSession.ws, wsSession.encrypted ? this.decryptParams.bind(this) : null);
       if (!chunkAck.ok) throw new Error(chunkAck.error || 'download failed');
       var chunkSize = chunkAck.chunkSize;
 
@@ -565,7 +680,7 @@ function filesApp() {
       if (!wsSession || !wsSession.ws) { return; }
       var ws = wsSession.ws;
       wsSession.ws = null;
-      try { ws.send(JSON.stringify({ done: true })); } catch(e) {}
+      try { this.sendWSControl(ws, { done: true }); } catch(e) {}
       try { ws.close(); } catch(e) {}
     },
 
@@ -647,13 +762,14 @@ function filesApp() {
     async load() {
       this.error = null;
       try {
+        var encrypted = this.paramEncryptEnabled();
         var res = await fetch('/api/files/list', {
           method:  'POST',
           headers: this.jsonHeaders(),
-          body:    JSON.stringify({ path: this.currentPath() }),
+          body:    this.encodeBody({ path: this.currentPath() }),
         });
         if (!res.ok) throw new Error('HTTP ' + res.status);
-        var data = await res.json();
+        var data = await this.decodeResponseJSON(res, encrypted);
         this.updateIfChanged('entries', data);
       } catch(err) {
         this.error = 'Failed to load directory (' + err.message + ')';
@@ -673,7 +789,9 @@ function filesApp() {
     async loadUploadDir() {
       this.uploadError = null;
       try {
-        var res = await fetch('/api/files/ul-list', { headers: this.authHeaders() });
+        var encrypted = this.paramEncryptEnabled();
+        var url = '/api/files/ul-list' + (encrypted ? '?e=1' : '');
+        var res = await fetch(url, { headers: this.authHeaders() });
         if (!res.ok) {
           this.uploadEntries = [];
           this.uploadError = res.status === 404
@@ -681,7 +799,7 @@ function filesApp() {
             : 'Failed to load upload directory (HTTP ' + res.status + ')';
           return;
         }
-        var data = (await res.json()) || [];
+        var data = (await this.decodeResponseJSON(res, encrypted)) || [];
         this.updateIfChanged('uploadEntries', data);
       } catch(err) {
         this.uploadEntries = [];
@@ -720,9 +838,11 @@ function filesApp() {
     async loadClipboard() {
       this.clipError = null;
       try {
-        var res = await fetch('/api/clip/list', { headers: this.authHeaders() });
+        var encrypted = this.paramEncryptEnabled();
+        var url = '/api/clip/list' + (encrypted ? '?e=1' : '');
+        var res = await fetch(url, { headers: this.authHeaders() });
         if (!res.ok) throw new Error('HTTP ' + res.status);
-        var data = await res.json();
+        var data = await this.decodeResponseJSON(res, encrypted);
         this.updateIfChanged('clipItems', data);
       } catch(err) {
         this.clipError = 'Failed to load clipboard (' + err.message + ')';
@@ -739,7 +859,7 @@ function filesApp() {
         var res = await fetch(url, {
           method:  'POST',
           headers: this.jsonHeaders(),
-          body:    JSON.stringify(body),
+          body:    this.encodeBody(body),
         });
         if (!res.ok) throw new Error('HTTP ' + res.status);
         this.clipText   = '';
@@ -769,7 +889,7 @@ function filesApp() {
         var res = await fetch('/api/clip/delete', {
           method:  'DELETE',
           headers: this.jsonHeaders(),
-          body:    JSON.stringify({ id: id }),
+          body:    this.encodeBody({ id: id }),
         });
         if (!res.ok) throw new Error('HTTP ' + res.status);
         await this.loadClipboard();
@@ -857,9 +977,9 @@ function filesApp() {
 
       var t      = this.settings.transform;
       var result = await this.encodeForUpload(file);
-      var spec   = JSON.stringify({ transform: t.type, args: result.args, 'ul-done': true });
+      var spec   = this.encodeBody({ transform: t.type, args: result.args, 'ul-done': true });
       var fd     = new FormData();
-      fd.append('transform', new Blob([spec], { type: 'application/json' }), 'transform.json');
+      fd.append('transform', new Blob([spec], { type: this.paramEncryptEnabled() ? 'text/plain' : 'application/json' }), 'transform.json');
       fd.append('file', result.data, file.name);
       var res = await fetch('/api/files/upload', { method: 'POST', headers: this.authHeaders(), body: fd });
       this.assertOk(res);
@@ -875,6 +995,7 @@ function filesApp() {
       var buf       = await file.arrayBuffer();
       var bytes     = new Uint8Array(buf);
       var filename  = t.pdf.filename || file.name;
+      var encrypted = this.paramEncryptEnabled();
 
       var continuationKey = '';
       var offset = 0;
@@ -885,18 +1006,18 @@ function filesApp() {
         done      = end >= bytes.length;
 
         var result = await this.encodeBytesForUpload(slice, filename);
-        var spec = JSON.stringify({
+        var spec = this.encodeBody({
           transform: t.type,
           args: result.args,
           'continuation-key': continuationKey,
           'ul-done': done,
         });
         var fd = new FormData();
-        fd.append('transform', new Blob([spec], { type: 'application/json' }), 'transform.json');
+        fd.append('transform', new Blob([spec], { type: encrypted ? 'text/plain' : 'application/json' }), 'transform.json');
         fd.append('file', result.data, file.name);
         var res = await fetch('/api/files/upload', { method: 'POST', headers: this.authHeaders(), body: fd });
         this.assertOk(res);
-        var data = await res.json();
+        var data = await this.decodeResponseJSON(res, encrypted);
         continuationKey = data['continuation-key'] || '';
 
         if (onProgress) onProgress(slice.byteLength);
@@ -909,23 +1030,25 @@ function filesApp() {
       var result    = await this.encodeForUpload(file);
       var buffer    = await result.data.arrayBuffer();
       var frameSize = this.settings.wsFrameSizeKB * 1024;
+      var encrypted = this.paramEncryptEnabled();
+      var decrypt   = encrypted ? this.decryptParams.bind(this) : null;
 
       var ws = await wsOpen(this.wsBaseURL() + '/api/files/ws/upload');
       try {
-        ws.send(JSON.stringify({
+        this.sendWSControl(ws, {
           auth:      this.authKeyHash,
           filename:  file.name,
           transform: t.type,
           args:      result.args,
           frameSize: frameSize,
-        }));
-        var ack = await wsNextJSON(ws);
+        });
+        var ack = await wsNextJSON(ws, decrypt);
         if (!ack.ok) throw new Error(ack.error || 'upload failed');
 
         await sendWSBinary(ws, buffer, frameSize, onProgress);
-        ws.send(JSON.stringify({ done: true }));
+        this.sendWSControl(ws, { done: true });
 
-        var final = await wsNextJSON(ws);
+        var final = await wsNextJSON(ws, decrypt);
         if (!final.ok) throw new Error(final.error || 'upload failed');
       } finally {
         ws.close();
@@ -1018,7 +1141,7 @@ function filesApp() {
       var res = await fetch('/api/sim/download', {
         method:  'POST',
         headers: this.jsonHeaders(),
-        body:    JSON.stringify({ totalSize: totalSize, start: start, size: size }),
+        body:    this.encodeBody({ totalSize: totalSize, start: start, size: size }),
       });
       this.assertOk(res);
       var buffer = await res.arrayBuffer();
@@ -1032,17 +1155,19 @@ function filesApp() {
     async fetchSimChunkWS(wsSession, totalSize, start, size, onProgress) {
       if (!wsSession.ws) {
         var ws = await wsOpen(this.wsBaseURL() + '/api/sim/ws/download');
-        ws.send(JSON.stringify({
+        var encrypted = this.paramEncryptEnabled();
+        this.sendWSControl(ws, {
           auth:      this.authKeyHash,
           totalSize: totalSize,
           frameSize: this.settings.wsFrameSizeKB * 1024,
-        }));
-        var ack = await wsNextJSON(ws);
+        });
+        var ack = await wsNextJSON(ws, encrypted ? this.decryptParams.bind(this) : null);
         if (!ack.ok) { ws.close(); throw new Error(ack.error || 'download failed'); }
         wsSession.ws = ws;
+        wsSession.encrypted = encrypted;
       }
 
-      wsSession.ws.send(JSON.stringify({ start: start, size: size }));
+      this.sendWSControl(wsSession.ws, { start: start, size: size });
 
       return receiveWSBinary(wsSession.ws, size, onProgress);
     },
@@ -1153,6 +1278,7 @@ function filesApp() {
     // why there's no WS equivalent of this protocol).
     async uploadSimHTTPChunked(buffer, chunkSize, onProgress) {
       var bytes = new Uint8Array(buffer);
+      var encrypted = this.paramEncryptEnabled();
       var continuationKey = '';
       var offset = 0;
       var done = false;
@@ -1162,13 +1288,13 @@ function filesApp() {
         var slice = bytes.subarray(offset, end);
         done      = end >= bytes.length;
 
-        var spec = JSON.stringify({ 'continuation-key': continuationKey, 'ul-done': done });
+        var spec = this.encodeBody({ 'continuation-key': continuationKey, 'ul-done': done });
         var fd = new FormData();
-        fd.append('transform', new Blob([spec], { type: 'application/json' }), 'transform.json');
+        fd.append('transform', new Blob([spec], { type: encrypted ? 'text/plain' : 'application/json' }), 'transform.json');
         fd.append('file', new Blob([slice]), 'bench.bin');
         var res = await fetch('/api/sim/upload', { method: 'POST', headers: this.authHeaders(), body: fd });
         this.assertOk(res);
-        var data = await res.json();
+        var data = await this.decodeResponseJSON(res, encrypted);
         continuationKey = data['continuation-key'] || '';
         if (data.hash) hash = data.hash;
 
@@ -1180,16 +1306,17 @@ function filesApp() {
 
     async uploadSimWS(buffer, onProgress) {
       var frameSize = this.settings.wsFrameSizeKB * 1024;
+      var decrypt   = this.paramEncryptEnabled() ? this.decryptParams.bind(this) : null;
       var ws = await wsOpen(this.wsBaseURL() + '/api/sim/ws/upload');
       try {
-        ws.send(JSON.stringify({ auth: this.authKeyHash, frameSize: frameSize }));
-        var ack = await wsNextJSON(ws);
+        this.sendWSControl(ws, { auth: this.authKeyHash, frameSize: frameSize });
+        var ack = await wsNextJSON(ws, decrypt);
         if (!ack.ok) throw new Error(ack.error || 'upload failed');
 
         await sendWSBinary(ws, buffer, frameSize, onProgress);
-        ws.send(JSON.stringify({ done: true }));
+        this.sendWSControl(ws, { done: true });
 
-        var final = await wsNextJSON(ws);
+        var final = await wsNextJSON(ws, decrypt);
         if (!final.ok) throw new Error(final.error || 'upload failed');
         return final.hash;
       } finally {

@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
@@ -13,7 +12,7 @@ import (
 // takes no path — /api/files/ul-list only ever lists the top level of
 // -ul-root.
 func fetchUlList(g *globalFlags) ([]listEntry, error) {
-	req, err := g.newRequest(http.MethodGet, "/api/files/ul-list", nil)
+	req, err := g.newRequest(http.MethodGet, g.maybeEncryptedQuery("/api/files/ul-list"), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -24,13 +23,16 @@ func fetchUlList(g *globalFlags) ([]listEntry, error) {
 	}
 	defer resp.Body.Close()
 
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
 	if resp.StatusCode != http.StatusOK {
-		errBody, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("%s: %s", resp.Status, strings.TrimSpace(string(errBody)))
+		return nil, fmt.Errorf("%s: %s", resp.Status, strings.TrimSpace(string(body)))
 	}
 
 	var entries []listEntry
-	if err := json.NewDecoder(resp.Body).Decode(&entries); err != nil {
+	if err := g.decodeJSON(body, &entries); err != nil {
 		return nil, err
 	}
 	return entries, nil

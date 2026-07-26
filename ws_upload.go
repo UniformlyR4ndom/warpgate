@@ -40,19 +40,19 @@ func (s *Server) handleWSUpload(w http.ResponseWriter, r *http.Request) {
 	}
 	defer conn.Close()
 
-	req, err := readWSControl[wsUploadRequest](conn)
+	req, encrypted, err := readWSControl[wsUploadRequest](s, conn)
 	if err != nil {
 		log.Printf("ws upload: reading control message: %v", err)
 		return
 	}
 
 	if !s.checkWSAuth(req.Auth) {
-		writeWSError(conn, websocket.ClosePolicyViolation, "unauthorized")
+		s.writeWSError(conn, encrypted, websocket.ClosePolicyViolation, "unauthorized")
 		return
 	}
 
 	if _, err := s.resolveFrameSize(req.FrameSize); err != nil {
-		writeWSError(conn, websocket.ClosePolicyViolation, "%v", err)
+		s.writeWSError(conn, encrypted, websocket.ClosePolicyViolation, "%v", err)
 		return
 	}
 
@@ -60,31 +60,31 @@ func (s *Server) handleWSUpload(w http.ResponseWriter, r *http.Request) {
 	rawName := strings.ReplaceAll(req.Filename, "\\", "/")
 	filename := filepath.Base(rawName)
 	if filename == "" || filename == "." || filename == "/" {
-		writeWSError(conn, websocket.CloseInternalServerErr, "invalid filename")
+		s.writeWSError(conn, encrypted, websocket.CloseInternalServerErr, "invalid filename")
 		return
 	}
 
 	transformer, err := transform.New(req.Transform, req.Args)
 	if err != nil {
-		writeWSError(conn, websocket.CloseInternalServerErr, "invalid transform: %v", err)
+		s.writeWSError(conn, encrypted, websocket.CloseInternalServerErr, "invalid transform: %v", err)
 		return
 	}
 
 	targetPath, err := makePath(s.absUlRoot, filename)
 	if err != nil {
-		writeWSError(conn, websocket.CloseInternalServerErr, "invalid filename")
+		s.writeWSError(conn, encrypted, websocket.CloseInternalServerErr, "invalid filename")
 		return
 	}
 
 	f, err := os.Create(targetPath)
 	if err != nil {
 		log.Printf("ws upload: creating file %q: %v", targetPath, err)
-		writeWSError(conn, websocket.CloseInternalServerErr, "internal error")
+		s.writeWSError(conn, encrypted, websocket.CloseInternalServerErr, "internal error")
 		return
 	}
 	defer f.Close()
 
-	if err := writeWSOK(conn, wsAck{OK: true}); err != nil {
+	if err := s.writeWSOK(conn, encrypted, wsAck{OK: true}); err != nil {
 		return
 	}
 
@@ -108,8 +108,8 @@ func (s *Server) handleWSUpload(w http.ResponseWriter, r *http.Request) {
 
 		if mt == websocket.TextMessage {
 			var done wsDoneMessage
-			if err := json.Unmarshal(p, &done); err != nil || !done.Done {
-				writeWSError(conn, websocket.CloseInternalServerErr, "unexpected control message")
+			if _, err := s.decodeParams(bytes.NewReader(p), &done); err != nil || !done.Done {
+				s.writeWSError(conn, encrypted, websocket.CloseInternalServerErr, "unexpected control message")
 				return
 			}
 			break
@@ -121,17 +121,17 @@ func (s *Server) handleWSUpload(w http.ResponseWriter, r *http.Request) {
 	reader, err := transformer.Untransform(&received)
 	if err != nil {
 		log.Printf("ws upload: applying transform %q to %q: %v", req.Transform, filename, err)
-		writeWSError(conn, websocket.CloseInternalServerErr, "internal error")
+		s.writeWSError(conn, encrypted, websocket.CloseInternalServerErr, "internal error")
 		return
 	}
 	if _, err := io.Copy(f, reader); err != nil {
 		log.Printf("ws upload: writing %q: %v", targetPath, err)
-		writeWSError(conn, websocket.CloseInternalServerErr, "internal error")
+		s.writeWSError(conn, encrypted, websocket.CloseInternalServerErr, "internal error")
 		return
 	}
 
 	log.Printf("uploaded %q to %q", filename, targetPath)
-	if err := writeWSOK(conn, wsAck{OK: true, Name: filename}); err != nil {
+	if err := s.writeWSOK(conn, encrypted, wsAck{OK: true, Name: filename}); err != nil {
 		return
 	}
 	writeWSClose(conn, websocket.CloseNormalClosure, "")

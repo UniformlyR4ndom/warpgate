@@ -1,9 +1,9 @@
 package main
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"log"
 	"net/http"
 
@@ -27,23 +27,23 @@ func (s *Server) handleSimWSUpload(w http.ResponseWriter, r *http.Request) {
 	}
 	defer conn.Close()
 
-	req, err := readWSControl[wsSimUploadRequest](conn)
+	req, encrypted, err := readWSControl[wsSimUploadRequest](s, conn)
 	if err != nil {
 		log.Printf("sim ws upload: reading control message: %v", err)
 		return
 	}
 
 	if !s.checkWSAuth(req.Auth) {
-		writeWSError(conn, websocket.ClosePolicyViolation, "unauthorized")
+		s.writeWSError(conn, encrypted, websocket.ClosePolicyViolation, "unauthorized")
 		return
 	}
 
 	if _, err := s.resolveFrameSize(req.FrameSize); err != nil {
-		writeWSError(conn, websocket.ClosePolicyViolation, "%v", err)
+		s.writeWSError(conn, encrypted, websocket.ClosePolicyViolation, "%v", err)
 		return
 	}
 
-	if err := writeWSOK(conn, wsAck{OK: true}); err != nil {
+	if err := s.writeWSOK(conn, encrypted, wsAck{OK: true}); err != nil {
 		return
 	}
 
@@ -61,8 +61,8 @@ func (s *Server) handleSimWSUpload(w http.ResponseWriter, r *http.Request) {
 
 		if mt == websocket.TextMessage {
 			var done wsDoneMessage
-			if err := json.Unmarshal(p, &done); err != nil || !done.Done {
-				writeWSError(conn, websocket.CloseInternalServerErr, "unexpected control message")
+			if _, err := s.decodeParams(bytes.NewReader(p), &done); err != nil || !done.Done {
+				s.writeWSError(conn, encrypted, websocket.CloseInternalServerErr, "unexpected control message")
 				return
 			}
 			break
@@ -70,13 +70,13 @@ func (s *Server) handleSimWSUpload(w http.ResponseWriter, r *http.Request) {
 
 		total += int64(len(p))
 		if total > simMaxTotalSize {
-			writeWSError(conn, websocket.CloseInternalServerErr, "upload exceeds %d bytes", simMaxTotalSize)
+			s.writeWSError(conn, encrypted, websocket.CloseInternalServerErr, "upload exceeds %d bytes", simMaxTotalSize)
 			return
 		}
 		hasher.Write(p)
 	}
 
-	if err := writeWSOK(conn, wsAck{OK: true, Hash: hex.EncodeToString(hasher.Sum(nil))}); err != nil {
+	if err := s.writeWSOK(conn, encrypted, wsAck{OK: true, Hash: hex.EncodeToString(hasher.Sum(nil))}); err != nil {
 		return
 	}
 	writeWSClose(conn, websocket.CloseNormalClosure, "")

@@ -3,7 +3,6 @@ package main
 import (
 	"bytes"
 	"encoding/base64"
-	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
@@ -23,7 +22,7 @@ type clipItem struct {
 }
 
 func fetchClipList(g *globalFlags) ([]clipItem, error) {
-	req, err := g.newRequest(http.MethodGet, "/api/clip/list", nil)
+	req, err := g.newRequest(http.MethodGet, g.maybeEncryptedQuery("/api/clip/list"), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -33,19 +32,22 @@ func fetchClipList(g *globalFlags) ([]clipItem, error) {
 	}
 	defer resp.Body.Close()
 
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
 	if resp.StatusCode != http.StatusOK {
-		errBody, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("%s: %s", resp.Status, strings.TrimSpace(string(errBody)))
+		return nil, fmt.Errorf("%s: %s", resp.Status, strings.TrimSpace(string(body)))
 	}
 	var items []clipItem
-	if err := json.NewDecoder(resp.Body).Decode(&items); err != nil {
+	if err := g.decodeJSON(body, &items); err != nil {
 		return nil, err
 	}
 	return items, nil
 }
 
 func postClipNew(g *globalFlags, data []byte) (id, ts int64, err error) {
-	body, err := json.Marshal(struct {
+	body, err := g.encodeBody(struct {
 		Data string `json:"data"`
 	}{base64.StdEncoding.EncodeToString(data)})
 	if err != nil {
@@ -64,22 +66,25 @@ func postClipNew(g *globalFlags, data []byte) (id, ts int64, err error) {
 	}
 	defer resp.Body.Close()
 
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return 0, 0, err
+	}
 	if resp.StatusCode != http.StatusOK {
-		errBody, _ := io.ReadAll(resp.Body)
-		return 0, 0, fmt.Errorf("%s: %s", resp.Status, strings.TrimSpace(string(errBody)))
+		return 0, 0, fmt.Errorf("%s: %s", resp.Status, strings.TrimSpace(string(respBody)))
 	}
 	var result struct {
 		ID int64 `json:"id"`
 		TS int64 `json:"ts"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	if err := g.decodeJSON(respBody, &result); err != nil {
 		return 0, 0, err
 	}
 	return result.ID, result.TS, nil
 }
 
 func postClipEdit(g *globalFlags, id int64, data []byte) error {
-	body, err := json.Marshal(struct {
+	body, err := g.encodeBody(struct {
 		ID   int64  `json:"id"`
 		Data string `json:"data"`
 	}{id, base64.StdEncoding.EncodeToString(data)})
@@ -107,7 +112,7 @@ func postClipEdit(g *globalFlags, id int64, data []byte) error {
 }
 
 func deleteClip(g *globalFlags, id int64) error {
-	body, err := json.Marshal(struct {
+	body, err := g.encodeBody(struct {
 		ID int64 `json:"id"`
 	}{id})
 	if err != nil {

@@ -15,6 +15,7 @@ import (
 	"github.com/gorilla/websocket"
 
 	"warpgate/internal/authhash"
+	"warpgate/internal/paramcrypt"
 )
 
 type Server struct {
@@ -27,6 +28,7 @@ type Server struct {
 	clientFP   []byte
 	wsUpgrader websocket.Upgrader
 	authHash   string
+	paramKeys  paramcrypt.Keys // zero value when cfg.NoAuth: parameter encryption is unavailable
 
 	uploadSessions    *sessionStore[*ulSession]
 	simUploadSessions *sessionStore[*simUlSession]
@@ -57,6 +59,9 @@ func NewServer(cfg Config, db *DB) (*Server, error) {
 			WriteBufferSize: cfg.WSFrameMax,
 		},
 		authHash: authhash.Hash(cfg.Key),
+	}
+	if !cfg.NoAuth {
+		s.paramKeys = paramcrypt.DeriveKeys(cfg.Key)
 	}
 
 	if cfg.ClientRoot != "" {

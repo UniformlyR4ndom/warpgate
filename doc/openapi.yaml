@@ -192,6 +192,10 @@ paths:
       description: |
         Returns the files and subdirectories at `path` within the download root.
         Use an empty string for the root itself.
+
+        The request body may alternatively be an opaque base64 string (encrypted control
+        parameters) instead of the JSON shape below; the server auto-detects which was sent.
+        Not modeled separately here — see CLAUDE.md's "Parameter Encryption" section.
       requestBody:
         required: true
         content:
@@ -214,7 +218,11 @@ paths:
                   path: docs/reports
       responses:
         "200":
-          description: Directory listing (files and directories).
+          description: |
+            Directory listing (files and directories). Encrypted the same way as the request
+            body (opaque base64, `text/plain`) whenever that request body itself arrived
+            encrypted — see CLAUDE.md's "Parameter Encryption" → "Response encryption". Not
+            modeled separately here.
           content:
             application/json:
               schema:
@@ -230,7 +238,9 @@ paths:
         "400":
           description: Invalid or path-traversal path.
         "401":
-          description: Missing or invalid `X-Auth` header.
+          description: |
+            Missing or invalid `X-Auth` header, or the request body is malformed or fails to
+            decrypt (see CLAUDE.md's "Parameter Encryption" section).
         "404":
           description: Path not found.
         "405":
@@ -252,6 +262,10 @@ paths:
 
         The `args` field must match the chosen `transform`; see the `TransformArgs` schema for
         per-transform details.
+
+        The request body may alternatively be an opaque base64 string (encrypted control
+        parameters) instead of the JSON shape below; the server auto-detects which was sent.
+        Not modeled separately here — see CLAUDE.md's "Parameter Encryption" section.
       requestBody:
         required: true
         content:
@@ -359,11 +373,13 @@ paths:
                 type: string
         "400":
           description: |
-            Invalid request — malformed JSON, path traversal, non-positive `size`, unknown
-            transform name, invalid transform args (e.g. wrong key length), or a non-empty
-            `contentType` that's over 255 bytes or contains control characters.
+            Invalid request — path traversal, non-positive `size`, unknown transform name,
+            invalid transform args (e.g. wrong key length), or a non-empty `contentType` that's
+            over 255 bytes or contains control characters.
         "401":
-          description: Missing or invalid `X-Auth` header.
+          description: |
+            Missing or invalid `X-Auth` header, or the request body is malformed or fails to
+            decrypt (see CLAUDE.md's "Parameter Encryption" section).
         "404":
           description: File not found.
         "405":
@@ -421,6 +437,11 @@ paths:
         exactly as before chunking existed: the whole file in one request, written immediately, no
         session created. Sending `"ul-done":false` explicitly (even with no `continuation-key`) opts
         into chunking instead of the one-shot default.
+
+        The `transform` part's content may alternatively be an opaque base64 string (encrypted
+        control parameters) instead of plain JSON; the server auto-detects which was sent. The
+        `file` part is never encrypted this way. Not modeled separately here — see CLAUDE.md's
+        "Parameter Encryption" section.
       requestBody:
         required: true
         content:
@@ -444,7 +465,11 @@ paths:
                     filename.
       responses:
         "201":
-          description: First chunk (or the whole file, for a one-shot upload) stored successfully.
+          description: |
+            First chunk (or the whole file, for a one-shot upload) stored successfully.
+            Encrypted the same way as the request's `transform` part (opaque base64,
+            `text/plain`) whenever that part itself arrived encrypted — see CLAUDE.md's
+            "Parameter Encryption" → "Response encryption". Not modeled separately here.
           content:
             application/json:
               schema:
@@ -452,17 +477,20 @@ paths:
         "200":
           description: |
             A non-first chunk was accepted (intermediate, final, or an idempotent replay of an
-            already-processed chunk/completed upload).
+            already-processed chunk/completed upload). Encrypted under the same condition as
+            the "201" response above.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/UploadResponse'
         "400":
           description: |
-            Invalid request — malformed multipart form, invalid transform spec JSON, invalid
-            transform args, unusable filename, or an unrecognized `continuation-key`.
+            Invalid request — malformed multipart form, invalid transform args, unusable
+            filename, or an unrecognized `continuation-key`.
         "401":
-          description: Missing or invalid `X-Auth` header.
+          description: |
+            Missing or invalid `X-Auth` header, or the `transform` part's content is malformed or
+            fails to decrypt (see CLAUDE.md's "Parameter Encryption" section).
         "404":
           description: Upload not configured (server started without `-ul-root`).
         "405":
@@ -490,6 +518,10 @@ paths:
         As with `/api/files/download`, set `start=0` and `size` equal to `totalSize` for a single
         request, or issue multiple requests with successive `start` offsets to simulate a chunked
         transfer.
+
+        The request body may alternatively be an opaque base64 string (encrypted control
+        parameters) instead of the JSON shape below; the server auto-detects which was sent.
+        Not modeled separately here — see CLAUDE.md's "Parameter Encryption" section.
       requestBody:
         required: true
         content:
@@ -531,10 +563,12 @@ paths:
                 format: binary
         "400":
           description: |
-            Invalid request — malformed JSON, `totalSize` out of range or too small to fit its own
-            header, negative `start`, or non-positive `size`.
+            Invalid request — `totalSize` out of range or too small to fit its own header,
+            negative `start`, or non-positive `size`.
         "401":
-          description: Missing or invalid `X-Auth` header.
+          description: |
+            Missing or invalid `X-Auth` header, or the request body is malformed or fails to
+            decrypt (see CLAUDE.md's "Parameter Encryption" section).
         "405":
           description: Method not allowed.
 
@@ -577,6 +611,11 @@ paths:
           the response that completes it (a one-shot request, the final chunk, or a
           completed-session replay) — a non-final chunk's response carries `continuation-key`
           instead, exactly as `/api/files/upload`'s `UploadResponse` does.
+
+        The `transform` part's content may alternatively be an opaque base64 string (encrypted
+        control parameters) instead of plain JSON; the server auto-detects which was sent. The
+        `file` part is never encrypted this way. Not modeled separately here — see CLAUDE.md's
+        "Parameter Encryption" section.
       requestBody:
         required: true
         content:
@@ -602,17 +641,23 @@ paths:
           description: |
             Chunk accepted. `hash` is present only on the response that completes the upload (a
             one-shot request, the final chunk, or a completed-session replay); a non-final chunk's
-            response carries `continuation-key` instead.
+            response carries `continuation-key` instead. Encrypted the same way as the request's
+            `transform` part (opaque base64, `text/plain`) whenever that part itself arrived
+            encrypted — see CLAUDE.md's "Parameter Encryption" → "Response encryption". A truly
+            bodyless one-shot request (no `transform` part at all) has no signal to encrypt off
+            of, so that specific response is always plain JSON. Not modeled separately here.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SimUploadResponse'
         "400":
           description: |
-            Invalid request — malformed multipart form, invalid transform-spec JSON, missing/invalid
-            filename, an unrecognized `continuation-key`, or the cumulative upload exceeds 1024 MiB.
+            Invalid request — malformed multipart form, missing/invalid filename, an unrecognized
+            `continuation-key`, or the cumulative upload exceeds 1024 MiB.
         "401":
-          description: Missing or invalid `X-Auth` header.
+          description: |
+            Missing or invalid `X-Auth` header, or the `transform` part's content is malformed or
+            fails to decrypt (see CLAUDE.md's "Parameter Encryption" section).
         "404":
           description: Upload not configured (server started without `-ul-root`).
         "405":
@@ -633,6 +678,20 @@ paths:
 
         This endpoint is only available when the server was started with `-ul-root`.
         If not configured, the endpoint returns 404.
+
+        This endpoint has no request body, so the response's encryption can't be inferred
+        from one the way it is elsewhere (see CLAUDE.md's "Parameter Encryption" section);
+        instead, pass the `e` query parameter (any value) to request an encrypted response.
+        Ignored when the server has no auth key configured (`-no-auth`).
+      parameters:
+        - name: e
+          in: query
+          required: false
+          schema:
+            type: string
+          description: |
+            If present (any value), the response body is an encrypted paramcrypt blob
+            instead of plain JSON. See CLAUDE.md's "Parameter Encryption" section.
       responses:
         "200":
           description: List of uploaded files.
@@ -662,6 +721,20 @@ paths:
       description: |
         Returns all notes currently stored in the clipboard, ordered by insertion sequence.
         Returns an empty array when no notes exist.
+
+        This endpoint has no request body, so the response's encryption can't be inferred
+        from one the way it is elsewhere (see CLAUDE.md's "Parameter Encryption" section);
+        instead, pass the `e` query parameter (any value) to request an encrypted response.
+        Ignored when the server has no auth key configured (`-no-auth`).
+      parameters:
+        - name: e
+          in: query
+          required: false
+          schema:
+            type: string
+          description: |
+            If present (any value), the response body is an encrypted paramcrypt blob
+            instead of plain JSON. See CLAUDE.md's "Parameter Encryption" section.
       responses:
         "200":
           description: Array of clipboard notes.
@@ -706,7 +779,11 @@ paths:
               data: SGVsbG8gd29ybGQh
       responses:
         "200":
-          description: Note created. Returns the assigned ID and timestamp.
+          description: |
+            Note created. Returns the assigned ID and timestamp. Encrypted the same way as the
+            request body (opaque base64, `text/plain`) whenever that request body itself arrived
+            encrypted — see CLAUDE.md's "Parameter Encryption" → "Response encryption". Not
+            modeled separately here.
           content:
             application/json:
               schema:
@@ -715,9 +792,11 @@ paths:
                 id: 42
                 ts: 1751400000
         "400":
-          description: Malformed JSON body or `data` is not valid base64.
+          description: "`data` is not valid base64."
         "401":
-          description: Missing or invalid `X-Auth` header.
+          description: |
+            Missing or invalid `X-Auth` header, or the request body is malformed or fails to
+            decrypt (see CLAUDE.md's "Parameter Encryption" section).
         "405":
           description: Method not allowed.
         "500":
@@ -755,9 +834,11 @@ paths:
         "204":
           description: Note updated successfully.
         "400":
-          description: Malformed JSON body or `data` is not valid base64.
+          description: "`data` is not valid base64."
         "401":
-          description: Missing or invalid `X-Auth` header.
+          description: |
+            Missing or invalid `X-Auth` header, or the request body is malformed or fails to
+            decrypt (see CLAUDE.md's "Parameter Encryption" section).
         "404":
           description: No note with the given ID exists.
         "405":
@@ -788,10 +869,10 @@ paths:
       responses:
         "204":
           description: Note deleted successfully.
-        "400":
-          description: Malformed JSON body.
         "401":
-          description: Missing or invalid `X-Auth` header.
+          description: |
+            Missing or invalid `X-Auth` header, or the request body is malformed or fails to
+            decrypt (see CLAUDE.md's "Parameter Encryption" section).
         "404":
           description: No note with the given ID exists.
         "405":

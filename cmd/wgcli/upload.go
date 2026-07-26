@@ -13,8 +13,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/gorilla/websocket"
-
 	"warpgate/internal/transform"
 )
 
@@ -33,7 +31,7 @@ func postUploadChunk(g *globalFlags, chunkData io.Reader, name, transformName st
 	if err != nil {
 		return "", "", err
 	}
-	if err := json.NewEncoder(specPart).Encode(struct {
+	specBody, err := g.encodeBody(struct {
 		Transform       string          `json:"transform"`
 		Args            json.RawMessage `json:"args,omitempty"`
 		ContinuationKey string          `json:"continuation-key,omitempty"`
@@ -41,7 +39,11 @@ func postUploadChunk(g *globalFlags, chunkData io.Reader, name, transformName st
 		// false value would make the server default ul-done to true,
 		// prematurely finishing every non-final chunk.
 		Done bool `json:"ul-done"`
-	}{transformName, transformArgs, continuationKey, done}); err != nil {
+	}{transformName, transformArgs, continuationKey, done})
+	if err != nil {
+		return "", "", err
+	}
+	if _, err := specPart.Write(specBody); err != nil {
 		return "", "", err
 	}
 
@@ -69,19 +71,23 @@ func postUploadChunk(g *globalFlags, chunkData io.Reader, name, transformName st
 	}
 	defer resp.Body.Close()
 
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", "", err
+	}
+
 	// The server answers a first-chunk request (whether or not it's also
 	// the final one) with 201, and every continuation-key request
 	// (final or not) with 200.
 	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
-		errBody, _ := io.ReadAll(resp.Body)
-		return "", "", fmt.Errorf("%s: %s", resp.Status, strings.TrimSpace(string(errBody)))
+		return "", "", fmt.Errorf("%s: %s", resp.Status, strings.TrimSpace(string(respBody)))
 	}
 
 	var result struct {
 		Name            string `json:"name"`
 		ContinuationKey string `json:"continuation-key"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	if err := g.decodeJSON(respBody, &result); err != nil {
 		return "", "", err
 	}
 	return result.Name, result.ContinuationKey, nil
@@ -175,20 +181,16 @@ func uploadWS(g *globalFlags, localPath, name string, transformName string, tran
 	}
 	defer conn.Close()
 
-	initReq, err := json.Marshal(struct {
+	if err := writeWSJSON(conn, g, struct {
 		Auth      string          `json:"auth,omitempty"`
 		Filename  string          `json:"filename"`
 		Transform string          `json:"transform"`
 		Args      json.RawMessage `json:"args,omitempty"`
 		FrameSize int64           `json:"frameSize,omitempty"`
-	}{g.authToken(), name, transformName, transformArgs, frameSize})
-	if err != nil {
-		return err
-	}
-	if err := conn.WriteMessage(websocket.TextMessage, initReq); err != nil {
+	}{g.authToken(), name, transformName, transformArgs, frameSize}); err != nil {
 		return fmt.Errorf("sending initial request: %w", err)
 	}
-	if _, err := readWSAck(conn); err != nil {
+	if _, err := readWSAck(conn, g); err != nil {
 		return err
 	}
 
@@ -198,13 +200,13 @@ func uploadWS(g *globalFlags, localPath, name string, transformName string, tran
 		return err
 	}
 
-	if err := conn.WriteJSON(struct {
+	if err := writeWSJSON(conn, g, struct {
 		Done bool `json:"done"`
 	}{true}); err != nil {
 		return fmt.Errorf("sending done message: %w", err)
 	}
 
-	ack, err := readWSAck(conn)
+	ack, err := readWSAck(conn, g)
 	if err != nil {
 		return err
 	}

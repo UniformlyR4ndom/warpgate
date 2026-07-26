@@ -96,10 +96,14 @@ transform's default. Only meaningful for the HTTP backend — WS downloads have 
 headers, so the frontend's Content-Type control (General panel section) is hidden whenever
 `settings.backend === 'ws'`.
 
+This body may optionally be an encrypted blob instead of plain JSON — see "Parameter Encryption" below.
+
 ### `/api/files/upload` multipart form
 
 Two parts:
-- `transform` (optional file part, JSON): `{"transform":"pdf","args":{"filename":"myfile.txt"},"continuation-key":"<hex>","ul-done":true}`
+- `transform` (optional file part, JSON): `{"transform":"pdf","args":{"filename":"myfile.txt"},"continuation-key":"<hex>","ul-done":true}`.
+  May optionally be an encrypted blob instead of plain JSON — see "Parameter Encryption" below. Only
+  this part is ever encrypted; the `file` part below never is.
 - `file`: this request's file data (already encoded by the frontend; for a chunked upload, this
   chunk's independently-transformed bytes, not the whole file)
 
@@ -186,7 +190,11 @@ violation).
 Control messages are JSON text frames; file data is sent as binary frames. Because the transform
 functions are stateless per call (a fresh cipher/reader is constructed each time), a single
 `Transformer` is built once per connection from the first message's `transform`/`args` and reused
-across chunks.
+across chunks. Every client→server control message described below (here and in the equivalent
+sim/download and sim/upload protocols) — not just the handshake — may optionally be an encrypted blob
+instead of plain JSON; see "Parameter Encryption" below. Server→client acks mirror that same choice
+for the whole connection, decided once at the handshake — see "Parameter Encryption" → "Response
+encryption".
 
 **Frame size is a compatibility knob, not just a performance one.** Intercepting/inspecting proxies
 that buffer a whole WebSocket frame before forwarding it — Burp Suite among them — can choke on very
@@ -368,11 +376,16 @@ matching the server's derived auth token (the two WebSocket endpoints are also u
 the HTTP/upgrade level, but check the token in-band — see WebSocket Transport below).
 
 The raw key configured by the operator is never sent over the wire. `internal/authhash.Hash(key)`
-(1000x-iterated SHA-256 of the key's UTF-8 bytes, chaining the raw digest each round, hex-encoded at
-the end) derives the actual token from it; both the server and every client (frontend, `wgcli`)
-compute this independently from the same raw key rather than one side transmitting a derived value
-to the other. `internal/authhash` is imported by both the server and `cmd/wgcli`, the same pattern
-`internal/transform` uses, so the two can't drift apart.
+derives the actual token from it: a labeled HMAC-SHA256 round — `HMAC-SHA256(key, "warpgate-auth-token-v1")`
+— seeds 1000 rounds of plain SHA-256 chaining the digest, hex-encoded at the end. The label domain-
+separates this from `internal/paramcrypt.DeriveKeys`'s two labeled subkeys (see "Parameter Encryption"
+below) — knowing one gives no information about, and can't be confused with, the other. Both the
+server and every client (frontend, `wgcli`) compute this independently from the same raw key rather
+than one side transmitting a derived value to the other. `internal/authhash` is imported by both the
+server and `cmd/wgcli`, the same pattern `internal/transform` uses, so the two can't drift apart;
+`web/app.js`'s `hashAuthKey()` is a separate, independently-verified JS reimplementation (frontend
+JS can't import the Go package), reusing the same `hmacSha256Bytes()` helper `paramCrypt`'s key
+derivation uses for its own labeled HMAC round.
 
 - Set the key with `-auth-key <key>`. If omitted and `-no-auth` is not set, a random 32-byte hex key is auto-generated and printed to the log at startup. `Server.authHash` (`server.go`) is computed once from this key at startup, not per-request.
 - `-no-auth` disables authentication entirely (no header check).
@@ -381,6 +394,123 @@ to the other. `internal/authhash` is imported by both the server and `cmd/wgcli`
 - `wgcli`'s `-auth-key` flag likewise takes the raw key; `globalFlags.authToken()` derives the token sent on the wire.
 
 Auth is enforced via `withAuth(h http.HandlerFunc) http.Handler` in `server.go`, applied at route registration time. The dispatch loop in `handler()` is unconditional.
+
+## Parameter Encryption
+
+Request control parameters (file paths, transform keys/passwords, filenames) are normally sent as
+plaintext JSON — including the very transform keys that disguise the response body — so a proxy that
+terminates TLS and inspects request bodies learns everything it needs to defeat the content disguise
+too. Parameter encryption is an opt-in mechanism, independent of the transform system, that encrypts
+these JSON blobs client-side using a key derived from the same shared `-auth-key`.
+
+**Wire format**: `base64(nonce[16] || AES-CTR-ciphertext || HMAC-SHA256[32])`. The nonce is drawn
+fresh per message by the client (`window.crypto.getRandomValues` — not `crypto.subtle`, which requires
+a secure context; the raw-getRandomValues call has no such requirement). The HMAC-SHA256 covers
+everything preceding it in the blob (`nonce || ciphertext`) — i.e. everything except the MAC itself —
+using Encrypt-then-MAC, so any tampering is detected before the ciphertext is ever decrypted.
+
+**Key derivation** (`internal/paramcrypt.DeriveKeys`): two independent subkeys, one for AES-CTR
+encryption and one for the HMAC, each derived from the raw auth key via a distinctly labeled
+HMAC-SHA256 (`warpgate-param-enc-v1` / `warpgate-param-mac-v1`). This is deliberately unrelated to
+`internal/authhash.Hash`'s derivation of the X-Auth token, which uses its own distinct label
+(`warpgate-auth-token-v1`, see "Authentication" above) — knowing one gives no information about the
+other.
+
+**Server auto-detect, no negotiation**: `Server.decodeParams` (`paramdecode.go`) tries `json.Unmarshal`
+on the raw body first; if that fails and the server has derived param-crypt keys (i.e. auth is
+enabled), it treats the body as the base64 blob above, decrypts, and parses the result as JSON
+instead. Either wire format is accepted from any client at all times — there is no server flag to
+require or reject one or the other. Any decode failure (malformed input, bad base64, or a MAC
+mismatch) is reported as `401 Unauthorized`, the same as a bad `X-Auth` value, rather than `400`; the
+client can't reliably tell which occurred, and the frontend already denies the user access on a key
+mismatch regardless.
+
+**Scope**: every client→server JSON request body (`/api/files/list`, `/api/files/download`,
+`/api/clip/new`, `/api/clip/edit`, `/api/clip/delete`, `/api/sim/download`); only the JSON `transform`
+part of the multipart upload endpoints (`/api/files/upload`, `/api/sim/upload`) — the binary `file`
+part is untouched, since it's already independently protected by the transform system; and every
+client→server WebSocket control message (not just the handshake) for all four WS endpoints — the
+handshake, `{"start":...,"size":...}` chunk requests, and `{"done":true}`. Unavailable entirely under
+`-no-auth` (there's no shared secret to derive keys from); `decodeParams` doesn't attempt the decrypt
+fallback in that mode.
+
+**Frontend**: a checkbox in the side panel's **Auth** section ("Parameter obfuscation",
+`settings.paramCrypt.enabled`, disabled when no auth key is set) toggles this per-client — purely a
+local preference, not negotiated with the server. `paramEncKeyBytes`/`paramMacKeyBytes` are derived
+from `settings.auth.key` and cached the same way `authKeyHash` is (recomputed via
+`updateParamCryptKeys()` in `init()` and the `settings.auth.key` watcher, not per-request).
+`encodeBody(obj)` (returns either `JSON.stringify(obj)` or the encrypted blob) and `sendWSControl(ws,
+obj)` are the two choke points every request body and WS control send routes through, so the toggle
+only needs to be checked in one place per transport. AES-CTR uses the same `aes-js`
+(`web/aes.js`) construction as the AES-CTR file-content transform; HMAC-SHA256 uses a vendored
+`js-sha256` (`web/sha256.js`) rather than `crypto.subtle`, for the same secure-context reason as the
+nonce generation above — this feature must work over plain HTTP, which is the whole point of the tool.
+
+**`wgcli` implements parameter encryption** via its own `-param-crypt` flag (`cmd/wgcli/client.go`),
+importing `internal/paramcrypt` directly — the same pattern `internal/authhash`/`internal/transform`
+already use to keep the server and `wgcli` from drifting apart. `-param-crypt` alone isn't enough to
+enable it: `globalFlags.paramKeys()` also requires `-auth-key` to be set, mirroring the frontend
+checkbox being disabled with no auth key. `cmd/wgcli/paramcrypt.go` is the client-side equivalent of
+the frontend's `encodeBody`/`decodeResponseJSON` choke points: `encodeBody` marshals-then-optionally-
+encrypts every JSON request body, multipart `transform` part, and WS control message; `decodeJSON`
+reverses it for every in-scope response. Unlike the server's auto-detecting `decodeParams`, `wgcli`
+doesn't need to guess whether a response is encrypted — it already knows its own `-param-crypt`
+setting for the whole invocation, the same fixed choice for every request. `maybeEncryptedQuery`
+appends `?e=1` for the two GET endpoints (`ul-list`, `clip/list`) with no request body to key a
+response off of. WS handshakes/chunk-requests/`done` messages route through `writeWSJSON`; acks
+(including the payload materialized in the `websocket.BinaryMessage`-mismatch/mid-transfer error
+path) are decoded via the updated `readWSAck(conn, g)`.
+
+### Response encryption
+
+The server encrypts a JSON response back to the client under the exact same wire format and keys —
+but **only when the specific request/control-message it's answering itself arrived encrypted**. There
+is no independent server-side setting for this and no separate opt-in: it is purely a mirror of
+whatever the request already was.
+
+- `Server.decodeParams` (`paramdecode.go`) returns `(encrypted bool, err error)` instead of just
+  `error` — `encrypted` reports whether the decrypt-fallback path was used for that particular call.
+  The sibling `Server.encodeParamsResponse(w, encrypted, status, v)` writes `v` as either an encrypted
+  blob (`Content-Type: text/plain`) or plain JSON (`Content-Type: application/json`), based on that
+  same bool threaded in from the request's own decode.
+- In scope: the JSON response bodies of `/api/files/list`, `/api/files/upload`, `/api/clip/new`,
+  `/api/sim/upload` (all four have both a request body to key off of and a JSON response worth
+  protecting), and `/api/files/ul-list`/`/api/clip/list` via the `?e` query parameter below. Out of
+  scope: `/api/clip/edit`/`/api/clip/delete` (204, no body to encrypt), and
+  `/api/files/download`/`/api/sim/download` (raw file bytes, not JSON — already covered by the
+  transform system).
+- **`GET /api/files/ul-list` and `GET /api/clip/list` have no request body to mirror**, so they use a
+  separate signal: the query parameter `?e=<anything>` (presence-only, value ignored, deliberately
+  terse rather than descriptive — see `handleUlList`/`handleClipList`, which compute
+  `encrypted := !s.cfg.NoAuth && r.URL.Query().Has("e")` and call `encodeParamsResponse` the same way
+  every other in-scope handler does). Unlike every other signal in this feature, `?e` is **not
+  cryptographically bound to anything** — it's a bare client-controlled hint the server trusts at face
+  value, not something derived from a successful decrypt. An on-path party could strip it from the
+  URL, causing a silent downgrade to a plaintext response with no error and nothing for the client to
+  detect; this is an accepted, deliberate tradeoff (no client-side enforcement was added to reject an
+  unexpectedly-plaintext response), unlike every other case in this feature where tampering causes a
+  hard failure (401) rather than a silent one. Ignored entirely under `-no-auth`, same as everywhere
+  else. `loadUploadDir()`/`loadClipboard()` (`web/app.js`) append `?e=1` to the URL when
+  `paramEncryptEnabled()` and use the same `decodeResponseJSON` as every other GET-with-encryption call
+  site.
+- **WebSocket connections decide once, at the handshake, for the whole connection.** `readWSControl`
+  (`ws.go`) returns `(T, encrypted bool, error)`; each handler captures `encrypted` from its handshake
+  read and reuses that same value for every ack it sends for the rest of that connection — later
+  per-message reads (per-chunk requests, the `{"done":true}` message) have their own returned bool
+  discarded, since a legitimate client never changes the setting mid-session. `writeWSOK`/
+  `writeWSError` (`ws.go`, both methods on `*Server`) take that `encrypted` bool directly and either
+  `conn.WriteJSON(v)` or marshal+`paramcrypt.Encrypt`+send as a text message.
+- **Frontend**: `decryptParams(blob)` mirrors `encryptParams` in reverse (verify the HMAC via a
+  constant-time `constantTimeEqualBytes`, then AES-CTR decrypt, then `JSON.parse`).
+  `decodeResponseJSON(res, encrypted)` is the HTTP-side counterpart to `decodeParams` — but note the
+  client doesn't auto-detect; it already knows whether *it* encrypted the request, so it just passes
+  that same `encrypted` flag through to know how to read the response. `wsNextJSON(ws, decrypt)` takes
+  an optional decrypt callback (`this.decryptParams.bind(this)` or `null`) instead of always calling
+  `JSON.parse` directly. For the two WS flows with a persistent `wsSession` object reused across
+  multiple calls (`fetchChunkWS`, `fetchSimChunkWS`), the encrypted flag is captured once into
+  `wsSession.encrypted` alongside `wsSession.password`/`wsSession.htmlB64Key`, the same
+  established pattern for connection-lifetime state; the two single-call WS flows (`uploadFileWS`,
+  `uploadSimWS`) just use a local variable.
 
 ## TLS
 

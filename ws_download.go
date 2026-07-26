@@ -41,42 +41,42 @@ func (s *Server) handleWSDownload(w http.ResponseWriter, r *http.Request) {
 	}
 	defer conn.Close()
 
-	req, err := readWSControl[wsDownloadRequest](conn)
+	req, encrypted, err := readWSControl[wsDownloadRequest](s, conn)
 	if err != nil {
 		log.Printf("ws download: reading control message: %v", err)
 		return
 	}
 
 	if !s.checkWSAuth(req.Auth) {
-		writeWSError(conn, websocket.ClosePolicyViolation, "unauthorized")
+		s.writeWSError(conn, encrypted, websocket.ClosePolicyViolation, "unauthorized")
 		return
 	}
 
 	frameSize, err := s.resolveFrameSize(req.FrameSize)
 	if err != nil {
-		writeWSError(conn, websocket.ClosePolicyViolation, "%v", err)
+		s.writeWSError(conn, encrypted, websocket.ClosePolicyViolation, "%v", err)
 		return
 	}
 
 	target, err := makePath(s.absRoot, req.Path)
 	if err != nil {
 		log.Printf("ws download: invalid path %q requested", req.Path)
-		writeWSError(conn, websocket.CloseInternalServerErr, "invalid path")
+		s.writeWSError(conn, encrypted, websocket.CloseInternalServerErr, "invalid path")
 		return
 	}
 
 	transformer, err := transform.New(req.Transform, req.Args)
 	if err != nil {
-		writeWSError(conn, websocket.CloseInternalServerErr, "invalid transform: %v", err)
+		s.writeWSError(conn, encrypted, websocket.CloseInternalServerErr, "invalid transform: %v", err)
 		return
 	}
 
 	f, err := os.Open(target)
 	if err != nil {
 		if os.IsNotExist(err) {
-			writeWSError(conn, websocket.CloseInternalServerErr, "file not found")
+			s.writeWSError(conn, encrypted, websocket.CloseInternalServerErr, "file not found")
 		} else {
-			writeWSError(conn, websocket.CloseInternalServerErr, "internal error")
+			s.writeWSError(conn, encrypted, websocket.CloseInternalServerErr, "internal error")
 		}
 		return
 	}
@@ -84,11 +84,11 @@ func (s *Server) handleWSDownload(w http.ResponseWriter, r *http.Request) {
 
 	info, err := f.Stat()
 	if err != nil {
-		writeWSError(conn, websocket.CloseInternalServerErr, "internal error")
+		s.writeWSError(conn, encrypted, websocket.CloseInternalServerErr, "internal error")
 		return
 	}
 
-	if err := writeWSOK(conn, wsAck{OK: true, Size: info.Size()}); err != nil {
+	if err := s.writeWSOK(conn, encrypted, wsAck{OK: true, Size: info.Size()}); err != nil {
 		return
 	}
 
@@ -96,7 +96,7 @@ func (s *Server) handleWSDownload(w http.ResponseWriter, r *http.Request) {
 	frameBuf := make([]byte, frameSize)
 
 	for {
-		chunkReq, err := readWSControl[wsChunkRequest](conn)
+		chunkReq, _, err := readWSControl[wsChunkRequest](s, conn)
 		if err != nil {
 			if !websocket.IsCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway) {
 				log.Printf("ws download: reading chunk request for %q: %v", req.Path, err)
@@ -108,18 +108,18 @@ func (s *Server) handleWSDownload(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if chunkReq.Size <= 0 {
-			writeWSError(conn, websocket.CloseInternalServerErr, "size must be positive")
+			s.writeWSError(conn, encrypted, websocket.CloseInternalServerErr, "size must be positive")
 			return
 		}
 
 		if _, err := f.Seek(chunkReq.Start, io.SeekStart); err != nil {
-			writeWSError(conn, websocket.CloseInternalServerErr, "internal error")
+			s.writeWSError(conn, encrypted, websocket.CloseInternalServerErr, "internal error")
 			return
 		}
 
 		reader, err := transformer.Transform(io.LimitReader(f, chunkReq.Size))
 		if err != nil {
-			writeWSError(conn, websocket.CloseInternalServerErr, "internal error")
+			s.writeWSError(conn, encrypted, websocket.CloseInternalServerErr, "internal error")
 			return
 		}
 
@@ -135,13 +135,13 @@ func (s *Server) handleWSDownload(w http.ResponseWriter, r *http.Request) {
 		} else {
 			data, err := io.ReadAll(reader)
 			if err != nil {
-				writeWSError(conn, websocket.CloseInternalServerErr, "internal error")
+				s.writeWSError(conn, encrypted, websocket.CloseInternalServerErr, "internal error")
 				return
 			}
 			chunkLen = int64(len(data))
 			reader = bytes.NewReader(data)
 		}
-		if err := writeWSOK(conn, wsAck{OK: true, ChunkSize: chunkLen}); err != nil {
+		if err := s.writeWSOK(conn, encrypted, wsAck{OK: true, ChunkSize: chunkLen}); err != nil {
 			return
 		}
 

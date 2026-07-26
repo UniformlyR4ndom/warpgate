@@ -61,11 +61,32 @@ func (g *globalFlags) dialWS(path string) (*websocket.Conn, error) {
 	return conn, nil
 }
 
-// readWSAck reads one JSON control message and treats a false "ok" as an error.
-func readWSAck(conn *websocket.Conn) (wsAck, error) {
+// writeWSJSON encodes v via g.encodeBody (plain JSON, or an encrypted blob
+// when parameter encryption is enabled) and sends it as a text control
+// message — the one choke point every handshake, chunk request, and "done"
+// message routes through, mirroring the frontend's sendWSControl.
+func writeWSJSON(conn *websocket.Conn, g *globalFlags, v any) error {
+	body, err := g.encodeBody(v)
+	if err != nil {
+		return err
+	}
+	return conn.WriteMessage(websocket.TextMessage, body)
+}
+
+// readWSAck reads one text control message and decodes it via g.decodeJSON
+// (transparently reversing writeWSJSON's choice), treating a false "ok" as
+// an error.
+func readWSAck(conn *websocket.Conn, g *globalFlags) (wsAck, error) {
 	var ack wsAck
-	if err := conn.ReadJSON(&ack); err != nil {
+	mt, raw, err := conn.ReadMessage()
+	if err != nil {
 		return ack, fmt.Errorf("reading control message: %w", err)
+	}
+	if mt != websocket.TextMessage {
+		return ack, fmt.Errorf("expected text control message, got message type %d", mt)
+	}
+	if err := g.decodeJSON(raw, &ack); err != nil {
+		return ack, fmt.Errorf("decoding control message: %w", err)
 	}
 	if !ack.OK {
 		return ack, fmt.Errorf("server error: %s", ack.Error)

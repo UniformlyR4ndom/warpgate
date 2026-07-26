@@ -1,11 +1,14 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"time"
 
 	"github.com/gorilla/websocket"
+
+	"warpgate/internal/paramcrypt"
 )
 
 const wsWriteWait = 10 * time.Second
@@ -45,31 +48,52 @@ func (s *Server) resolveFrameSize(requested int64) (int, error) {
 }
 
 // readWSControl reads the next WebSocket message, requires it to be a text
-// message, and decodes it as JSON into a value of type T.
-func readWSControl[T any](conn *websocket.Conn) (T, error) {
+// message, and decodes it into a value of type T — as plain JSON, or, if
+// that fails, as a base64 paramcrypt blob containing JSON (see
+// Server.decodeParams). A free function rather than a method because Go
+// does not allow a method to carry its own type parameter beyond the
+// receiver's. The returned bool reports whether the message was encrypted,
+// so a handler can encrypt its acks the same way for the rest of the
+// connection (see writeWSOK/writeWSError below).
+func readWSControl[T any](s *Server, conn *websocket.Conn) (T, bool, error) {
 	var v T
 	mt, p, err := conn.ReadMessage()
 	if err != nil {
-		return v, err
+		return v, false, err
 	}
 	if mt != websocket.TextMessage {
-		return v, fmt.Errorf("expected text control message, got binary")
+		return v, false, fmt.Errorf("expected text control message, got binary")
 	}
-	if err := json.Unmarshal(p, &v); err != nil {
-		return v, fmt.Errorf("invalid JSON control message: %w", err)
+	encrypted, err := s.decodeParams(bytes.NewReader(p), &v)
+	if err != nil {
+		return v, false, fmt.Errorf("invalid control message: %w", err)
 	}
-	return v, nil
+	return v, encrypted, nil
 }
 
-func writeWSOK(conn *websocket.Conn, v any) error {
-	return conn.WriteJSON(v)
+// writeWSOK sends v as a control message: as an encrypted paramcrypt blob
+// when encrypted is true (only ever set from a connection whose handshake
+// itself arrived encrypted — see readWSControl), or as plain JSON otherwise.
+func (s *Server) writeWSOK(conn *websocket.Conn, encrypted bool, v any) error {
+	if !encrypted {
+		return conn.WriteJSON(v)
+	}
+	body, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	blob, err := paramcrypt.Encrypt(s.paramKeys, body)
+	if err != nil {
+		return err
+	}
+	return conn.WriteMessage(websocket.TextMessage, []byte(blob))
 }
 
 // writeWSError sends a {"ok":false,"error":...} control message followed by
 // a close frame with the given close code.
-func writeWSError(conn *websocket.Conn, closeCode int, format string, args ...any) {
+func (s *Server) writeWSError(conn *websocket.Conn, encrypted bool, closeCode int, format string, args ...any) {
 	msg := fmt.Sprintf(format, args...)
-	_ = conn.WriteJSON(wsAck{OK: false, Error: msg})
+	_ = s.writeWSOK(conn, encrypted, wsAck{OK: false, Error: msg})
 	_ = conn.WriteControl(websocket.CloseMessage,
 		websocket.FormatCloseMessage(closeCode, msg),
 		time.Now().Add(wsWriteWait))

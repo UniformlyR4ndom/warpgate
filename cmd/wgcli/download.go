@@ -18,7 +18,7 @@ import (
 )
 
 func fetchDownloadChunkHTTP(g *globalFlags, remotePath string, start, size int64, transformName string, transformArgs json.RawMessage) ([]byte, error) {
-	reqBody, err := json.Marshal(struct {
+	reqBody, err := g.encodeBody(struct {
 		Path      string          `json:"path"`
 		Start     int64           `json:"start"`
 		Size      int64           `json:"size"`
@@ -111,21 +111,17 @@ func downloadWS(g *globalFlags, remotePath, out string, transformName string, tr
 	}
 	defer conn.Close()
 
-	initReq, err := json.Marshal(struct {
+	if err := writeWSJSON(conn, g, struct {
 		Auth      string          `json:"auth,omitempty"`
 		Path      string          `json:"path"`
 		Transform string          `json:"transform"`
 		Args      json.RawMessage `json:"args,omitempty"`
 		FrameSize int64           `json:"frameSize,omitempty"`
-	}{g.authToken(), remotePath, transformName, transformArgs, frameSize})
-	if err != nil {
-		return err
-	}
-	if err := conn.WriteMessage(websocket.TextMessage, initReq); err != nil {
+	}{g.authToken(), remotePath, transformName, transformArgs, frameSize}); err != nil {
 		return fmt.Errorf("sending initial request: %w", err)
 	}
 
-	ack, err := readWSAck(conn)
+	ack, err := readWSAck(conn, g)
 	if err != nil {
 		return err
 	}
@@ -145,14 +141,14 @@ func downloadWS(g *globalFlags, remotePath, out string, transformName string, tr
 			reqSize = remaining
 		}
 
-		if err := conn.WriteJSON(wsChunkRequest{Start: transferred, Size: reqSize}); err != nil {
+		if err := writeWSJSON(conn, g, wsChunkRequest{Start: transferred, Size: reqSize}); err != nil {
 			return fmt.Errorf("requesting chunk at offset %d: %w", transferred, err)
 		}
 
 		// The transformed chunk isn't always reqSize bytes long (pdf/html-b64
 		// both expand it), so the server announces the actual byte count
 		// before sending any frames.
-		chunkAck, err := readWSAck(conn)
+		chunkAck, err := readWSAck(conn, g)
 		if err != nil {
 			return fmt.Errorf("reading chunk ack at offset %d: %w", transferred, err)
 		}
@@ -165,7 +161,7 @@ func downloadWS(g *globalFlags, remotePath, out string, transformName string, tr
 			}
 			if mt != websocket.BinaryMessage {
 				var errAck wsAck
-				if jsonErr := json.Unmarshal(p, &errAck); jsonErr == nil && errAck.Error != "" {
+				if jsonErr := g.decodeJSON(p, &errAck); jsonErr == nil && errAck.Error != "" {
 					return fmt.Errorf("server error: %s", errAck.Error)
 				}
 				return fmt.Errorf("expected binary frame at offset %d, got message type %d", transferred, mt)
@@ -184,7 +180,7 @@ func downloadWS(g *globalFlags, remotePath, out string, transformName string, tr
 		transferred += reqSize
 	}
 
-	_ = conn.WriteJSON(wsChunkRequest{Done: true})
+	_ = writeWSJSON(conn, g, wsChunkRequest{Done: true})
 	printDownloadResult(size, out, time.Since(start))
 	return nil
 }

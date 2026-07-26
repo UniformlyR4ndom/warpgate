@@ -2,7 +2,6 @@ package main
 
 import (
 	"bytes"
-	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
@@ -19,7 +18,7 @@ type listEntry struct {
 }
 
 func fetchList(g *globalFlags, dirPath string) ([]listEntry, error) {
-	body, err := json.Marshal(map[string]string{"path": dirPath})
+	body, err := g.encodeBody(map[string]string{"path": dirPath})
 	if err != nil {
 		return nil, err
 	}
@@ -36,13 +35,16 @@ func fetchList(g *globalFlags, dirPath string) ([]listEntry, error) {
 	}
 	defer resp.Body.Close()
 
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
 	if resp.StatusCode != http.StatusOK {
-		errBody, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("%s: %s", resp.Status, strings.TrimSpace(string(errBody)))
+		return nil, fmt.Errorf("%s: %s", resp.Status, strings.TrimSpace(string(respBody)))
 	}
 
 	var entries []listEntry
-	if err := json.NewDecoder(resp.Body).Decode(&entries); err != nil {
+	if err := g.decodeJSON(respBody, &entries); err != nil {
 		return nil, err
 	}
 	return entries, nil

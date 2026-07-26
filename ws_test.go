@@ -13,6 +13,8 @@ import (
 
 	"github.com/gorilla/websocket"
 
+	"warpgate/internal/authhash"
+	"warpgate/internal/paramcrypt"
 	"warpgate/internal/transform"
 )
 
@@ -494,5 +496,149 @@ func TestWSDownloadAuthFailure(t *testing.T) {
 
 	if _, _, err := conn.ReadMessage(); err == nil {
 		t.Fatalf("expected connection to be closed after auth failure")
+	}
+}
+
+// writeEncryptedWSJSON marshals v, encrypts it under keys, and sends it as a
+// text message — mirroring what an encrypting client sends instead of plain
+// JSON.
+func writeEncryptedWSJSON(t *testing.T, conn *websocket.Conn, keys paramcrypt.Keys, v any) {
+	t.Helper()
+	body, err := json.Marshal(v)
+	if err != nil {
+		t.Fatalf("marshaling: %v", err)
+	}
+	blob, err := paramcrypt.Encrypt(keys, body)
+	if err != nil {
+		t.Fatalf("encrypting: %v", err)
+	}
+	if err := conn.WriteMessage(websocket.TextMessage, []byte(blob)); err != nil {
+		t.Fatalf("writing encrypted message: %v", err)
+	}
+}
+
+// readEncryptedWSJSON reads the next text message, asserts it is NOT valid
+// plain JSON (proving the server actually encrypted it, not just echoed
+// plaintext), then decrypts it under keys into v.
+func readEncryptedWSJSON(t *testing.T, conn *websocket.Conn, keys paramcrypt.Keys, v any) {
+	t.Helper()
+	mt, p, err := conn.ReadMessage()
+	if err != nil {
+		t.Fatalf("reading message: %v", err)
+	}
+	if mt != websocket.TextMessage {
+		t.Fatalf("expected text message, got type %d", mt)
+	}
+	if json.Valid(p) {
+		t.Fatalf("expected an encrypted (non-JSON) message, got plain JSON: %s", p)
+	}
+	plaintext, err := paramcrypt.Decrypt(keys, string(p))
+	if err != nil {
+		t.Fatalf("decrypting message: %v", err)
+	}
+	if err := json.Unmarshal(plaintext, v); err != nil {
+		t.Fatalf("unmarshaling decrypted message: %v", err)
+	}
+}
+
+// TestWSDownloadEncryptedHandshakeEncryptsAcks verifies the response-side of
+// parameter encryption: once the handshake control message arrives
+// encrypted, every ack the server sends back for that connection — the
+// initial ack and the per-chunk ack — must also be encrypted, decided once
+// at the handshake and held for the whole connection (not re-detected per
+// message). Binary file-content frames are unaffected either way.
+func TestWSDownloadEncryptedHandshakeEncryptsAcks(t *testing.T) {
+	root := t.TempDir()
+	content := []byte("hello from the response-encryption test")
+	if err := os.WriteFile(filepath.Join(root, "note.txt"), content, 0o644); err != nil {
+		t.Fatalf("writing test file: %v", err)
+	}
+
+	const rawKey = "test-key"
+	ts := newWSTestServer(t, Config{Root: root, Key: rawKey, WSFrameMax: 16 * 1024 * 1024})
+	keys := paramcrypt.DeriveKeys(rawKey)
+
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL(ts, "/api/files/ws/download"), nil)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer conn.Close()
+
+	writeEncryptedWSJSON(t, conn, keys, wsDownloadRequest{
+		Auth: authhash.Hash(rawKey), Path: "note.txt", Transform: "id",
+	})
+	var ack wsAck
+	readEncryptedWSJSON(t, conn, keys, &ack)
+	if !ack.OK || ack.Size != int64(len(content)) {
+		t.Fatalf("unexpected ack: %+v", ack)
+	}
+
+	writeEncryptedWSJSON(t, conn, keys, wsChunkRequest{Start: 0, Size: ack.Size})
+	var chunkAck wsAck
+	readEncryptedWSJSON(t, conn, keys, &chunkAck)
+	if !chunkAck.OK || chunkAck.ChunkSize != ack.Size {
+		t.Fatalf("unexpected chunk ack: %+v", chunkAck)
+	}
+
+	var got []byte
+	for int64(len(got)) < chunkAck.ChunkSize {
+		mt, p, err := conn.ReadMessage()
+		if err != nil {
+			t.Fatalf("reading frame: %v", err)
+		}
+		if mt != websocket.BinaryMessage {
+			t.Fatalf("expected binary message, got type %d", mt)
+		}
+		got = append(got, p...)
+	}
+	if string(got) != string(content) {
+		t.Fatalf("content mismatch: got %q, want %q", got, content)
+	}
+
+	writeEncryptedWSJSON(t, conn, keys, wsChunkRequest{Done: true})
+}
+
+// TestWSUploadEncryptedHandshakeEncryptsAcks is TestWSUploadRoundTrip's
+// encrypted counterpart: handshake, done message, and both the initial and
+// final acks all travel encrypted once the handshake did.
+func TestWSUploadEncryptedHandshakeEncryptsAcks(t *testing.T) {
+	ulRoot := t.TempDir()
+	const rawKey = "test-key"
+	ts := newWSTestServer(t, Config{Root: t.TempDir(), UlRoot: ulRoot, Key: rawKey, WSFrameMax: 16 * 1024 * 1024})
+	keys := paramcrypt.DeriveKeys(rawKey)
+
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL(ts, "/api/files/ws/upload"), nil)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer conn.Close()
+
+	writeEncryptedWSJSON(t, conn, keys, wsUploadRequest{
+		Auth: authhash.Hash(rawKey), Filename: "up.bin", Transform: "id",
+	})
+	var ack wsAck
+	readEncryptedWSJSON(t, conn, keys, &ack)
+	if !ack.OK {
+		t.Fatalf("unexpected ack: %+v", ack)
+	}
+
+	content := []byte("encrypted-handshake upload content")
+	if err := conn.WriteMessage(websocket.BinaryMessage, content); err != nil {
+		t.Fatalf("writing content: %v", err)
+	}
+	writeEncryptedWSJSON(t, conn, keys, wsDoneMessage{Done: true})
+
+	var final wsAck
+	readEncryptedWSJSON(t, conn, keys, &final)
+	if !final.OK || final.Name != "up.bin" {
+		t.Fatalf("unexpected final ack: %+v", final)
+	}
+
+	got, err := os.ReadFile(filepath.Join(ulRoot, "up.bin"))
+	if err != nil {
+		t.Fatalf("reading uploaded file: %v", err)
+	}
+	if string(got) != string(content) {
+		t.Fatalf("uploaded content mismatch: got %q, want %q", got, content)
 	}
 }

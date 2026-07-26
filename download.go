@@ -68,8 +68,8 @@ func (s *Server) handleDownload(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req downloadRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "invalid JSON body", http.StatusBadRequest)
+	if _, err := s.decodeParams(r.Body, &req); err != nil {
+		http.Error(w, "invalid request body", http.StatusUnauthorized)
 		return
 	}
 

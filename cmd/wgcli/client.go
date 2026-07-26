@@ -8,14 +8,16 @@ import (
 	"strings"
 
 	"warpgate/internal/authhash"
+	"warpgate/internal/paramcrypt"
 )
 
 // globalFlags holds the flags common to every subcommand: where the server
 // is and how to authenticate against it.
 type globalFlags struct {
-	url      string
-	authKey  string
-	insecure bool
+	url        string
+	authKey    string
+	insecure   bool
+	paramCrypt bool
 }
 
 func addGlobalFlags(fs *flag.FlagSet) *globalFlags {
@@ -23,7 +25,20 @@ func addGlobalFlags(fs *flag.FlagSet) *globalFlags {
 	fs.StringVar(&g.url, "url", "http://localhost:8080", "warpgate server base URL")
 	fs.StringVar(&g.authKey, "auth-key", "", "X-Auth header value")
 	fs.BoolVar(&g.insecure, "insecure", false, "skip TLS certificate verification (self-signed test certs)")
+	fs.BoolVar(&g.paramCrypt, "param-crypt", false, "encrypt request control-parameter JSON (and decrypt matching responses) using a key derived from -auth-key; see CLAUDE.md's Parameter Encryption section")
 	return g
+}
+
+// paramKeys reports whether parameter encryption is active for this
+// invocation and, if so, the subkeys derived from -auth-key. Mirrors the
+// frontend's paramEncryptEnabled(): the -param-crypt flag alone isn't
+// enough — there's no shared secret to derive keys from without an auth
+// key, matching how the browser's checkbox is disabled with no key set.
+func (g *globalFlags) paramKeys() (paramcrypt.Keys, bool) {
+	if !g.paramCrypt || g.authKey == "" {
+		return paramcrypt.Keys{}, false
+	}
+	return paramcrypt.DeriveKeys(g.authKey), true
 }
 
 // authToken derives the value actually sent to the server (X-Auth header or

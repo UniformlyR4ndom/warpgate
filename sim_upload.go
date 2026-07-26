@@ -3,7 +3,6 @@ package main
 import (
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"hash"
 	"io"
@@ -42,9 +41,8 @@ type simUlSession struct {
 	totalBytes int64
 }
 
-func writeSimUploadResponse(w http.ResponseWriter, hashHex, continuationKey string) {
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(simUploadResponse{Hash: hashHex, ContinuationKey: continuationKey})
+func (s *Server) writeSimUploadResponse(w http.ResponseWriter, encrypted bool, hashHex, continuationKey string) {
+	s.encodeParamsResponse(w, encrypted, http.StatusOK, simUploadResponse{Hash: hashHex, ContinuationKey: continuationKey})
 }
 
 // handleSimUpload serves both a plain one-shot benchmark upload (no
@@ -74,14 +72,18 @@ func (s *Server) handleSimUpload(w http.ResponseWriter, r *http.Request) {
 	// done defaults to true (one-shot) when ul-done is absent entirely, not
 	// just falsy — see the matching comment in handleUpload.
 	done := true
+	// wasEncrypted stays false when there's no "transform" part at all: no
+	// signal either way means a plaintext response.
+	wasEncrypted := false
 	if tf, _, err := r.FormFile("transform"); err == nil {
 		defer tf.Close()
 		var spec struct {
 			ContinuationKey string `json:"continuation-key"`
 			Done            *bool  `json:"ul-done"`
 		}
-		if err := json.NewDecoder(tf).Decode(&spec); err != nil {
-			http.Error(w, "invalid transform spec", http.StatusBadRequest)
+		wasEncrypted, err = s.decodeParams(tf, &spec)
+		if err != nil {
+			http.Error(w, "invalid transform spec", http.StatusUnauthorized)
 			return
 		}
 		continuationKey = spec.ContinuationKey
@@ -123,7 +125,7 @@ func (s *Server) handleSimUpload(w http.ResponseWriter, r *http.Request) {
 		sess.totalBytes = 0
 		sess.completed = false
 		sess.previousKey = ""
-		s.handleSimUploadChunk(w, file, name, sess, done, true)
+		s.handleSimUploadChunk(w, file, name, sess, done, true, wasEncrypted)
 		return
 	}
 
@@ -132,14 +134,14 @@ func (s *Server) handleSimUpload(w http.ResponseWriter, r *http.Request) {
 		hashHex := hex.EncodeToString(sess.hasher.Sum(nil))
 		sess.expiresAt = time.Now().Add(ulSessionIdleExpiry)
 		s.simUploadSessions.release(name, false)
-		writeSimUploadResponse(w, hashHex, "")
+		s.writeSimUploadResponse(w, wasEncrypted, hashHex, "")
 	case ulKeyPrevious:
 		nextKey := sess.currentKey
 		sess.expiresAt = time.Now().Add(ulSessionIdleExpiry)
 		s.simUploadSessions.release(name, false)
-		writeSimUploadResponse(w, "", nextKey)
+		s.writeSimUploadResponse(w, wasEncrypted, "", nextKey)
 	case ulKeyCurrent:
-		s.handleSimUploadChunk(w, file, name, sess, done, false)
+		s.handleSimUploadChunk(w, file, name, sess, done, false, wasEncrypted)
 	default: // ulKeyUnrecognized
 		s.simUploadSessions.release(name, wasNew)
 		http.Error(w, "unrecognized continuation-key", http.StatusBadRequest)
@@ -153,7 +155,7 @@ func (s *Server) handleSimUpload(w http.ResponseWriter, r *http.Request) {
 // (a genuine one-shot upload, matching today's behavior exactly) or keeps a
 // completed marker around for idempotent replay (a real chunked upload's
 // final chunk).
-func (s *Server) handleSimUploadChunk(w http.ResponseWriter, file multipart.File, name string, sess *simUlSession, done, isFirst bool) {
+func (s *Server) handleSimUploadChunk(w http.ResponseWriter, file multipart.File, name string, sess *simUlSession, done, isFirst, encrypted bool) {
 	n, err := io.Copy(sess.hasher, io.LimitReader(file, simMaxTotalSize-sess.totalBytes+1))
 	if err != nil {
 		s.simUploadSessions.release(name, true)
@@ -171,14 +173,14 @@ func (s *Server) handleSimUploadChunk(w http.ResponseWriter, file multipart.File
 		hashHex := hex.EncodeToString(sess.hasher.Sum(nil))
 		if isFirst {
 			s.simUploadSessions.release(name, true)
-			writeSimUploadResponse(w, hashHex, "")
+			s.writeSimUploadResponse(w, encrypted, hashHex, "")
 			return
 		}
 		sess.completed = true
 		sess.previousKey = ""
 		sess.expiresAt = time.Now().Add(ulSessionIdleExpiry)
 		s.simUploadSessions.release(name, false)
-		writeSimUploadResponse(w, hashHex, "")
+		s.writeSimUploadResponse(w, encrypted, hashHex, "")
 		return
 	}
 
@@ -192,5 +194,5 @@ func (s *Server) handleSimUploadChunk(w http.ResponseWriter, file multipart.File
 	sess.currentKey = key
 	sess.expiresAt = time.Now().Add(ulSessionIdleExpiry)
 	s.simUploadSessions.release(name, false)
-	writeSimUploadResponse(w, "", key)
+	s.writeSimUploadResponse(w, encrypted, "", key)
 }
