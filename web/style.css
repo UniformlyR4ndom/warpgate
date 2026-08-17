@@ -438,6 +438,40 @@ th {
   border-color: var(--accent);
 }
 
+.clip-list-header {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 0.5rem;
+}
+
+.clip-sort-btn {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0;
+  font-size: 0.75rem;
+  color: var(--dim);
+  transition: color 0.15s;
+}
+
+.clip-sort-btn:hover {
+  color: var(--accent);
+}
+
+.clip-sort-btn svg {
+  display: block;
+  width: 0.9rem;
+  height: 0.9rem;
+  transition: transform 0.15s;
+}
+
+.clip-sort-btn svg.clip-sort-asc {
+  transform: rotate(180deg);
+}
+
 .clip-item {
   border: 1px solid var(--border);
   margin-bottom: 0.75rem;

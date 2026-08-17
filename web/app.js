@@ -191,6 +191,7 @@ function filesApp() {
       backend: 'http',
       autoRefresh: false,
       confirmDelete: true,
+      clipSortDesc: true, // notes tab: true = newest first (default), false = oldest first
       wsFrameSizeKB: 4096, // 4M default, clamped to the server's max
       contentType: {
         preset: 'auto', // 'auto' = let the transform pick, 'custom' = use `custom`, anything else = the literal value
@@ -833,6 +834,11 @@ function filesApp() {
     downloadClip(item) {
       var text = this.base64ToText(item.data);
       this.triggerDownload(new TextEncoder().encode(text), 'note-' + item.id + '.txt');
+    },
+
+    sortedClipItems() {
+      var dir = this.settings.clipSortDesc ? -1 : 1;
+      return this.clipItems.slice().sort(function(a, b) { return (a.ts - b.ts) * dir; });
     },
 
     async loadClipboard() {

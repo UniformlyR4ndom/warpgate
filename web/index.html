@@ -318,7 +318,14 @@
           </div>
         </div>
         <div class="clip-list">
-          <template x-for="item in clipItems" :key="item.id">
+          <div class="clip-list-header" x-show="clipItems.length > 0">
+            <button class="clip-sort-btn" @click="settings.clipSortDesc = !settings.clipSortDesc"
+                    :title="settings.clipSortDesc ? 'Newest first — click to sort oldest first' : 'Oldest first — click to sort newest first'">
+              <svg :class="{ 'clip-sort-asc': !settings.clipSortDesc }" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><polyline points="19 12 12 19 5 12"></polyline></svg>
+              <span x-text="settings.clipSortDesc ? 'Newest first' : 'Oldest first'"></span>
+            </button>
+          </div>
+          <template x-for="item in sortedClipItems()" :key="item.id">
             <div class="clip-item">
               <div class="clip-meta">
                 <span class="clip-ts" x-text="formatTS(item.ts)"></span>
