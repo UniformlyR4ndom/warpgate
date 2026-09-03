@@ -31,9 +31,39 @@ header {
 }
 
 h1 {
-  margin: 0 0 0.5rem 0;
+  margin: 0;
   font-size: 1.2rem;
   color: #9cdcfe;
+}
+
+.header-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.5rem;
+}
+
+.refresh-btn {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0;
+  font-size: 0.8rem;
+  color: var(--dim);
+  transition: color 0.15s;
+}
+
+.refresh-btn:hover {
+  color: var(--accent);
+}
+
+.refresh-btn svg {
+  display: block;
+  width: 0.9rem;
+  height: 0.9rem;
 }
 
 .breadcrumb {

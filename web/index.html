@@ -8,7 +8,17 @@
 <body x-data="filesApp()">
 
   <header>
-    <h1>Warpgate</h1>
+    <div class="header-top">
+      <h1>Warpgate</h1>
+      <button class="refresh-btn" @click="refreshCurrentTab()"
+              title="Reload the current tab's list once, without turning on auto-refresh.">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M16.59 5.45 A8 8 0 1 1 7.41 5.45"></path>
+          <polyline points="8.90 7.58 11.92 2.29 5.92 3.32"></polyline>
+        </svg>
+        Refresh
+      </button>
+    </div>
     <nav class="breadcrumb" x-show="tab === 'download'">
       <span class="crumb" @click="navigateTo(-1)">root</span>
       <template x-for="(seg, i) in pathSegments" :key="i">

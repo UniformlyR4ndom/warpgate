@@ -389,7 +389,7 @@ derivation uses for its own labeled HMAC round.
 
 - Set the key with `-auth-key <key>`. If omitted and `-no-auth` is not set, a random 32-byte hex key is auto-generated and printed to the log at startup. `Server.authHash` (`server.go`) is computed once from this key at startup, not per-request.
 - `-no-auth` disables authentication entirely (no header check).
-- The frontend persists the raw key as part of the unified UI settings (see "UI settings persistence" below) and restores it on reload; the derived token is cached separately in the non-persisted `authKeyHash` property, recomputed via `updateAuthKeyHash()` whenever the key changes (including once at `init()`, awaited before the first request goes out) rather than on every request.
+- The frontend persists the raw key in `sessionStorage`, separately from the rest of the unified UI settings (see "UI settings persistence" below), and restores it on reload within the same tab/session; the derived token is cached separately in the non-persisted `authKeyHash` property, recomputed via `updateAuthKeyHash()` whenever the key changes (including once at `init()`, awaited before the first request goes out) rather than on every request.
 - The side panel has an **Auth** section where the user enters the raw key (displayed masked; a toggle reveals it). Changing it immediately refreshes the file listing.
 - `wgcli`'s `-auth-key` flag likewise takes the raw key; `globalFlags.authToken()` derives the token sent on the wire.
 
@@ -687,10 +687,10 @@ All JS libraries are served locally (embedded in the binary); no CDN requests at
 
 ### UI settings persistence
 
-Everything under Alpine's `settings` object (auth key, backend choice, auto-refresh, confirm-delete,
-WS frame size, transform config, chunking config, benchmark size/chunk-size config, and side-panel
+Everything under Alpine's `settings` object (backend choice, auto-refresh, confirm-delete, WS frame
+size, transform config, chunking config, benchmark size/chunk-size config, and side-panel
 open/collapsed state) is persisted as one JSON blob in `localStorage["warpgate-settings"]`, restored
-on the next page load. Deliberately **not** persisted: `tab`/`pathSegments` (navigation, not
+on the next page load. Deliberately **not** persisted there: `tab`/`pathSegments` (navigation, not
 configuration — a stale restored path could point at a since-deleted directory), `wsFrameMinKB`/
 `wsFrameMaxKB` (fetched fresh from `/api/public/settings` every load, not user configuration),
 `authShowKey` (whether the auth key is currently unmasked — always starts masked for basic
@@ -698,10 +698,21 @@ shoulder-surf hygiene, kept as a standalone top-level property outside `settings
 can never end up in the persisted blob), and `benchmarkResults` (a run history, not configuration —
 kept as a standalone top-level property for the same reason).
 
-- Shape: `{"version":1,"settings":{...}}` — mirrors the `settings` object exactly, so persistence is
-  just "serialize `settings`, merge back into `settings`" with no separate allowlist to maintain. Any
-  new UI-configurable value should be added under `settings`, not as a new top-level Alpine property,
-  or it won't be persisted.
+- **`settings.auth.key` is the one field of `settings` carved out of that blob.** It stays in the
+  reactive tree (so every existing `x-model="settings.auth.key"` binding and watcher is unaffected),
+  but is persisted separately in `sessionStorage["warpgate-auth-key"]` instead of `localStorage`, so
+  it doesn't outlive the browser tab/session the way the rest of the settings do — closing the tab (or
+  browser) clears it, and it isn't shared with a different tab either, since `sessionStorage` is
+  per-tab. `saveSettings()` zeroes `auth.key` out of the object before serializing it to
+  `localStorage` (which also scrubs a key persisted there by a pre-this-change client on the next
+  save) and separately `sessionStorage.setItem`/`removeItem`s it; `loadSettings()` restores the rest
+  of `settings` from `localStorage` as usual, then unconditionally overwrites `settings.auth.key` from
+  `sessionStorage` (or `''` if absent) — so even a stale `localStorage` blob that still has a key in
+  it from before this change can never leak the key back in.
+- Shape: `{"version":1,"settings":{...}}` — mirrors the `settings` object exactly (auth key aside), so
+  persistence is just "serialize `settings`, merge back into `settings`" with no separate allowlist to
+  maintain. Any new UI-configurable value should be added under `settings`, not as a new top-level
+  Alpine property, or it won't be persisted.
 - `mergeSettings(target, source)` (module-level in `app.js`) recursively copies fields from the parsed
   stored blob onto the live `settings` object, but only for keys that already exist on the target —
   this ignores stale/unknown fields from an older schema version rather than grafting them on

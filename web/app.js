@@ -124,6 +124,9 @@ async function readBodyWithProgress(response, onProgress) {
 
 const SETTINGS_STORAGE_KEY = 'warpgate-settings';
 const SETTINGS_VERSION = 1;
+// The auth key is persisted separately, in sessionStorage rather than
+// localStorage, so it doesn't outlive the browser session/tab.
+const AUTH_KEY_STORAGE_KEY = 'warpgate-auth-key';
 
 // Only copies keys that already exist on target, ignoring stale/unknown
 // fields from an older schema version instead of grafting them on.
@@ -185,6 +188,8 @@ function filesApp() {
 
     // Everything here is persisted to localStorage as one JSON object — keep
     // values serializable and put new UI-configurable fields here, not top-level.
+    // Exception: auth.key is carved out into sessionStorage instead — see
+    // loadSettings/saveSettings.
     settings: {
       auth: { key: '' },
       paramCrypt: { enabled: false },
@@ -271,26 +276,40 @@ function filesApp() {
 
     applyAutoRefresh(enabled) {
       clearInterval(refreshTimer);
-      refreshTimer = enabled ? setInterval(() => {
-        if (this.tab === 'download') this.load();
-        else if (this.tab === 'upload') this.loadUploadDir();
-        else if (this.tab === 'clipboard') this.loadClipboard();
-      }, 1000) : null;
+      refreshTimer = enabled ? setInterval(() => this.refreshCurrentTab(), 1000) : null;
+    },
+
+    // Shared by the auto-refresh interval and the header's manual refresh button.
+    refreshCurrentTab() {
+      if (this.tab === 'download') this.load();
+      else if (this.tab === 'upload') this.loadUploadDir();
+      else if (this.tab === 'clipboard') this.loadClipboard();
     },
 
     loadSettings() {
       try {
         var raw = localStorage.getItem(SETTINGS_STORAGE_KEY);
-        if (!raw) return;
-        var parsed = JSON.parse(raw);
-        if (!parsed || parsed.version !== SETTINGS_VERSION || !parsed.settings) return;
-        mergeSettings(this.settings, parsed.settings);
+        var parsed = raw ? JSON.parse(raw) : null;
+        if (parsed && parsed.version === SETTINGS_VERSION && parsed.settings) {
+          mergeSettings(this.settings, parsed.settings);
+        }
+      } catch(e) {}
+      // Overwritten unconditionally (even a pre-existing localStorage blob
+      // that still has a key in it must not leak the key back in).
+      try {
+        this.settings.auth.key = sessionStorage.getItem(AUTH_KEY_STORAGE_KEY) || '';
       } catch(e) {}
     },
 
     saveSettings() {
       try {
-        localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify({ version: SETTINGS_VERSION, settings: this.settings }));
+        var toStore = JSON.parse(JSON.stringify(this.settings));
+        toStore.auth.key = ''; // persisted separately, see below
+        localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify({ version: SETTINGS_VERSION, settings: toStore }));
+      } catch(e) {}
+      try {
+        if (this.settings.auth.key) sessionStorage.setItem(AUTH_KEY_STORAGE_KEY, this.settings.auth.key);
+        else sessionStorage.removeItem(AUTH_KEY_STORAGE_KEY);
       } catch(e) {}
     },
 
