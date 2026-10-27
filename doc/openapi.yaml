@@ -17,6 +17,11 @@ info:
 servers:
   - url: /
     description: Warpgate server
+  - url: /{pathPrefix}
+    description: Warpgate server started with `-path-prefix`; all other paths return an empty 200 page
+    variables:
+      pathPrefix:
+        default: prefix
 
 security:
   - ApiKey: []

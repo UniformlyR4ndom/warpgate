@@ -1,5 +1,8 @@
 pdfjsLib.GlobalWorkerOptions.workerSrc = 'pdf.worker.min.js';
 
+// The server may be mounted under a path prefix; the page itself lives at <prefix>/static/.
+const API_BASE = window.location.pathname.replace(/\/static\/.*$/, '');
+
 function wsOpen(url) {
   return new Promise(function(resolve, reject) {
     var ws = new WebSocket(url);
@@ -247,8 +250,8 @@ function filesApp() {
         this.$refs.transformTypeSelect.value = this.settings.transform.type;
       }, 0);
 
-      fetch('/api/public/checkin').catch(() => {});
-      fetch('/api/public/settings')
+      fetch(API_BASE + '/api/public/checkin').catch(() => {});
+      fetch(API_BASE + '/api/public/settings')
         .then(function(res) { return res.ok ? res.json() : null; })
         .then((data) => {
           if (!data) return;
@@ -465,7 +468,7 @@ function filesApp() {
 
     wsBaseURL() {
       var proto = window.location.protocol === 'https:' ? 'wss://' : 'ws://';
-      return proto + window.location.host;
+      return proto + window.location.host + API_BASE;
     },
 
     applyAuto() {
@@ -648,7 +651,7 @@ function filesApp() {
         args:      this.buildTransformArgs(password, htmlB64Key),
       };
       if (contentType) body.contentType = contentType;
-      var res = await fetch('/api/files/download', {
+      var res = await fetch(API_BASE + '/api/files/download', {
         method:  'POST',
         headers: this.jsonHeaders(),
         body:    this.encodeBody(body),
@@ -783,7 +786,7 @@ function filesApp() {
       this.error = null;
       try {
         var encrypted = this.paramEncryptEnabled();
-        var res = await fetch('/api/files/list', {
+        var res = await fetch(API_BASE + '/api/files/list', {
           method:  'POST',
           headers: this.jsonHeaders(),
           body:    this.encodeBody({ path: this.currentPath() }),
@@ -810,7 +813,7 @@ function filesApp() {
       this.uploadError = null;
       try {
         var encrypted = this.paramEncryptEnabled();
-        var url = '/api/files/ul-list' + (encrypted ? '?e=1' : '');
+        var url = API_BASE + '/api/files/ul-list' + (encrypted ? '?e=1' : '');
         var res = await fetch(url, { headers: this.authHeaders() });
         if (!res.ok) {
           this.uploadEntries = [];
@@ -864,7 +867,7 @@ function filesApp() {
       this.clipError = null;
       try {
         var encrypted = this.paramEncryptEnabled();
-        var url = '/api/clip/list' + (encrypted ? '?e=1' : '');
+        var url = API_BASE + '/api/clip/list' + (encrypted ? '?e=1' : '');
         var res = await fetch(url, { headers: this.authHeaders() });
         if (!res.ok) throw new Error('HTTP ' + res.status);
         var data = await this.decodeResponseJSON(res, encrypted);
@@ -878,7 +881,7 @@ function filesApp() {
       this.clipError = null;
       var editing = this.clipEditId !== null;
       try {
-        var url  = editing ? '/api/clip/edit' : '/api/clip/new';
+        var url  = editing ? API_BASE + '/api/clip/edit' : API_BASE + '/api/clip/new';
         var body = { data: this.textToBase64(this.clipText) };
         if (editing) { body.id = this.clipEditId; }
         var res = await fetch(url, {
@@ -911,7 +914,7 @@ function filesApp() {
       if (this.settings.confirmDelete && !window.confirm('Delete this note?')) return;
       this.clipError = null;
       try {
-        var res = await fetch('/api/clip/delete', {
+        var res = await fetch(API_BASE + '/api/clip/delete', {
           method:  'DELETE',
           headers: this.jsonHeaders(),
           body:    this.encodeBody({ id: id }),
@@ -1006,7 +1009,7 @@ function filesApp() {
       var fd     = new FormData();
       fd.append('transform', new Blob([spec], { type: this.paramEncryptEnabled() ? 'text/plain' : 'application/json' }), 'transform.json');
       fd.append('file', result.data, file.name);
-      var res = await fetch('/api/files/upload', { method: 'POST', headers: this.authHeaders(), body: fd });
+      var res = await fetch(API_BASE + '/api/files/upload', { method: 'POST', headers: this.authHeaders(), body: fd });
       this.assertOk(res);
     },
 
@@ -1040,7 +1043,7 @@ function filesApp() {
         var fd = new FormData();
         fd.append('transform', new Blob([spec], { type: encrypted ? 'text/plain' : 'application/json' }), 'transform.json');
         fd.append('file', result.data, file.name);
-        var res = await fetch('/api/files/upload', { method: 'POST', headers: this.authHeaders(), body: fd });
+        var res = await fetch(API_BASE + '/api/files/upload', { method: 'POST', headers: this.authHeaders(), body: fd });
         this.assertOk(res);
         var data = await this.decodeResponseJSON(res, encrypted);
         continuationKey = data['continuation-key'] || '';
@@ -1163,7 +1166,7 @@ function filesApp() {
     },
 
     async fetchSimChunkHTTP(totalSize, start, size, onProgress) {
-      var res = await fetch('/api/sim/download', {
+      var res = await fetch(API_BASE + '/api/sim/download', {
         method:  'POST',
         headers: this.jsonHeaders(),
         body:    this.encodeBody({ totalSize: totalSize, start: start, size: size }),
@@ -1290,7 +1293,7 @@ function filesApp() {
     async uploadSimHTTP(buffer) {
       var fd = new FormData();
       fd.append('file', new Blob([buffer]), 'bench.bin');
-      var res = await fetch('/api/sim/upload', { method: 'POST', headers: this.authHeaders(), body: fd });
+      var res = await fetch(API_BASE + '/api/sim/upload', { method: 'POST', headers: this.authHeaders(), body: fd });
       this.assertOk(res);
       var data = await res.json();
       return data.hash;
@@ -1317,7 +1320,7 @@ function filesApp() {
         var fd = new FormData();
         fd.append('transform', new Blob([spec], { type: encrypted ? 'text/plain' : 'application/json' }), 'transform.json');
         fd.append('file', new Blob([slice]), 'bench.bin');
-        var res = await fetch('/api/sim/upload', { method: 'POST', headers: this.authHeaders(), body: fd });
+        var res = await fetch(API_BASE + '/api/sim/upload', { method: 'POST', headers: this.authHeaders(), body: fd });
         this.assertOk(res);
         var data = await this.decodeResponseJSON(res, encrypted);
         continuationKey = data['continuation-key'] || '';

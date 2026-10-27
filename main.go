@@ -28,6 +28,7 @@ type Config struct {
 	Key        string
 	NoAuth     bool
 	WSFrameMax int
+	PathPrefix string // "" or "/<segment>", see normalizePathPrefix
 }
 
 func main() {
@@ -47,7 +48,15 @@ func main() {
 	flag.StringVar(&wsFrameMaxStr, "ws-frame-max", "16M",
 		"Maximum WebSocket frame size: a byte count, or a number with a K or M suffix (case-insensitive, e.g. 512K, 4M); range 1K-256M. "+
 			"Clients may request a smaller per-transfer frame size (via the UI) up to this ceiling; smaller frames are more likely to pass through proxies that buffer whole frames for inspection")
+	flag.StringVar(&cfg.PathPrefix, "path-prefix", "",
+		"serve UI and API only under this single path segment (e.g. s3cr3t); all other paths get an empty page")
 	flag.Parse()
+
+	pathPrefix, err := normalizePathPrefix(cfg.PathPrefix)
+	if err != nil {
+		log.Fatalf("invalid -path-prefix %q: %v", cfg.PathPrefix, err)
+	}
+	cfg.PathPrefix = pathPrefix
 
 	if _, _, err := net.SplitHostPort(cfg.Addr); err != nil {
 		log.Fatalf("invalid --listen address %q: %v", cfg.Addr, err)
@@ -125,7 +134,7 @@ func main() {
 	if cfg.Cert != "" {
 		proto = "https"
 	}
-	log.Printf("listening on %s://%s, serving files from %s", proto, cfg.Addr, srv.absRoot)
+	log.Printf("listening on %s://%s%s/, serving files from %s", proto, cfg.Addr, cfg.PathPrefix, srv.absRoot)
 	if srv.absUlRoot != "" {
 		log.Printf("accepting uploads into %s", srv.absUlRoot)
 	}

@@ -30,6 +30,7 @@ Run:
 | `-root <path>` | `./files` | Directory to serve files from (download root). |
 | `-ul-root <path>` | — | Directory to store uploaded files. Upload endpoints are disabled if this flag is omitted. |
 | `-listen <host:port>` | `0.0.0.0:8080` | Address to listen on. |
+| `-path-prefix <segment>` | — | Serve the UI and API only under `/<segment>/` (one path segment of `[A-Za-z0-9._~-]`, leading `/` optional). Every other path returns an empty `200 text/html` page. The UI is then at `/<segment>/static/`; point `wgcli -url` at `http://host:port/<segment>`. |
 
 ### Authentication
 

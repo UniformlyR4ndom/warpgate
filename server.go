@@ -141,11 +141,11 @@ func (s *Server) withAuth(h http.HandlerFunc) http.Handler {
 
 func (s *Server) handler() http.Handler {
 	static := http.StripPrefix("/static/", staticHandler())
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	h := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, pattern := s.mux.Handler(r)
 		if pattern == "" {
 			if r.URL.Path == "/" || r.URL.Path == "/static" {
-				http.Redirect(w, r, "/static/", http.StatusMovedPermanently)
+				http.Redirect(w, r, s.cfg.PathPrefix+"/static/", http.StatusMovedPermanently)
 				return
 			}
 			static.ServeHTTP(w, r)
@@ -153,6 +153,10 @@ func (s *Server) handler() http.Handler {
 		}
 		s.mux.ServeHTTP(w, r)
 	})
+	if s.cfg.PathPrefix == "" {
+		return h
+	}
+	return withPathPrefix(s.cfg.PathPrefix, h)
 }
 
 func (s *Server) ListenAndServe() error {

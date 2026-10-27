@@ -74,6 +74,22 @@ The Go module (`warpgate`, Go 1.25.0) lives at the repo root. The frontend is em
 
 `/` and `/static` redirect to `/static/`.
 
+### Path prefix
+
+`-path-prefix <segment>` (`pathprefix.go`) mounts *everything* — UI, `/api/public/*`, and the WS
+endpoints — under `/<segment>`, to keep a publicly hosted instance out of plain sight. The value is
+one path segment of `[A-Za-z0-9._~-]` (leading `/` optional; `.`/`..` rejected), normalized to
+`/<segment>` by `normalizePathPrefix`; empty (the default) disables it and leaves routing untouched.
+`withPathPrefix` wraps `Server.handler()`: a path that is exactly `<prefix>` or starts with
+`<prefix>/` has the prefix stripped (and `RawPath` cleared) before normal routing; anything else —
+any method, including `<prefix>foo` — gets an identical empty `200 text/html; charset=utf-8`
+response, with no Go-specific body or redirect, to be hard to fingerprint. The `/` → `/static/`
+redirect becomes `<prefix>/static/`.
+
+The frontend needs no configuration: `API_BASE` (`web/app.js`) is derived from `location.pathname`
+(everything before `/static/`) and prepended to every `fetch` URL and to `wsBaseURL()`. Static assets
+already use relative URLs. `wgcli` just takes the prefix as part of `-url`.
+
 The full API is documented in `doc/openapi.yaml`.
 
 ### `/api/files/download` request body
@@ -838,4 +854,5 @@ python3 test/e2e_suite.py           # full run, up to 1G files; see test/README.
 | `-cert-key` | — | TLS private key file; must be paired with `-cert` |
 | `-client-root` | — | PEM certificate for validating client certificates; requires `-cert`/`-cert-key` |
 | `-client-fp` | — | Hex SHA-256 fingerprint to pin a specific client certificate; requires `-cert`/`-cert-key` |
+| `-path-prefix` | — | Serve UI+API only under this single path segment; all other paths return an empty page (see "Path prefix") |
 | `-ws-frame-max` | `16M` | Ceiling on the WS frame size a client may request; byte count or `K`/`M` suffix (case-insensitive), range `1K`-`256M` |
