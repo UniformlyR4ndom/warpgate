@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-func TestNormalizePathPrefix(t *testing.T) {
+func TestNormalizePathSegment(t *testing.T) {
 	tests := []struct {
 		in      string
 		want    string
@@ -23,9 +23,9 @@ func TestNormalizePathPrefix(t *testing.T) {
 		{"a%20b", "", true},
 	}
 	for _, tt := range tests {
-		got, err := normalizePathPrefix(tt.in)
+		got, err := normalizePathSegment(tt.in)
 		if (err != nil) != tt.wantErr || got != tt.want {
-			t.Errorf("normalizePathPrefix(%q) = %q, %v; want %q, err=%v", tt.in, got, err, tt.want, tt.wantErr)
+			t.Errorf("normalizePathSegment(%q) = %q, %v; want %q, err=%v", tt.in, got, err, tt.want, tt.wantErr)
 		}
 	}
 }

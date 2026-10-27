@@ -54,7 +54,7 @@ The Go module (`warpgate`, Go 1.25.0) lives at the repo root. The frontend is em
 
 | Method   | Path                    | Auth required | Description |
 |----------|-------------------------|---------------|-------------|
-| GET      | `/api/public/checkin`   | No            | Logs client IP; called once on page load |
+| GET      | `/api/public/checkin`   | No            | Logs client IP (see `clientIP`); called once on page load |
 | GET      | `/api/public/settings`  | No            | Returns `{"wsFrameMin":...,"wsFrameMax":...}`, the server's configured WS frame size bounds, for UI clamping |
 | POST     | `/api/files/list`       | Yes           | List files in the download root; body: `{"path":"subdir"}` |
 | POST     | `/api/files/download`   | Yes           | Download a (chunk of a) file with a transform applied |
@@ -89,6 +89,34 @@ redirect becomes `<prefix>/static/`.
 The frontend needs no configuration: `API_BASE` (`web/app.js`) is derived from `location.pathname`
 (everything before `/static/`) and prepended to every `fetch` URL and to `wsBaseURL()`. Static assets
 already use relative URLs. `wgcli` just takes the prefix as part of `-url`.
+
+### IP firewall
+
+`ipfilter.go`, enabled (`Server.ipFilter != nil`) when any of `-ip-allow`, `-ip-reg-path`,
+`-ip-reg-max`, `-ip-reg-window` is set; built and validated by `newIPFilter`. `Server.withIPFilter`
+runs *inside* `withPathPrefix` (it sees prefix-stripped paths) and in front of all routing, so it
+covers static files, the API, and WS upgrades alike. Unrelated to `/api/public/checkin`, which only
+logs.
+
+- A request is served if its client IP is in `-ip-allow` (IPs/CIDRs, `parseIPList`) or registered.
+  Everything else gets `writeBlank` — the same response as a wrong prefix.
+- **Registration path**: `-ip-reg-path <segment>`, or — when only `-ip-reg-max`/`-ip-reg-window` are
+  set — the base path `/` (i.e. `<prefix>`/`<prefix>/`), which then requires `-path-prefix` (a bare
+  `/` would let internet noise claim the slots). In base-path mode `<prefix>/static/` (exactly) is a
+  second registration URL, so reloading the UI after a restart re-registers; it holds no less secret
+  than the base path. A dedicated `-ip-reg-path` is the only registration URL in its mode, since the
+  UI URL doesn't contain it. While registration is open (window not expired,
+  `len(registered) < regMax`), GET returns `regPageHTML`, a page that auto-submits an empty form
+  POST to the same URL; only the POST registers, then 303s to `<prefix>/static/`. This keeps link
+  scanners/proxies that just GET the URL from consuming slots. Admitted IPs bypass registration handling
+  entirely (so `/static/` serves the UI), except on a dedicated `-ip-reg-path`, which 303s them to the
+  UI.
+- `-ip-reg-max`/`-ip-reg-window` 0 mean unlimited; the window counts from `NewServer`. Existing
+  registrations outlive the window. State is an in-memory map — lost on restart.
+- **Client IP** (`clientIP`, also used by `handleCheckin`'s log line): the TCP peer, normalized
+  (IPv4-mapped IPv6 unmapped). Only if the peer is in `-trusted-proxies` is `X-Forwarded-For` walked
+  right to left, skipping trusted hops; the first untrusted entry is the client. A malformed entry or
+  a chain of only trusted hops falls back to the peer.
 
 The full API is documented in `doc/openapi.yaml`.
 
@@ -855,4 +883,9 @@ python3 test/e2e_suite.py           # full run, up to 1G files; see test/README.
 | `-client-root` | — | PEM certificate for validating client certificates; requires `-cert`/`-cert-key` |
 | `-client-fp` | — | Hex SHA-256 fingerprint to pin a specific client certificate; requires `-cert`/`-cert-key` |
 | `-path-prefix` | — | Serve UI+API only under this single path segment; all other paths return an empty page (see "Path prefix") |
+| `-ip-allow` | — | Comma-separated IPs/CIDRs always served; enables the IP firewall (see "IP firewall") |
+| `-ip-reg-path` | — | Path segment under the prefix that registers the client IP; enables the IP firewall |
+| `-ip-reg-max` | `0` | Max registered IPs (0 = unlimited); without `-ip-reg-path` registers via the base path (needs `-path-prefix`) |
+| `-ip-reg-window` | `0` | Registration accepted only this long after startup (Go duration; 0 = unlimited) |
+| `-trusted-proxies` | — | Comma-separated IPs/CIDRs of reverse proxies whose `X-Forwarded-For` determines the client IP |
 | `-ws-frame-max` | `16M` | Ceiling on the WS frame size a client may request; byte count or `K`/`M` suffix (case-insensitive), range `1K`-`256M` |

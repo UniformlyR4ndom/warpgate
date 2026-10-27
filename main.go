@@ -4,9 +4,11 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"flag"
+	"fmt"
 	"log"
 	"net"
 	"path/filepath"
+	"time"
 )
 
 // wsFrameSizeMin and wsFrameSizeMax bound both the -ws-frame-max flag and
@@ -28,7 +30,13 @@ type Config struct {
 	Key        string
 	NoAuth     bool
 	WSFrameMax int
-	PathPrefix string // "" or "/<segment>", see normalizePathPrefix
+	PathPrefix string // "" or "/<segment>", see normalizePathSegment
+
+	IPAllow        string
+	IPRegPath      string
+	IPRegMax       int
+	IPRegWindow    time.Duration
+	TrustedProxies string
 }
 
 func main() {
@@ -50,9 +58,18 @@ func main() {
 			"Clients may request a smaller per-transfer frame size (via the UI) up to this ceiling; smaller frames are more likely to pass through proxies that buffer whole frames for inspection")
 	flag.StringVar(&cfg.PathPrefix, "path-prefix", "",
 		"serve UI and API only under this single path segment (e.g. s3cr3t); all other paths get an empty page")
+	flag.StringVar(&cfg.IPAllow, "ip-allow", "", "comma-separated IPs/CIDRs that are always served; enables the IP firewall")
+	flag.StringVar(&cfg.IPRegPath, "ip-reg-path", "",
+		"path segment (under -path-prefix) whose visit registers the client IP for access; enables the IP firewall")
+	flag.IntVar(&cfg.IPRegMax, "ip-reg-max", 0,
+		"maximum number of registered IPs (0 = unlimited); without -ip-reg-path, registration happens via the -path-prefix base path")
+	flag.DurationVar(&cfg.IPRegWindow, "ip-reg-window", 0,
+		"accept IP registrations only this long after startup, e.g. 15m (0 = unlimited); without -ip-reg-path, registration happens via the -path-prefix base path")
+	flag.StringVar(&cfg.TrustedProxies, "trusted-proxies", "",
+		"comma-separated IPs/CIDRs of reverse proxies whose X-Forwarded-For header determines the client IP")
 	flag.Parse()
 
-	pathPrefix, err := normalizePathPrefix(cfg.PathPrefix)
+	pathPrefix, err := normalizePathSegment(cfg.PathPrefix)
 	if err != nil {
 		log.Fatalf("invalid -path-prefix %q: %v", cfg.PathPrefix, err)
 	}
@@ -146,6 +163,16 @@ func main() {
 	}
 	if cfg.ClientFP != "" {
 		log.Printf("requiring TLS client certificate fingerprint: %s", cfg.ClientFP)
+	}
+	if f := srv.ipFilter; f != nil {
+		log.Printf("IP firewall enabled: %d allowlisted range(s)", len(f.allow))
+		if f.regPath != "" {
+			msg := fmt.Sprintf("IP registration via %s%s (max: %d, 0 = unlimited)", cfg.PathPrefix, f.regPath, f.regMax)
+			if !f.regUntil.IsZero() {
+				msg += ", open until " + f.regUntil.Format(time.RFC3339)
+			}
+			log.Print(msg)
+		}
 	}
 	log.Printf("WebSocket frame size ceiling: %d bytes", cfg.WSFrameMax)
 	log.Fatal(srv.ListenAndServe())

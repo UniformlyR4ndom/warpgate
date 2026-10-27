@@ -39,6 +39,20 @@ Run:
 | `-auth-key <key>` | — | Secret key clients must supply in the `X-Auth` HTTP header. If omitted, a random 32-byte hex key is generated at startup and printed to the log. |
 | `-no-auth` | false | Disable authentication entirely. No `X-Auth` header is required. |
 
+### IP firewall
+
+Restricts which client IPs are served at all. Enabled as soon as any of `-ip-allow`, `-ip-reg-path`, `-ip-reg-max` or `-ip-reg-window` is set. Rejected requests get the same empty page as a wrong `-path-prefix`.
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `-ip-allow <list>` | — | Comma-separated IPs/CIDRs that are always served, e.g. `198.51.100.7,203.0.113.0/24`. |
+| `-ip-reg-path <segment>` | — | Visiting `/<prefix>/<segment>` in a browser registers the client IP (the page registers via a script-submitted POST, so link scanners that only GET it don't). Must not be `static` or `api`. |
+| `-ip-reg-max <n>` | `0` | Maximum number of registered IPs (`0` = unlimited). |
+| `-ip-reg-window <duration>` | `0` | Accept registrations only this long after startup, e.g. `15m` (`0` = unlimited). |
+| `-trusted-proxies <list>` | — | Comma-separated IPs/CIDRs of reverse proxies; for requests from them, the client IP is the rightmost `X-Forwarded-For` entry that isn't itself a trusted proxy. |
+
+If `-ip-reg-max`/`-ip-reg-window` are set without `-ip-reg-path`, the base path `/<prefix>/` is the registration URL (requires `-path-prefix`); `/<prefix>/static/` registers as well, so reloading the UI after a server restart works. Registrations are kept in memory only and are lost on restart.
+
 ### TLS
 
 All TLS flags require `-cert` and `-cert-key` to be provided together. Without them the server speaks plain HTTP.

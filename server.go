@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"net/http"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"time"
@@ -29,6 +30,9 @@ type Server struct {
 	wsUpgrader websocket.Upgrader
 	authHash   string
 	paramKeys  paramcrypt.Keys // zero value when cfg.NoAuth: parameter encryption is unavailable
+
+	ipFilter       *ipFilter // nil when the IP firewall is disabled
+	trustedProxies []netip.Prefix
 
 	uploadSessions    *sessionStore[*ulSession]
 	simUploadSessions *sessionStore[*simUlSession]
@@ -62,6 +66,13 @@ func NewServer(cfg Config, db *DB) (*Server, error) {
 	}
 	if !cfg.NoAuth {
 		s.paramKeys = paramcrypt.DeriveKeys(cfg.Key)
+	}
+
+	if s.ipFilter, err = newIPFilter(cfg); err != nil {
+		return nil, err
+	}
+	if s.trustedProxies, err = parseIPList(cfg.TrustedProxies); err != nil {
+		return nil, fmt.Errorf("-trusted-proxies: %w", err)
 	}
 
 	if cfg.ClientRoot != "" {
@@ -141,7 +152,7 @@ func (s *Server) withAuth(h http.HandlerFunc) http.Handler {
 
 func (s *Server) handler() http.Handler {
 	static := http.StripPrefix("/static/", staticHandler())
-	h := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	var h http.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, pattern := s.mux.Handler(r)
 		if pattern == "" {
 			if r.URL.Path == "/" || r.URL.Path == "/static" {
@@ -153,6 +164,9 @@ func (s *Server) handler() http.Handler {
 		}
 		s.mux.ServeHTTP(w, r)
 	})
+	if s.ipFilter != nil {
+		h = s.withIPFilter(h)
+	}
 	if s.cfg.PathPrefix == "" {
 		return h
 	}

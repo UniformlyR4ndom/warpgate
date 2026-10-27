@@ -2,14 +2,13 @@ package main
 
 import (
 	"log"
-	"net"
 	"net/http"
 )
 
 func (s *Server) handleCheckin(w http.ResponseWriter, r *http.Request) {
-	ip, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		ip = r.RemoteAddr
+	ip := r.RemoteAddr
+	if a := clientIP(r, s.trustedProxies); a.IsValid() {
+		ip = a.String()
 	}
 	log.Printf("checkin from %s", ip)
 	w.WriteHeader(http.StatusNoContent)
