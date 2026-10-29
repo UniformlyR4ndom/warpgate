@@ -155,6 +155,75 @@ components:
           description: Unix timestamp assigned to the note.
           example: 1751400000
 
+    AttachmentMeta:
+      type: object
+      required: [id, mime, size]
+      properties:
+        id:
+          type: integer
+          format: int64
+          description: Attachment ID; stable and immutable (image bytes never change for an id).
+          example: 9
+        mime:
+          type: string
+          description: Image MIME type (always "image/...").
+          example: image/png
+        size:
+          type: integer
+          format: int64
+          description: Stored (decoded) image size in bytes.
+          example: 81234
+
+    NoteMeta:
+      type: object
+      required: [id, ts, title, data, attachments]
+      properties:
+        id:
+          type: integer
+          format: int64
+          example: 3
+        ts:
+          type: integer
+          format: int64
+          example: 1751400000
+        title:
+          type: string
+          example: DC01 – nmap internal
+        data:
+          type: string
+          format: byte
+          description: Note text, base64-encoded.
+        attachments:
+          type: array
+          items:
+            $ref: '#/components/schemas/AttachmentMeta'
+
+    ClipStateResponse:
+      type: object
+      required: [rev]
+      properties:
+        rev:
+          type: integer
+          format: int64
+          description: The clipboard's current global revision.
+          example: 7
+        changed:
+          type: array
+          description: Notes created or edited since the request's `since`. Omitted when empty.
+          items:
+            $ref: '#/components/schemas/NoteMeta'
+        ids:
+          type: array
+          description: |
+            All live note ids, for deletion reconciliation. Present only when a deletion
+            happened since `since`.
+          items:
+            type: integer
+            format: int64
+        reset:
+          type: boolean
+          description: True when `since` was ahead of the server; treat `changed` as a full snapshot.
+
 paths:
 
   /api/public/checkin:
@@ -728,19 +797,30 @@ paths:
         "500":
           description: Internal server error.
 
-  /api/clip/list:
+  /api/clip/state:
     get:
-      operationId: listClipboard
-      summary: List clipboard notes
+      operationId: clipboardState
+      summary: Incremental clipboard sync
       description: |
-        Returns all notes currently stored in the clipboard, ordered by insertion sequence.
-        Returns an empty array when no notes exist.
+        Returns the clipboard's global revision plus the notes changed since the caller's
+        `since` cursor, for efficient polling. See CLAUDE.md's clipboard sync section for the
+        full model. In short: `changed` holds notes created/edited since `since` (text inline,
+        images by reference only); `ids` is the full set of live note ids, included only when a
+        deletion happened since `since` (for deletion reconciliation); `reset` is true when
+        `since` is ahead of the server (a reset/swapped DB), meaning the client should discard
+        its state and take `changed` as a full snapshot. `since=0` returns a full snapshot.
 
-        This endpoint has no request body, so the response's encryption can't be inferred
-        from one the way it is elsewhere (see CLAUDE.md's "Parameter Encryption" section);
-        instead, pass the `e` query parameter (any value) to request an encrypted response.
-        Ignored when the server has no auth key configured (`-no-auth`).
+        As with the other bodyless GET endpoints, pass the `e` query parameter to request an
+        encrypted response (ignored under `-no-auth`).
       parameters:
+        - name: since
+          in: query
+          required: false
+          schema:
+            type: integer
+            format: int64
+            default: 0
+          description: The highest rev the client has already seen; 0 for a full snapshot.
         - name: e
           in: query
           required: false
@@ -751,17 +831,25 @@ paths:
             instead of plain JSON. See CLAUDE.md's "Parameter Encryption" section.
       responses:
         "200":
-          description: Array of clipboard notes.
+          description: The current rev and any changes since `since`.
           content:
             application/json:
               schema:
-                type: array
-                items:
-                  $ref: '#/components/schemas/ClipItem'
+                $ref: '#/components/schemas/ClipStateResponse'
               example:
-                - id: 1
-                  ts: 1751400000
-                  data: SGVsbG8gd29ybGQh
+                rev: 7
+                changed:
+                  - id: 3
+                    ts: 1751400000
+                    title: DC01 – nmap internal
+                    data: SGVsbG8gd29ybGQh
+                    attachments:
+                      - id: 9
+                        mime: image/png
+                        size: 81234
+                ids: [1, 3]
+        "400":
+          description: Invalid `since`.
         "401":
           description: Missing or invalid `X-Auth` header.
         "405":
@@ -909,3 +997,117 @@ paths:
           description: Method not allowed.
         "500":
           description: Internal server error.
+  /api/clip/attachment:
+    post:
+      operationId: newClipAttachment
+      summary: Attach an image to a note
+      description: |
+        Stores one image for an existing note. The multipart body mirrors `/api/files/upload`:
+        an optional-encrypted `transform` part (JSON `{transform,args,note_id,mime}`) plus a
+        `file` part carrying the transform-encoded image bytes. The server reverses the transform
+        and stores the raw bytes as a BLOB (capped at 20 MiB; `mime` must be `image/...`).
+        Attaching bumps the owning note's revision (so it reappears in `/api/clip/state`).
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [transform, file]
+              properties:
+                transform:
+                  type: string
+                  description: |
+                    JSON (or an encrypted paramcrypt blob): `{transform,args,note_id,mime}`.
+                file:
+                  type: string
+                  format: binary
+                  description: The transform-encoded image bytes.
+      responses:
+        "200":
+          description: Stored. Returns the new attachment's metadata.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AttachmentMeta'
+        "400":
+          description: Invalid multipart form, mime, or image data.
+        "401":
+          description: Missing/invalid `X-Auth`, or the transform part fails to decrypt.
+        "404":
+          description: No note with the given `note_id` exists.
+        "405":
+          description: Method not allowed.
+        "413":
+          description: Image exceeds the 20 MiB cap.
+
+  /api/clip/attachment/download:
+    post:
+      operationId: downloadClipAttachment
+      summary: Fetch an image's bytes
+      description: |
+        Returns one attachment's bytes, transform-disguised exactly like `/api/files/download`
+        disguises a file. The raw-bytes response is not param-crypted (the transform already
+        covers it). Image bytes are immutable per attachment id, so clients cache the result.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [id, transform]
+              properties:
+                id:
+                  type: integer
+                  format: int64
+                transform:
+                  type: string
+                args:
+                  type: object
+                contentType:
+                  type: string
+                  description: Optional Content-Type override, as on `/api/files/download`.
+      responses:
+        "200":
+          description: The transform-encoded image bytes.
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        "400":
+          description: Invalid transform or contentType.
+        "401":
+          description: Missing/invalid `X-Auth`, or the body fails to decrypt.
+        "404":
+          description: No attachment with the given ID exists.
+        "405":
+          description: Method not allowed.
+
+  /api/clip/attachment/delete:
+    delete:
+      operationId: deleteClipAttachment
+      summary: Delete an image
+      description: Removes one attachment by ID and bumps its owning note's revision.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [id]
+              properties:
+                id:
+                  type: integer
+                  format: int64
+            example:
+              id: 9
+      responses:
+        "204":
+          description: Attachment deleted successfully.
+        "401":
+          description: Missing/invalid `X-Auth`, or the body fails to decrypt.
+        "404":
+          description: No attachment with the given ID exists.
+        "405":
+          description: Method not allowed.

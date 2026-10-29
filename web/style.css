@@ -579,6 +579,60 @@ th {
   word-break: break-word;
 }
 
+.clip-attachments,
+.clip-pending {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+}
+
+.clip-pending {
+  margin-top: 0;
+}
+
+.clip-thumb {
+  position: relative;
+  width: 7rem;
+  height: 7rem;
+  border: 1px solid var(--border);
+  background: var(--input-bg);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+
+.clip-thumb img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  cursor: pointer;
+  display: block;
+}
+
+.clip-thumb-ph {
+  color: var(--dim);
+  font-size: 1.2rem;
+}
+
+.clip-thumb-del {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  background: rgba(0, 0, 0, 0.6);
+  border: none;
+  color: #eee;
+  cursor: pointer;
+  font-size: 0.7rem;
+  line-height: 1;
+  padding: 0.15rem 0.3rem;
+}
+
+.clip-thumb-del:hover {
+  color: #e05252;
+}
+
 .clip-footer {
   display: flex;
   justify-content: flex-end;

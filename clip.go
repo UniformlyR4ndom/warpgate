@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/base64"
 	"net/http"
+	"strconv"
 	"unicode"
 	"unicode/utf8"
 )
@@ -115,19 +116,35 @@ func (s *Server) handleClipDelete(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func (s *Server) handleClipList(w http.ResponseWriter, r *http.Request) {
+// clipStateResponse is the incremental-sync feed. Changed and Ids are omitted
+// when empty/absent; see CLAUDE.md's clipboard sync section.
+type clipStateResponse struct {
+	Rev     int64      `json:"rev"`
+	Changed []NoteMeta `json:"changed,omitempty"`
+	Ids     []int64    `json:"ids,omitempty"`
+	Reset   bool       `json:"reset,omitempty"`
+}
+
+func (s *Server) handleClipState(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	items, err := s.db.ListClipboard()
+	var since int64
+	if v := r.URL.Query().Get("since"); v != "" {
+		n, err := strconv.ParseInt(v, 10, 64)
+		if err != nil || n < 0 {
+			http.Error(w, "invalid since", http.StatusBadRequest)
+			return
+		}
+		since = n
+	}
+	rev, changed, ids, reset, err := s.db.ClipState(since)
 	if err != nil {
 		http.Error(w, "internal server error", http.StatusInternalServerError)
 		return
 	}
-	if items == nil {
-		items = []ClipItem{}
-	}
 	encrypted := !s.cfg.NoAuth && r.URL.Query().Has("e")
-	s.encodeParamsResponse(w, encrypted, http.StatusOK, items)
+	s.encodeParamsResponse(w, encrypted, http.StatusOK,
+		clipStateResponse{Rev: rev, Changed: changed, Ids: ids, Reset: reset})
 }

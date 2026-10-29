@@ -13,17 +13,36 @@ import (
 	"time"
 )
 
-// clipItem mirrors the server's ClipItem (db.go); it can't be imported
-// directly since the server is package main.
-type clipItem struct {
-	ID    int64  `json:"id"`
-	TS    int64  `json:"ts"`
-	Title string `json:"title"`
-	Data  string `json:"data"` // base64-encoded
+// clipAttachmentMeta mirrors the server's AttachmentMeta (db.go).
+type clipAttachmentMeta struct {
+	ID   int64  `json:"id"`
+	Mime string `json:"mime"`
+	Size int64  `json:"size"`
 }
 
-func fetchClipList(g *globalFlags) ([]clipItem, error) {
-	req, err := g.newRequest(http.MethodGet, g.maybeEncryptedQuery("/api/clip/list"), nil)
+// clipNoteMeta mirrors the server's NoteMeta (db.go).
+type clipNoteMeta struct {
+	ID          int64                `json:"id"`
+	TS          int64                `json:"ts"`
+	Title       string               `json:"title"`
+	Data        string               `json:"data"`
+	Attachments []clipAttachmentMeta `json:"attachments"`
+}
+
+type clipStateResponse struct {
+	Rev     int64          `json:"rev"`
+	Changed []clipNoteMeta `json:"changed"`
+	Ids     []int64        `json:"ids"`
+	Reset   bool           `json:"reset"`
+}
+
+// fetchClipList pulls the full note set via a since=0 sync snapshot.
+func fetchClipList(g *globalFlags) ([]clipNoteMeta, error) {
+	path := "/api/clip/state?since=0"
+	if _, enabled := g.paramKeys(); enabled {
+		path += "&e=1"
+	}
+	req, err := g.newRequest(http.MethodGet, path, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -40,11 +59,11 @@ func fetchClipList(g *globalFlags) ([]clipItem, error) {
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("%s: %s", resp.Status, strings.TrimSpace(string(body)))
 	}
-	var items []clipItem
-	if err := g.decodeJSON(body, &items); err != nil {
+	var state clipStateResponse
+	if err := g.decodeJSON(body, &state); err != nil {
 		return nil, err
 	}
-	return items, nil
+	return state.Changed, nil
 }
 
 func postClipNew(g *globalFlags, title string, data []byte) (id, ts int64, err error) {
@@ -169,11 +188,21 @@ func runClipList(args []string) error {
 			return fmt.Errorf("decoding note %d: %w", it.ID, err)
 		}
 		ts := time.Unix(it.TS, 0).Format(time.RFC3339)
+		head := fmt.Sprintf("[%d] %s", it.ID, ts)
 		if it.Title != "" {
-			fmt.Printf("[%d] %s %s\n%s\n\n", it.ID, ts, it.Title, data)
-		} else {
-			fmt.Printf("[%d] %s\n%s\n\n", it.ID, ts, data)
+			head += " " + it.Title
 		}
+		if n := len(it.Attachments); n > 0 {
+			head += fmt.Sprintf(" (%d image(s): ", n)
+			for i, a := range it.Attachments {
+				if i > 0 {
+					head += ", "
+				}
+				head += fmt.Sprintf("#%d %s %dB", a.ID, a.Mime, a.Size)
+			}
+			head += ")"
+		}
+		fmt.Printf("%s\n%s\n\n", head, data)
 	}
 	return nil
 }
@@ -253,7 +282,7 @@ func runClipDelete(args []string) error {
 
 func runClip(args []string) error {
 	if len(args) < 1 {
-		return fmt.Errorf("usage: wgcli clip <list|new|edit|delete> [flags] [args...]")
+		return fmt.Errorf("usage: wgcli clip <list|new|edit|delete|attach|get-attachment> [flags] [args...]")
 	}
 	sub, rest := args[0], args[1:]
 	switch sub {
@@ -265,6 +294,10 @@ func runClip(args []string) error {
 		return runClipEdit(rest)
 	case "delete":
 		return runClipDelete(rest)
+	case "attach":
+		return runClipAttach(rest)
+	case "get-attachment":
+		return runClipGetAttachment(rest)
 	default:
 		return fmt.Errorf("unknown clip subcommand %q", sub)
 	}

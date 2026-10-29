@@ -61,6 +61,20 @@ func (s *Server) downloadBlockedByUpload(target string) bool {
 	return false
 }
 
+// resolveContentType picks a response Content-Type: a transform's own type
+// (pdf/html-b64) wins over fallback, and a non-empty client override wins over
+// both.
+func resolveContentType(t transform.Transformer, override, fallback string) string {
+	ct := fallback
+	if ctr, ok := t.(interface{ ContentType() string }); ok {
+		ct = ctr.ContentType()
+	}
+	if override != "" {
+		ct = override
+	}
+	return ct
+}
+
 func (s *Server) handleDownload(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -125,15 +139,7 @@ func (s *Server) handleDownload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ct := "application/octet-stream"
-	type contentTyper interface{ ContentType() string }
-	if ctr, ok := transformer.(contentTyper); ok {
-		ct = ctr.ContentType()
-	}
-	if req.ContentType != "" {
-		ct = req.ContentType
-	}
-	w.Header().Set("Content-Type", ct)
+	w.Header().Set("Content-Type", resolveContentType(transformer, req.ContentType, "application/octet-stream"))
 	if _, err := io.Copy(w, reader); err != nil {
 		log.Printf("error writing response for %q: %v", req.Path, err)
 	}

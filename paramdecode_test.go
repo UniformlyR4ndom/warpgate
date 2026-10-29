@@ -212,35 +212,35 @@ func TestHandleUlListQueryParamIgnoredUnderNoAuth(t *testing.T) {
 	}
 }
 
-func TestHandleClipListQueryParamEncryption(t *testing.T) {
+func TestHandleClipStateQueryParamEncryption(t *testing.T) {
 	s := newParamDecodeTestServer(t, Config{Key: "test-key"})
 	keys := paramcrypt.DeriveKeys("test-key")
 
 	t.Run("with e param, response is encrypted", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/api/clip/list?e=1", nil)
+		req := httptest.NewRequest(http.MethodGet, "/api/clip/state?e=1", nil)
 		rec := httptest.NewRecorder()
-		s.handleClipList(rec, req)
-		var got []ClipItem
+		s.handleClipState(rec, req)
+		var got clipStateResponse
 		listResponseEncrypted(t, rec, keys, &got)
 	})
 
 	t.Run("without e param, response is plain JSON", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/api/clip/list", nil)
+		req := httptest.NewRequest(http.MethodGet, "/api/clip/state", nil)
 		rec := httptest.NewRecorder()
-		s.handleClipList(rec, req)
-		var got []ClipItem
+		s.handleClipState(rec, req)
+		var got clipStateResponse
 		if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
 			t.Fatalf("expected plain JSON, got %q: %v", rec.Body.String(), err)
 		}
 	})
 }
 
-func TestHandleClipListQueryParamIgnoredUnderNoAuth(t *testing.T) {
+func TestHandleClipStateQueryParamIgnoredUnderNoAuth(t *testing.T) {
 	s := newParamDecodeTestServer(t, Config{NoAuth: true})
-	req := httptest.NewRequest(http.MethodGet, "/api/clip/list?e=1", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/clip/state?e=1", nil)
 	rec := httptest.NewRecorder()
-	s.handleClipList(rec, req)
-	var got []ClipItem
+	s.handleClipState(rec, req)
+	var got clipStateResponse
 	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
 		t.Fatalf("expected -no-auth to ignore ?e and return plain JSON, got %q: %v", rec.Body.String(), err)
 	}

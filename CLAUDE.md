@@ -66,10 +66,13 @@ The Go module (`warpgate`, Go 1.25.0) lives at the repo root. The frontend is em
 | POST     | `/api/sim/upload`       | Yes           | Upload a (chunk of a) file for SHA-256 hashing (requires `-ul-root`), nothing written to disk; see below |
 | GET/Upgrade | `/api/sim/ws/download`  | Yes (in-band) | WebSocket alternative to `/api/sim/download`; see below |
 | GET/Upgrade | `/api/sim/ws/upload`    | Yes (in-band) | WebSocket alternative to `/api/sim/upload` (requires `-ul-root`); see below |
-| GET      | `/api/clip/list`        | Yes           | List all clipboard notes |
+| GET      | `/api/clip/state`       | Yes           | Incremental sync; query `since=<rev>` → `{rev,changed,ids,reset}` (see "Clipboard sync") |
 | POST     | `/api/clip/new`         | Yes           | Create a clipboard note; body: `{"title":"...","data":"<base64>"}` (`title` optional) |
 | POST     | `/api/clip/edit`        | Yes           | Update a note's content and timestamp; body: `{"id":<id>,"title":"...","data":"<base64>"}` (`title` omitted = keep) |
 | DELETE   | `/api/clip/delete`      | Yes           | Delete a note by ID; body: `{"id":<id>}` |
+| POST     | `/api/clip/attachment`  | Yes           | Attach an image to a note; multipart (`transform` part `{transform,args,note_id,mime}` + `file`), ≤20 MiB |
+| POST     | `/api/clip/attachment/download` | Yes   | Fetch an image's bytes, transform-disguised; body: `{id,transform,args,contentType?}` |
+| DELETE   | `/api/clip/attachment/delete`   | Yes   | Delete one image by ID; body: `{"id":<id>}` |
 | GET      | `/static/...`           | No            | Embedded frontend (HTML, JS, CSS) |
 
 `/` and `/static` redirect to `/static/`.
@@ -470,7 +473,8 @@ client can't reliably tell which occurred, and the frontend already denies the u
 mismatch regardless.
 
 **Scope**: every client→server JSON request body (`/api/files/list`, `/api/files/download`,
-`/api/clip/new`, `/api/clip/edit`, `/api/clip/delete`, `/api/sim/download`); only the JSON `transform`
+`/api/clip/new`, `/api/clip/edit`, `/api/clip/delete`, `/api/clip/attachment/download`,
+`/api/sim/download`); only the JSON `transform`
 part of the multipart upload endpoints (`/api/files/upload`, `/api/sim/upload`) — the binary `file`
 part is untouched, since it's already independently protected by the transform system; and every
 client→server WebSocket control message (not just the handshake) for all four WS endpoints — the
@@ -500,8 +504,8 @@ encrypts every JSON request body, multipart `transform` part, and WS control mes
 reverses it for every in-scope response. Unlike the server's auto-detecting `decodeParams`, `wgcli`
 doesn't need to guess whether a response is encrypted — it already knows its own `-param-crypt`
 setting for the whole invocation, the same fixed choice for every request. `maybeEncryptedQuery`
-appends `?e=1` for the two GET endpoints (`ul-list`, `clip/list`) with no request body to key a
-response off of. WS handshakes/chunk-requests/`done` messages route through `writeWSJSON`; acks
+appends `?e=1` for the bodyless GET endpoints (`ul-list`; `clip list` builds `clip/state?since=0`
+with `&e=1`) to key a response off of. WS handshakes/chunk-requests/`done` messages route through `writeWSJSON`; acks
 (including the payload materialized in the `websocket.BinaryMessage`-mismatch/mid-transfer error
 path) are decoded via the updated `readWSAck(conn, g)`.
 
@@ -518,14 +522,14 @@ whatever the request already was.
   blob (`Content-Type: text/plain`) or plain JSON (`Content-Type: application/json`), based on that
   same bool threaded in from the request's own decode.
 - In scope: the JSON response bodies of `/api/files/list`, `/api/files/upload`, `/api/clip/new`,
-  `/api/sim/upload` (all four have both a request body to key off of and a JSON response worth
-  protecting), and `/api/files/ul-list`/`/api/clip/list` via the `?e` query parameter below. Out of
-  scope: `/api/clip/edit`/`/api/clip/delete` (204, no body to encrypt), and
-  `/api/files/download`/`/api/sim/download` (raw file bytes, not JSON — already covered by the
-  transform system).
-- **`GET /api/files/ul-list` and `GET /api/clip/list` have no request body to mirror**, so they use a
+  `/api/clip/attachment`, `/api/sim/upload` (each has both a request body to key off of and a JSON
+  response worth protecting), and `/api/files/ul-list`/`/api/clip/state` via the `?e` query parameter
+  below. Out of scope: `/api/clip/edit`/`/api/clip/delete`/`/api/clip/attachment/delete` (204, no body
+  to encrypt), and `/api/files/download`/`/api/sim/download`/`/api/clip/attachment/download` (raw
+  bytes, not JSON — already covered by the transform system).
+- **`GET /api/files/ul-list` and `GET /api/clip/state` have no request body to mirror**, so they use a
   separate signal: the query parameter `?e=<anything>` (presence-only, value ignored, deliberately
-  terse rather than descriptive — see `handleUlList`/`handleClipList`, which compute
+  terse rather than descriptive — see `handleUlList`/`handleClipState`, which compute
   `encrypted := !s.cfg.NoAuth && r.URL.Query().Has("e")` and call `encodeParamsResponse` the same way
   every other in-scope handler does). Unlike every other signal in this feature, `?e` is **not
   cryptographically bound to anything** — it's a bare client-controlled hint the server trusts at face
@@ -534,7 +538,7 @@ whatever the request already was.
   detect; this is an accepted, deliberate tradeoff (no client-side enforcement was added to reject an
   unexpectedly-plaintext response), unlike every other case in this feature where tampering causes a
   hard failure (401) rather than a silent one. Ignored entirely under `-no-auth`, same as everywhere
-  else. `loadUploadDir()`/`loadClipboard()` (`web/app.js`) append `?e=1` to the URL when
+  else. `loadUploadDir()`/`pollClipboard()` (`web/app.js`) append `?e=1` (`&e=1` for the latter) to the URL when
   `paramEncryptEnabled()` and use the same `decodeResponseJSON` as every other GET-with-encryption call
   site.
 - **WebSocket connections decide once, at the handshake, for the whole connection.** `readWSControl`
@@ -677,41 +681,90 @@ Reads the HTML, extracts the base64 payload by string search between the fixed d
 
 Args: `{"key": "<hex>"}` — exactly 16 bytes. The key is generated randomly per request by the frontend (not shown to or configurable by the user). The frontend label for this transform is "HTML (base64)".
 
-## Clipboard (`db.go`, `clip.go`)
+## Clipboard (`db.go`, `clip.go`, `clip_attachment.go`)
 
-Notes are stored in a SQLite database (default `warpgate.sqlite`, configurable with `-db`).
+Notes are stored in a SQLite database (default `warpgate.sqlite`, configurable with `-db`). A note is
+text (optionally titled) plus zero or more attached images.
 
 ### Schema
 
 ```sql
-CREATE TABLE IF NOT EXISTS clipboard (
+CREATE TABLE clipboard (
     id        INTEGER PRIMARY KEY AUTOINCREMENT,
     timestamp INTEGER NOT NULL,
     data      TEXT    NOT NULL,
-    title     TEXT    NOT NULL DEFAULT ''
+    title     TEXT    NOT NULL DEFAULT '',
+    rev       INTEGER NOT NULL DEFAULT 0      -- global clip_rev value at last create/edit
+)
+CREATE TABLE meta (key TEXT PRIMARY KEY, value INTEGER NOT NULL)  -- 'clip_rev', 'last_del_rev'
+CREATE TABLE clip_attachment (
+    id      INTEGER PRIMARY KEY AUTOINCREMENT,
+    note_id INTEGER NOT NULL REFERENCES clipboard(id),  -- deletes are explicit, not via cascade
+    mime    TEXT    NOT NULL,
+    size    INTEGER NOT NULL,
+    data    BLOB    NOT NULL
 )
 ```
 
-`title` is added by `addColumnIfMissing` in `OpenDB` (`ALTER TABLE` when the column is absent), so
-pre-title databases migrate in place. `''` is the only representation of "untitled".
+`migrate` (in `OpenDB`) is idempotent: `addColumnIfMissing` adds `title`/`rev`, pre-existing rows get
+`rev = id` backfilled (monotonic, distinct, positive), and `meta` is seeded (`clip_rev` to
+`MAX(rev)`, `last_del_rev` to 0) via `INSERT OR IGNORE`. `''` is the only representation of an
+untitled note. `OpenDB` sets `SetMaxOpenConns(1)`: it keeps a `:memory:` test DB single-shared (each
+modernc in-memory connection is otherwise its own database) and removes `SQLITE_BUSY` under write
+contention; blob reads load into memory and release the connection before the network write, so the
+lack of read parallelism costs nothing.
+
+### Clipboard sync (`/api/clip/state`)
+
+The clipboard is polled incrementally rather than re-fetched in full. `meta.clip_rev` is a global
+monotonic counter bumped — in the same transaction as the data change — on **every** write (create,
+edit, delete). Each note's `rev` records the `clip_rev` value at its last create/edit;
+`meta.last_del_rev` records the `clip_rev` value at the most recent delete. Adding/removing an
+attachment is an edit of its note (bumps the note's `rev`, not its display timestamp).
+
+`DB.ClipState(since)` (one read transaction) returns `(rev, changed, ids, reset)`:
+- **`changed`**: notes with `rev > since` (new or edited) as `NoteMeta` — text inline, images as
+  `AttachmentMeta` references only, never blob bytes.
+- **`ids`**: the full set of live note ids, returned **only when `last_del_rev > since`** (a deletion
+  happened since the caller's cursor); the client drops any held id not in this set. This is how
+  deletions propagate without tombstones. At clipboard scale the id list is cheap, and it's omitted on
+  ordinary edit/create polls.
+- **`reset`**: true when `since > rev` (a reset/swapped DB); `since` is then treated as 0 and the
+  client discards its state, taking `changed` as a full snapshot. `since=0` is also a full snapshot
+  (every note has `rev ≥ 1`).
+- `since == rev` short-circuits to `{rev}` only — the quiet idle poll.
+
+All writes serialize (SQLite's exclusive write lock + `MaxOpenConns(1)`), so `clip_rev` is monotonic
+and a client's cursor only moves forward (barring the explicit reset). Concurrent edits to the *same*
+note are last-writer-wins (no per-note optimistic concurrency).
 
 ### `db.go`
 
 - `OpenDB(path string) (*DB, error)` — opens/creates the SQLite file and initialises/migrates the schema.
-- `DB.InsertClipboard(title string, data []byte) (id, ts int64, err error)` — inserts a new note with the current Unix timestamp.
-- `DB.UpdateClipboard(id int64, title *string, data []byte) (bool, error)` — replaces note content and refreshes timestamp; a nil `title` keeps the existing one; returns false if ID not found.
-- `DB.DeleteClipboard(id int64) (bool, error)` — deletes a note; returns false if ID not found.
-- `DB.ListClipboard() ([]ClipItem, error)` — returns all notes ordered by `id`; `data` is base64-encoded in the returned struct.
+- `DB.InsertClipboard(title string, data []byte) (id, ts int64, err error)` / `UpdateClipboard(id, *title, data)` / `DeleteClipboard(id)` — each bumps `clip_rev` in its own transaction; delete also sets `last_del_rev` and removes the note's attachments.
+- `DB.InsertAttachment(noteID, mime, data) (id, error)` — stores a BLOB and bumps the note's `rev`; returns `errNoteNotFound` if the note is gone. `DeleteAttachment(id)` / `GetAttachment(id)` round it out.
+- `DB.ClipState(since)` — the sync query above.
+- `DB.ListClipboard()` — retained for tests only (not exposed via the API since `/api/clip/list` was replaced by `/api/clip/state`).
 
-The `ClipItem` struct is `{ID int64, TS int64, Title string, Data string}` and serialises to `{"id":…,"ts":…,"title":"…","data":"<base64>"}`.
+`NoteMeta` = `{ID, TS, Title, Data(base64 text), Attachments []AttachmentMeta}`; `AttachmentMeta` =
+`{ID, Mime, Size}`.
 
-### `clip.go`
+### `clip.go` / `clip_attachment.go`
 
-Handlers `handleClipList`, `handleClipNew`, `handleClipEdit`, `handleClipDelete` — all registered via `withAuth`. Base64 decoding of the incoming `data` field is done in the handler before passing raw bytes to the DB layer.
-`title` is a plain JSON string (not base64), validated by `validClipTitle`: valid UTF-8, at most
-`clipTitleMaxLen` (200) characters, no control characters (so single-line); invalid → `400`.
-`handleClipEdit` decodes it into a `*string` so an omitted title (e.g. from an older client) keeps
-the stored one.
+Handlers `handleClipState`, `handleClipNew`, `handleClipEdit`, `handleClipDelete` (`clip.go`) and
+`handleClipAttachmentNew`, `handleClipAttachmentDownload`, `handleClipAttachmentDelete`
+(`clip_attachment.go`) — all registered via `withAuth`. Base64 decoding of the incoming `data` field
+is done in the handler before passing raw bytes to the DB layer. `title` is a plain JSON string (not
+base64), validated by `validClipTitle`: valid UTF-8, at most `clipTitleMaxLen` (200) characters, no
+control characters (so single-line); invalid → `400`. `handleClipEdit` decodes it into a `*string` so
+an omitted title (e.g. from an older client) keeps the stored one.
+
+Image bytes reuse the file transform system: upload sends transform-encoded bytes in the multipart
+`file` part (server `Untransform`s, stores raw, 20 MiB cap, `image/...` mime only); download applies
+`Transform` to the stored blob (reusing `resolveContentType` from `download.go`, with the stored mime
+as fallback) and returns raw bytes — not param-crypted, since the transform already covers them. The
+transform used to store an image is independent of the one used to fetch it later (storage is raw),
+exactly like file upload vs. download.
 
 ## Frontend (`web/`)
 
@@ -732,7 +785,7 @@ All JS libraries are served locally (embedded in the binary); no CDN requests at
 - `fetchChunk(wsSession, path, start, size)` — dispatches to `fetchChunkHTTP` (POSTs to `/api/files/download`) or `fetchChunkWS` based on the `settings.backend` setting, calling `decrypt` on the (re)assembled response either way. `wsSession` is a plain `{ws, password, htmlB64Key}` object owned by the caller (`downloadFile`), threaded through repeated calls for the same file so the WS backend reuses one connection per file instead of opening one per chunk; `closeWSSession` ends it. Ignored for the HTTP backend.
 - Chunked downloads with optional reassembly via the File System Access API (`showSaveFilePicker`). Requires a secure context (HTTPS or localhost); the checkbox is disabled otherwise.
 - `uploadFiles(files)` — dispatches each file to `uploadFileHTTP` or `uploadFileWS` based on `settings.backend`, in parallel, then refreshes the upload listing. `uploadFileHTTP` further dispatches to `uploadFileHTTPChunked` when `settings.uploadChunking.enabled` — HTTP backend only, see "`/api/files/upload` multipart form" above for the protocol.
-- `load()` / `loadUploadDir()` / `loadClipboard()` — each compares the fetched data against the current state with `JSON.stringify` and only updates the reactive array on a change, preserving scroll position during auto-refresh.
+- `load()` / `loadUploadDir()` — each compares the fetched data against the current state with `JSON.stringify` (`updateIfChanged`) and only updates the reactive array on a change, preserving scroll position during auto-refresh. The clipboard instead syncs incrementally via `pollClipboard`/`applyClipState` (see "Clipboard tab").
 - `textToBase64` / `base64ToText` — UTF-8–safe helpers used by the clipboard tab.
 - `sha256Hex(buffer)` — wraps `crypto.subtle.digest('SHA-256', ...)`, hex-encoding via the shared `bytesToHex` helper (also used by `randomHex`). Used by the benchmark tab (see below); requires a secure context (HTTPS or localhost).
 - `runDownloadBenchmark()` / `runUploadBenchmark()` — drive the benchmark tab; see "Benchmark tab" below.
@@ -805,10 +858,12 @@ label text.
 
 ### Clipboard tab
 
-- Optional single-line title input (`clipTitle`) above a large textarea for composing a note; Submit button creates a new note via `/api/clip/new`. Control characters in the title are replaced by spaces client-side before sending.
+- Optional single-line title input (`clipTitle`) above a large textarea for composing a note; Submit button creates a new note via `/api/clip/new`. Control characters in the title are replaced by spaces client-side before sending. Submit is enabled (`canSubmitClip()`) when there's any text, title, or pending image.
+- **Pasting an image** (`@paste` → `handleClipPaste`) into the title or textarea captures `image/*` entries from `clipboardData.items` into `pendingAttachments` (shown as thumbnails with a ✕). On Submit the note is created/edited first, then each pending image is uploaded to it via `uploadAttachment` (`encodeBytesForUpload` + the multipart `/api/clip/attachment`). Pending images are *new* only; existing images are managed on the note card. To add images to an existing note: edit it, paste, Submit. (Capture uses the `paste` event, which works over plain HTTP; copying an image back out would need a secure context, so it's not in the core path.)
 - Clicking ✏ on a note pre-fills title and textarea for editing; the button becomes "Update" / "Cancel". Pressing Escape (in either field) or clicking "Cancel" discards the edit.
-- Each note shows its title (bold, only if non-empty — no placeholder for untitled notes), timestamp and decoded text, with footer action buttons: ⬇ (download as `.txt`), 📋 (copy to system clipboard), ✏ (edit).
-- Search box + scope selector (Title + content / Title / Content, `settings.clipSearchScope`, persisted) above the list; the query (`clipSearch`) is not persisted. Purely client-side — `/api/clip/list` already returns every note in full. `visibleClipItems()` sorts, filters (case-insensitive substring), and splits title/content into `{t, m}` segments via `highlightSegments`; matches render as `<span class="clip-hl">` through `x-text`, never `x-html`, since note content comes from untrusted machines.
+- Each note shows its title (bold, only if non-empty — no placeholder for untitled notes), timestamp and decoded text, then a thumbnail per attachment (lazy-fetched once via `ensureAttachment` → `/api/clip/attachment/download`, decoded with the current transform, cached in `clipImages` by attachment id as an object URL; the `<img>` renders via `x-if` only once a `blob:` URL exists, so a `loading`/`error` placeholder never triggers a spurious image request). Click a thumbnail to open it; ✕ on a thumbnail deletes that image live (`deleteAttachment`). Footer buttons: ⬇ (download as `.txt`, named after the title), 📋 (copy text to system clipboard), ✏ (edit).
+- **Sync** (`pollClipboard` → `applyClipState`): the list is maintained incrementally against `/api/clip/state?since=<clipCursor>` (see "Clipboard sync" above) — upsert `changed`, drop ids absent from `ids`, honor `reset`; `pruneClipImages` revokes object URLs for attachments no longer referenced. Auto-refresh, `setTab`, and post-write refreshes all call `pollClipboard`; an auth-key change calls `resetClipSync` (cursor 0, clear items/images) then re-polls.
+- Search box + scope selector (Title + content / Title / Content, `settings.clipSearchScope`, persisted) above the list; the query (`clipSearch`) is not persisted. Purely client-side over the already-synced notes. `visibleClipItems()` sorts, filters (case-insensitive substring, over title/text only — images aren't searched), and splits title/content into `{t, m}` segments via `highlightSegments`; matches render as `<span class="clip-hl">` through `x-text`, never `x-html`, since note content comes from untrusted machines.
 - ✕ delete button in the note header; optionally prompts for confirmation (controlled by "Confirm note delete" in the General panel section).
 
 ### Benchmark tab

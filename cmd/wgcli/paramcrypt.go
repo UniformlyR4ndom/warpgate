@@ -48,8 +48,8 @@ func (g *globalFlags) decodeJSON(body []byte, v any) error {
 
 // maybeEncryptedQuery appends the "?e=1" hint used by GET endpoints with no
 // request body to key a response-encryption decision off of (see
-// CLAUDE.md's "Parameter Encryption" -> "Response encryption" for
-// /api/files/ul-list and /api/clip/list).
+// CLAUDE.md's "Parameter Encryption" -> "Response encryption"; used for
+// /api/files/ul-list — clip list builds its own /api/clip/state?since=0 URL).
 func (g *globalFlags) maybeEncryptedQuery(path string) string {
 	if _, enabled := g.paramKeys(); enabled {
 		return path + "?e=1"

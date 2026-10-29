@@ -99,10 +99,13 @@ func NewServer(cfg Config, db *DB) (*Server, error) {
 	}
 	s.mux.HandleFunc("/api/public/checkin", s.handleCheckin)
 	s.mux.HandleFunc("/api/public/settings", s.handleSettings)
-	s.mux.Handle("/api/clip/list", s.withAuth(s.handleClipList))
+	s.mux.Handle("/api/clip/state", s.withAuth(s.handleClipState))
 	s.mux.Handle("/api/clip/new", s.withAuth(s.handleClipNew))
 	s.mux.Handle("/api/clip/edit", s.withAuth(s.handleClipEdit))
 	s.mux.Handle("/api/clip/delete", s.withAuth(s.handleClipDelete))
+	s.mux.Handle("/api/clip/attachment", s.withAuth(s.handleClipAttachmentNew))
+	s.mux.Handle("/api/clip/attachment/download", s.withAuth(s.handleClipAttachmentDownload))
+	s.mux.Handle("/api/clip/attachment/delete", s.withAuth(s.handleClipAttachmentDelete))
 	s.mux.Handle("/api/files/list", s.withAuth(s.handleList))
 	s.mux.Handle("/api/files/download", s.withAuth(s.handleDownload))
 	// Not wrapped in withAuth: browsers can't set custom headers on a

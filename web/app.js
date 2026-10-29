@@ -166,6 +166,9 @@ function filesApp() {
     benchmarkPreparing: false, // not persisted: true while generating/hashing test data, before the timed transfer starts
     benchmarkPrepProgress: null, // not persisted: 0-1 during chunked buffer generation (real signal), null during hashing (no incremental API)
     clipItems: [],
+    clipCursor: 0, // not persisted: last synced rev (see /api/clip/state)
+    clipImages: {}, // not persisted: attachment id -> object URL | 'loading' | 'error'
+    pendingAttachments: [], // not persisted: images pasted into the composer, uploaded on submit
     clipText: '',
     clipTitle: '',
     clipEditId: null,
@@ -273,6 +276,8 @@ function filesApp() {
         this.updateParamCryptKeys();
         this.load();
         if (this.tab === 'upload') this.loadUploadDir();
+        this.resetClipSync();
+        if (this.tab === 'clipboard') this.pollClipboard();
       });
 
       // Deep-watch the whole settings tree: evaluating JSON.stringify(settings)
@@ -289,7 +294,7 @@ function filesApp() {
     refreshCurrentTab() {
       if (this.tab === 'download') this.load();
       else if (this.tab === 'upload') this.loadUploadDir();
-      else if (this.tab === 'clipboard') this.loadClipboard();
+      else if (this.tab === 'clipboard') this.pollClipboard();
     },
 
     loadSettings() {
@@ -836,7 +841,7 @@ function filesApp() {
     setTab(t) {
       this.tab = t;
       if (t === 'upload') this.loadUploadDir();
-      if (t === 'clipboard') this.loadClipboard();
+      if (t === 'clipboard') this.pollClipboard();
     },
 
     textToBase64(str) {
@@ -915,21 +920,154 @@ function filesApp() {
         .filter(Boolean);
     },
 
-    async loadClipboard() {
+    // Full resync from scratch — used on auth-key change (possibly a
+    // different server/DB).
+    resetClipSync() {
+      this.clipCursor = 0;
+      this.clipItems  = [];
+      Object.keys(this.clipImages).forEach((id) => this.revokeClipImage(id));
+    },
+
+    async pollClipboard() {
       this.clipError = null;
       try {
         var encrypted = this.paramEncryptEnabled();
-        var url = API_BASE + '/api/clip/list' + (encrypted ? '?e=1' : '');
+        var url = API_BASE + '/api/clip/state?since=' + this.clipCursor + (encrypted ? '&e=1' : '');
         var res = await fetch(url, { headers: this.authHeaders() });
         if (!res.ok) throw new Error('HTTP ' + res.status);
         var data = await this.decodeResponseJSON(res, encrypted);
-        this.updateIfChanged('clipItems', data);
+        this.applyClipState(data);
       } catch(err) {
         this.clipError = 'Failed to load clipboard (' + err.message + ')';
       }
     },
 
+    // Reconcile a /api/clip/state response: upsert `changed`, drop ids absent
+    // from `ids`, honor `reset`. See CLAUDE.md's clipboard sync section.
+    applyClipState(data) {
+      if (data.rev === this.clipCursor && !data.reset) return;
+      var byId = {};
+      if (!data.reset) {
+        this.clipItems.forEach(function(n) { byId[n.id] = n; });
+      }
+      (data.changed || []).forEach(function(n) { byId[n.id] = n; });
+      if (data.ids) {
+        var live = {};
+        data.ids.forEach(function(id) { live[id] = true; });
+        Object.keys(byId).forEach(function(id) { if (!live[id]) delete byId[id]; });
+      }
+      this.clipItems = Object.keys(byId).map(function(k) { return byId[k]; });
+      this.clipCursor = data.rev;
+      this.pruneClipImages();
+    },
+
+    // Revoke cached object URLs for attachments no longer referenced by any note.
+    pruneClipImages() {
+      var referenced = {};
+      this.clipItems.forEach(function(n) {
+        (n.attachments || []).forEach(function(a) { referenced[a.id] = true; });
+      });
+      Object.keys(this.clipImages).forEach((id) => {
+        if (!referenced[id]) this.revokeClipImage(id);
+      });
+    },
+
+    revokeClipImage(id) {
+      var v = this.clipImages[id];
+      if (typeof v === 'string' && v.indexOf('blob:') === 0) {
+        try { URL.revokeObjectURL(v); } catch(e) {}
+      }
+      delete this.clipImages[id];
+    },
+
+    // Lazily fetch an attachment's bytes once (immutable per id), disguised by
+    // the current transform, and cache the resulting object URL.
+    async ensureAttachment(att) {
+      if (this.clipImages[att.id] !== undefined) return;
+      this.clipImages[att.id] = 'loading';
+      try {
+        var t          = this.settings.transform;
+        var password   = (t.type === 'pdf'      && t.pdf.password.enabled) ? this.randomHex(10) : null;
+        var htmlB64Key = (t.type === 'html-b64') ? this.randomHex(16) : null;
+        var res = await fetch(API_BASE + '/api/clip/attachment/download', {
+          method:  'POST',
+          headers: this.jsonHeaders(),
+          body:    this.encodeBody({
+            id:        att.id,
+            transform: t.type,
+            args:      this.buildTransformArgs(password, htmlB64Key),
+          }),
+        });
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        var buffer = await res.arrayBuffer();
+        var bytes  = await this.decrypt(buffer, password, htmlB64Key);
+        this.clipImages[att.id] = URL.createObjectURL(new Blob([bytes], { type: att.mime }));
+      } catch(err) {
+        this.clipImages[att.id] = 'error';
+      }
+    },
+
+    openAttachment(id) {
+      var url = this.clipImages[id];
+      if (typeof url === 'string' && url.indexOf('blob:') === 0) window.open(url, '_blank');
+    },
+
+    handleClipPaste(event) {
+      var items = (event.clipboardData && event.clipboardData.items) || [];
+      var added = false;
+      for (var i = 0; i < items.length; i++) {
+        var it = items[i];
+        if (it.kind === 'file' && it.type.indexOf('image/') === 0) {
+          var blob = it.getAsFile();
+          if (blob) {
+            this.pendingAttachments.push({ blob: blob, url: URL.createObjectURL(blob), mime: it.type });
+            added = true;
+          }
+        }
+      }
+      if (added) event.preventDefault();
+    },
+
+    removePendingAttachment(i) {
+      var pa = this.pendingAttachments[i];
+      if (!pa) return;
+      try { URL.revokeObjectURL(pa.url); } catch(e) {}
+      this.pendingAttachments.splice(i, 1);
+    },
+
+    clearPendingAttachments() {
+      this.pendingAttachments.forEach(function(pa) {
+        try { URL.revokeObjectURL(pa.url); } catch(e) {}
+      });
+      this.pendingAttachments = [];
+    },
+
+    async uploadAttachment(noteId, pa) {
+      var bytes = new Uint8Array(await pa.blob.arrayBuffer());
+      var enc   = await this.encodeBytesForUpload(bytes, 'attachment');
+      var fd    = new FormData();
+      var spec  = {
+        transform: this.settings.transform.type,
+        args:      enc.args,
+        note_id:   noteId,
+        mime:      pa.mime,
+      };
+      fd.append('transform', new Blob([this.encodeBody(spec)]), 'transform.json');
+      fd.append('file', enc.data, 'image');
+      var res = await fetch(API_BASE + '/api/clip/attachment', {
+        method:  'POST',
+        headers: this.authHeaders(),
+        body:    fd,
+      });
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+    },
+
+    canSubmitClip() {
+      return !!this.clipText.trim() || !!this.clipTitle.trim() || this.pendingAttachments.length > 0;
+    },
+
     async submitClip() {
+      if (!this.canSubmitClip()) return;
       this.clipError = null;
       var editing = this.clipEditId !== null;
       try {
@@ -937,16 +1075,26 @@ function filesApp() {
         var title = this.clipTitle.replace(/[\u0000-\u001f\u007f-\u009f]/g, ' ').trim();
         var body = { title: title, data: this.textToBase64(this.clipText) };
         if (editing) { body.id = this.clipEditId; }
+        var encrypted = this.paramEncryptEnabled();
         var res = await fetch(url, {
           method:  'POST',
           headers: this.jsonHeaders(),
           body:    this.encodeBody(body),
         });
         if (!res.ok) throw new Error('HTTP ' + res.status);
+        var noteId = this.clipEditId;
+        if (!editing) {
+          var created = await this.decodeResponseJSON(res, encrypted);
+          noteId = created.id;
+        }
+        for (var i = 0; i < this.pendingAttachments.length; i++) {
+          await this.uploadAttachment(noteId, this.pendingAttachments[i]);
+        }
+        this.clearPendingAttachments();
         this.clipText   = '';
         this.clipTitle  = '';
         this.clipEditId = null;
-        await this.loadClipboard();
+        await this.pollClipboard();
       } catch(err) {
         this.clipError = (editing ? 'Failed to update note (' : 'Failed to submit note (') + err.message + ')';
       }
@@ -965,7 +1113,6 @@ function filesApp() {
       this.clipEditId = null;
     },
 
-
     async deleteClip(id) {
       if (this.settings.confirmDelete && !window.confirm('Delete this note?')) return;
       this.clipError = null;
@@ -976,9 +1123,24 @@ function filesApp() {
           body:    this.encodeBody({ id: id }),
         });
         if (!res.ok) throw new Error('HTTP ' + res.status);
-        await this.loadClipboard();
+        await this.pollClipboard();
       } catch(err) {
         this.clipError = 'Failed to delete note (' + err.message + ')';
+      }
+    },
+
+    async deleteAttachment(id) {
+      this.clipError = null;
+      try {
+        var res = await fetch(API_BASE + '/api/clip/attachment/delete', {
+          method:  'DELETE',
+          headers: this.jsonHeaders(),
+          body:    this.encodeBody({ id: id }),
+        });
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        await this.pollClipboard();
+      } catch(err) {
+        this.clipError = 'Failed to delete image (' + err.message + ')';
       }
     },
 

@@ -59,7 +59,7 @@ Commands:
   ul-list   [flags]                            list the upload directory
   download  [flags] <remote-path>              download, reversing the transform
   upload    [flags] <local-file>                upload, applying the transform
-  clip      list|new|edit|delete               manage clipboard notes
+  clip      list|new|edit|delete|attach|get-attachment  manage clipboard notes/images
   sim       download|upload [flags]             probe transport via a synthetic file/buffer (no filesystem I/O, no transform)
 
 Run "wgcli <command> -h" for command-specific flags.

@@ -322,11 +322,21 @@
         <div x-show="clipError" class="error" x-text="clipError"></div>
         <div class="clip-compose">
           <input type="text" class="clip-title-input" x-model="clipTitle" maxlength="200" placeholder="Title (optional)"
+                 @paste="handleClipPaste($event)"
                  @keydown.escape.prevent="cancelEdit()" @keydown.enter.prevent="$refs.clipTextarea.focus()">
-          <textarea class="clip-textarea" x-model="clipText" x-ref="clipTextarea" placeholder="Type a note..."
+          <textarea class="clip-textarea" x-model="clipText" x-ref="clipTextarea" placeholder="Type a note, or paste an image…"
+                    @paste="handleClipPaste($event)"
                     @keydown.escape.prevent="cancelEdit()"></textarea>
+          <div class="clip-pending" x-show="pendingAttachments.length > 0">
+            <template x-for="(pa, i) in pendingAttachments" :key="i">
+              <div class="clip-thumb">
+                <img :src="pa.url" alt="">
+                <button class="clip-thumb-del" @click="removePendingAttachment(i)" title="Remove image">✕</button>
+              </div>
+            </template>
+          </div>
           <div class="clip-btn-row">
-            <button class="choose-btn" @click="submitClip()" :disabled="!clipText.trim()"
+            <button class="choose-btn" @click="submitClip()" :disabled="!canSubmitClip()"
                     x-text="clipEditId !== null ? 'Update' : 'Submit'"></button>
             <button class="choose-btn" x-show="clipEditId !== null" @click="cancelEdit()">Cancel</button>
           </div>
@@ -356,6 +366,18 @@
                 <button class="clip-delete" @click="deleteClip(v.item.id)" title="Delete">✕</button>
               </div>
               <div class="clip-text"><template x-for="(seg, i) in v.body" :key="i"><span :class="{ 'clip-hl': seg.m }" x-text="seg.t"></span></template></div>
+              <div class="clip-attachments" x-show="v.item.attachments && v.item.attachments.length > 0">
+                <template x-for="att in v.item.attachments" :key="att.id">
+                  <div class="clip-thumb" x-init="ensureAttachment(att)">
+                    <template x-if="clipImages[att.id] && String(clipImages[att.id]).indexOf('blob:') === 0">
+                      <img :src="clipImages[att.id]" alt="" title="Open image" @click="openAttachment(att.id)">
+                    </template>
+                    <span class="clip-thumb-ph" x-show="!clipImages[att.id] || clipImages[att.id] === 'loading'">…</span>
+                    <span class="clip-thumb-ph" x-show="clipImages[att.id] === 'error'" title="Failed to load">⚠</span>
+                    <button class="clip-thumb-del" x-show="clipEditId === v.item.id" @click="deleteAttachment(att.id)" title="Delete image">✕</button>
+                  </div>
+                </template>
+              </div>
               <div class="clip-footer">
                 <button class="clip-action" @click="downloadClip(v.item)" title="Download note">
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>

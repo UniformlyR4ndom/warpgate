@@ -683,6 +683,48 @@ def run_clipboard_tests(wgcli_bin: Path, base_url: str, auth_key: str, param_cry
     p = run_cli(wgcli_bin, ["clip", "delete", *common, id2])
     check(f"delete {id2} (cleanup)", p)
 
+    # Image attachment round-trip through each transform.
+    img = Path(tempfile.mktemp(suffix=".png"))
+    img.write_bytes(b"\x89PNG\r\n\x1a\n" + secrets.token_bytes(4096))
+    try:
+        for tname, targs in [
+            ("id", []),
+            ("xor", ["-key", "aabbccdd"]),
+            ("aes-ctr", ["-key", "00112233445566778899aabbccddeeff", "-iv", "0102030405060708090a0b0c0d0e0f10"]),
+            ("html-b64", ["-key", "0102030405060708090a0b0c0d0e0f10"]),
+            ("pdf", []),
+        ]:
+            p = run_cli(wgcli_bin, ["clip", "new", *common, "-title", f"shot-{tname}", ""])
+            note_id = re.search(r"created note (\d+)", p.stdout)
+            if not note_id:
+                results.append(TestResult(f"clip attach {tname}: create note{label_suffix}", False, p.stdout + p.stderr))
+                continue
+            note_id = note_id.group(1)
+
+            p = run_cli(wgcli_bin, ["clip", "attach", *common, "-transform", tname, *targs, note_id, str(img)])
+            aid = re.search(r"attached image (\d+)", p.stdout)
+            ok = p.returncode == 0 and aid is not None
+            results.append(TestResult(f"clip attach {tname}{label_suffix}", ok, "" if ok else p.stdout + p.stderr))
+            if not ok:
+                continue
+            aid = aid.group(1)
+
+            p = run_cli(wgcli_bin, ["clip", "list", *common])
+            ok = p.returncode == 0 and f"#{aid}" in p.stdout and "image/png" in p.stdout
+            results.append(TestResult(f"clip list shows attachment {tname}{label_suffix}", ok, "" if ok else p.stdout))
+
+            out = Path(tempfile.mktemp(suffix=".png"))
+            try:
+                p = run_cli(wgcli_bin, ["clip", "get-attachment", *common, "-transform", tname, *targs, "-o", str(out), aid])
+                ok = p.returncode == 0 and out.exists() and out.read_bytes() == img.read_bytes()
+                results.append(TestResult(f"clip get-attachment {tname} round-trips{label_suffix}", ok, "" if ok else p.stdout + p.stderr))
+            finally:
+                out.unlink(missing_ok=True)
+
+            run_cli(wgcli_bin, ["clip", "delete", *common, note_id])
+    finally:
+        img.unlink(missing_ok=True)
+
     return results
 
 
