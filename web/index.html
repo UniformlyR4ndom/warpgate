@@ -321,6 +321,8 @@
       <div x-show="tab === 'clipboard'">
         <div x-show="clipError" class="error" x-text="clipError"></div>
         <div class="clip-compose">
+          <input type="text" class="clip-title-input" x-model="clipTitle" maxlength="200" placeholder="Title (optional)"
+                 @keydown.escape.prevent="cancelEdit()" @keydown.enter.prevent="$refs.clipTextarea.focus()">
           <textarea class="clip-textarea" x-model="clipText" x-ref="clipTextarea" placeholder="Type a note..."
                     @keydown.escape.prevent="cancelEdit()"></textarea>
           <div class="clip-btn-row">
@@ -331,33 +333,44 @@
         </div>
         <div class="clip-list">
           <div class="clip-list-header" x-show="clipItems.length > 0">
+            <input type="search" class="clip-search" x-model="clipSearch" placeholder="Search notes…"
+                   title="Case-insensitive substring search; matches are highlighted" @keydown.escape="clipSearch = ''">
+            <select class="clip-search-scope" x-model="settings.clipSearchScope" title="Which fields the search looks at">
+              <option value="all">Title + content</option>
+              <option value="title">Title</option>
+              <option value="content">Content</option>
+            </select>
             <button class="clip-sort-btn" @click="settings.clipSortDesc = !settings.clipSortDesc"
                     :title="settings.clipSortDesc ? 'Newest first — click to sort oldest first' : 'Oldest first — click to sort newest first'">
               <svg :class="{ 'clip-sort-asc': !settings.clipSortDesc }" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><polyline points="19 12 12 19 5 12"></polyline></svg>
               <span x-text="settings.clipSortDesc ? 'Newest first' : 'Oldest first'"></span>
             </button>
           </div>
-          <template x-for="item in sortedClipItems()" :key="item.id">
+          <template x-for="v in visibleClipItems()" :key="v.item.id">
             <div class="clip-item">
               <div class="clip-meta">
-                <span class="clip-ts" x-text="formatTS(item.ts)"></span>
-                <button class="clip-delete" @click="deleteClip(item.id)" title="Delete">✕</button>
+                <span class="clip-head">
+                  <span class="clip-title" x-show="v.item.title"><template x-for="(seg, i) in v.title" :key="i"><span :class="{ 'clip-hl': seg.m }" x-text="seg.t"></span></template></span>
+                  <span class="clip-ts" x-text="formatTS(v.item.ts)"></span>
+                </span>
+                <button class="clip-delete" @click="deleteClip(v.item.id)" title="Delete">✕</button>
               </div>
-              <div class="clip-text" x-text="base64ToText(item.data)"></div>
+              <div class="clip-text"><template x-for="(seg, i) in v.body" :key="i"><span :class="{ 'clip-hl': seg.m }" x-text="seg.t"></span></template></div>
               <div class="clip-footer">
-                <button class="clip-action" @click="downloadClip(item)" title="Download note">
+                <button class="clip-action" @click="downloadClip(v.item)" title="Download note">
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
                 </button>
-                <button class="clip-action" @click="copyClip(item.data)" title="Copy to clipboard">
+                <button class="clip-action" @click="copyClip(v.item.data)" title="Copy to clipboard">
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
                 </button>
-                <button class="clip-action" @click="editClip(item)" title="Edit note">
+                <button class="clip-action" @click="editClip(v.item)" title="Edit note">
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"></path></svg>
                 </button>
               </div>
             </div>
           </template>
           <div x-show="!clipError && clipItems.length === 0" class="upload-empty">No notes yet.</div>
+          <div x-show="clipItems.length > 0 && visibleClipItems().length === 0" class="upload-empty">No notes match.</div>
         </div>
       </div>
 

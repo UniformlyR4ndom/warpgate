@@ -16,9 +16,10 @@ import (
 // clipItem mirrors the server's ClipItem (db.go); it can't be imported
 // directly since the server is package main.
 type clipItem struct {
-	ID   int64  `json:"id"`
-	TS   int64  `json:"ts"`
-	Data string `json:"data"` // base64-encoded
+	ID    int64  `json:"id"`
+	TS    int64  `json:"ts"`
+	Title string `json:"title"`
+	Data  string `json:"data"` // base64-encoded
 }
 
 func fetchClipList(g *globalFlags) ([]clipItem, error) {
@@ -46,10 +47,11 @@ func fetchClipList(g *globalFlags) ([]clipItem, error) {
 	return items, nil
 }
 
-func postClipNew(g *globalFlags, data []byte) (id, ts int64, err error) {
+func postClipNew(g *globalFlags, title string, data []byte) (id, ts int64, err error) {
 	body, err := g.encodeBody(struct {
-		Data string `json:"data"`
-	}{base64.StdEncoding.EncodeToString(data)})
+		Title string `json:"title,omitempty"`
+		Data  string `json:"data"`
+	}{title, base64.StdEncoding.EncodeToString(data)})
 	if err != nil {
 		return 0, 0, err
 	}
@@ -83,11 +85,13 @@ func postClipNew(g *globalFlags, data []byte) (id, ts int64, err error) {
 	return result.ID, result.TS, nil
 }
 
-func postClipEdit(g *globalFlags, id int64, data []byte) error {
+// postClipEdit leaves the note's title unchanged when title is nil.
+func postClipEdit(g *globalFlags, id int64, title *string, data []byte) error {
 	body, err := g.encodeBody(struct {
-		ID   int64  `json:"id"`
-		Data string `json:"data"`
-	}{id, base64.StdEncoding.EncodeToString(data)})
+		ID    int64   `json:"id"`
+		Title *string `json:"title,omitempty"`
+		Data  string  `json:"data"`
+	}{id, title, base64.StdEncoding.EncodeToString(data)})
 	if err != nil {
 		return err
 	}
@@ -165,7 +169,11 @@ func runClipList(args []string) error {
 			return fmt.Errorf("decoding note %d: %w", it.ID, err)
 		}
 		ts := time.Unix(it.TS, 0).Format(time.RFC3339)
-		fmt.Printf("[%d] %s\n%s\n\n", it.ID, ts, data)
+		if it.Title != "" {
+			fmt.Printf("[%d] %s %s\n%s\n\n", it.ID, ts, it.Title, data)
+		} else {
+			fmt.Printf("[%d] %s\n%s\n\n", it.ID, ts, data)
+		}
 	}
 	return nil
 }
@@ -174,6 +182,7 @@ func runClipNew(args []string) error {
 	fs := flag.NewFlagSet("clip new", flag.ExitOnError)
 	g := addGlobalFlags(fs)
 	file := fs.String("f", "", "read note content from this file instead of the positional argument")
+	title := fs.String("title", "", "note title (optional)")
 	fs.Parse(args)
 
 	data, err := clipTextArg(fs, *file, 0)
@@ -181,7 +190,7 @@ func runClipNew(args []string) error {
 		return err
 	}
 
-	id, ts, err := postClipNew(g, data)
+	id, ts, err := postClipNew(g, *title, data)
 	if err != nil {
 		return err
 	}
@@ -193,7 +202,15 @@ func runClipEdit(args []string) error {
 	fs := flag.NewFlagSet("clip edit", flag.ExitOnError)
 	g := addGlobalFlags(fs)
 	file := fs.String("f", "", "read note content from this file instead of the positional argument")
+	titleFlag := fs.String("title", "", "new note title; empty clears it, omitting the flag keeps the current one")
 	fs.Parse(args)
+
+	var title *string
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "title" {
+			title = titleFlag
+		}
+	})
 
 	if fs.NArg() < 1 {
 		return fmt.Errorf("usage: wgcli clip edit [flags] <id> [text]")
@@ -207,7 +224,7 @@ func runClipEdit(args []string) error {
 		return err
 	}
 
-	if err := postClipEdit(g, id, data); err != nil {
+	if err := postClipEdit(g, id, title, data); err != nil {
 		return err
 	}
 	fmt.Printf("updated note %d\n", id)

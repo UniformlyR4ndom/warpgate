@@ -3,7 +3,24 @@ package main
 import (
 	"encoding/base64"
 	"net/http"
+	"unicode"
+	"unicode/utf8"
 )
+
+const clipTitleMaxLen = 200
+
+// validClipTitle accepts a single line of at most clipTitleMaxLen characters.
+func validClipTitle(t string) bool {
+	if !utf8.ValidString(t) || utf8.RuneCountInString(t) > clipTitleMaxLen {
+		return false
+	}
+	for _, r := range t {
+		if unicode.IsControl(r) {
+			return false
+		}
+	}
+	return true
+}
 
 func (s *Server) handleClipNew(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
@@ -11,11 +28,16 @@ func (s *Server) handleClipNew(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		Data string `json:"data"`
+		Title string `json:"title"`
+		Data  string `json:"data"`
 	}
 	wasEncrypted, err := s.decodeParams(r.Body, &req)
 	if err != nil {
 		http.Error(w, "invalid request body", http.StatusUnauthorized)
+		return
+	}
+	if !validClipTitle(req.Title) {
+		http.Error(w, "invalid title", http.StatusBadRequest)
 		return
 	}
 	raw, err := base64.StdEncoding.DecodeString(req.Data)
@@ -23,7 +45,7 @@ func (s *Server) handleClipNew(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "data is not valid base64", http.StatusBadRequest)
 		return
 	}
-	id, ts, err := s.db.InsertClipboard(raw)
+	id, ts, err := s.db.InsertClipboard(req.Title, raw)
 	if err != nil {
 		http.Error(w, "internal server error", http.StatusInternalServerError)
 		return
@@ -40,11 +62,16 @@ func (s *Server) handleClipEdit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		ID   int64  `json:"id"`
-		Data string `json:"data"`
+		ID    int64   `json:"id"`
+		Title *string `json:"title"`
+		Data  string  `json:"data"`
 	}
 	if _, err := s.decodeParams(r.Body, &req); err != nil {
 		http.Error(w, "invalid request body", http.StatusUnauthorized)
+		return
+	}
+	if req.Title != nil && !validClipTitle(*req.Title) {
+		http.Error(w, "invalid title", http.StatusBadRequest)
 		return
 	}
 	raw, err := base64.StdEncoding.DecodeString(req.Data)
@@ -52,7 +79,7 @@ func (s *Server) handleClipEdit(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "data is not valid base64", http.StatusBadRequest)
 		return
 	}
-	found, err := s.db.UpdateClipboard(req.ID, raw)
+	found, err := s.db.UpdateClipboard(req.ID, req.Title, raw)
 	if err != nil {
 		http.Error(w, "internal server error", http.StatusInternalServerError)
 		return

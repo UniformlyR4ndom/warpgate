@@ -26,7 +26,33 @@ func OpenDB(path string) (*DB, error) {
 		conn.Close()
 		return nil, fmt.Errorf("initializing schema: %w", err)
 	}
+	if err := addColumnIfMissing(conn, "clipboard", "title", `TEXT NOT NULL DEFAULT ''`); err != nil {
+		conn.Close()
+		return nil, fmt.Errorf("migrating schema: %w", err)
+	}
 	return &DB{sql: conn}, nil
+}
+
+func addColumnIfMissing(conn *sql.DB, table, column, decl string) error {
+	rows, err := conn.Query(`SELECT name FROM pragma_table_info(?)`, table)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return err
+		}
+		if name == column {
+			return nil
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	_, err = conn.Exec(fmt.Sprintf(`ALTER TABLE %s ADD COLUMN %s %s`, table, column, decl))
+	return err
 }
 
 func (db *DB) Close() error {
@@ -34,14 +60,15 @@ func (db *DB) Close() error {
 }
 
 type ClipItem struct {
-	ID   int64  `json:"id"`
-	TS   int64  `json:"ts"`
-	Data string `json:"data"` // base64-encoded
+	ID    int64  `json:"id"`
+	TS    int64  `json:"ts"`
+	Title string `json:"title"`
+	Data  string `json:"data"` // base64-encoded
 }
 
-func (db *DB) InsertClipboard(data []byte) (id int64, ts int64, err error) {
+func (db *DB) InsertClipboard(title string, data []byte) (id int64, ts int64, err error) {
 	ts = time.Now().Unix()
-	res, err := db.sql.Exec(`INSERT INTO clipboard (timestamp, data) VALUES (?, ?)`, ts, data)
+	res, err := db.sql.Exec(`INSERT INTO clipboard (timestamp, title, data) VALUES (?, ?, ?)`, ts, title, data)
 	if err != nil {
 		return 0, 0, err
 	}
@@ -49,9 +76,11 @@ func (db *DB) InsertClipboard(data []byte) (id int64, ts int64, err error) {
 	return id, ts, err
 }
 
-func (db *DB) UpdateClipboard(id int64, data []byte) (bool, error) {
+// UpdateClipboard keeps the existing title when title is nil.
+func (db *DB) UpdateClipboard(id int64, title *string, data []byte) (bool, error) {
 	ts := time.Now().Unix()
-	res, err := db.sql.Exec(`UPDATE clipboard SET data = ?, timestamp = ? WHERE id = ?`, data, ts, id)
+	res, err := db.sql.Exec(`UPDATE clipboard SET data = ?, title = COALESCE(?, title), timestamp = ? WHERE id = ?`,
+		data, title, ts, id)
 	if err != nil {
 		return false, err
 	}
@@ -69,7 +98,7 @@ func (db *DB) DeleteClipboard(id int64) (bool, error) {
 }
 
 func (db *DB) ListClipboard() ([]ClipItem, error) {
-	rows, err := db.sql.Query(`SELECT id, timestamp, data FROM clipboard ORDER BY id`)
+	rows, err := db.sql.Query(`SELECT id, timestamp, title, data FROM clipboard ORDER BY id`)
 	if err != nil {
 		return nil, err
 	}
@@ -78,14 +107,16 @@ func (db *DB) ListClipboard() ([]ClipItem, error) {
 	var items []ClipItem
 	for rows.Next() {
 		var id, ts int64
+		var title string
 		var raw []byte
-		if err := rows.Scan(&id, &ts, &raw); err != nil {
+		if err := rows.Scan(&id, &ts, &title, &raw); err != nil {
 			return nil, err
 		}
 		items = append(items, ClipItem{
-			ID:   id,
-			TS:   ts,
-			Data: base64.StdEncoding.EncodeToString(raw),
+			ID:    id,
+			TS:    ts,
+			Title: title,
+			Data:  base64.StdEncoding.EncodeToString(raw),
 		})
 	}
 	return items, rows.Err()

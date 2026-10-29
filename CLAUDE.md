@@ -67,8 +67,8 @@ The Go module (`warpgate`, Go 1.25.0) lives at the repo root. The frontend is em
 | GET/Upgrade | `/api/sim/ws/download`  | Yes (in-band) | WebSocket alternative to `/api/sim/download`; see below |
 | GET/Upgrade | `/api/sim/ws/upload`    | Yes (in-band) | WebSocket alternative to `/api/sim/upload` (requires `-ul-root`); see below |
 | GET      | `/api/clip/list`        | Yes           | List all clipboard notes |
-| POST     | `/api/clip/new`         | Yes           | Create a clipboard note; body: `{"data":"<base64>"}` |
-| POST     | `/api/clip/edit`        | Yes           | Update a note's content and timestamp; body: `{"id":<id>,"data":"<base64>"}` |
+| POST     | `/api/clip/new`         | Yes           | Create a clipboard note; body: `{"title":"...","data":"<base64>"}` (`title` optional) |
+| POST     | `/api/clip/edit`        | Yes           | Update a note's content and timestamp; body: `{"id":<id>,"title":"...","data":"<base64>"}` (`title` omitted = keep) |
 | DELETE   | `/api/clip/delete`      | Yes           | Delete a note by ID; body: `{"id":<id>}` |
 | GET      | `/static/...`           | No            | Embedded frontend (HTML, JS, CSS) |
 
@@ -687,23 +687,31 @@ Notes are stored in a SQLite database (default `warpgate.sqlite`, configurable w
 CREATE TABLE IF NOT EXISTS clipboard (
     id        INTEGER PRIMARY KEY AUTOINCREMENT,
     timestamp INTEGER NOT NULL,
-    data      TEXT    NOT NULL
+    data      TEXT    NOT NULL,
+    title     TEXT    NOT NULL DEFAULT ''
 )
 ```
 
+`title` is added by `addColumnIfMissing` in `OpenDB` (`ALTER TABLE` when the column is absent), so
+pre-title databases migrate in place. `''` is the only representation of "untitled".
+
 ### `db.go`
 
-- `OpenDB(path string) (*DB, error)` — opens/creates the SQLite file and initialises the schema.
-- `DB.InsertClipboard(data []byte) (id, ts int64, err error)` — inserts a new note with the current Unix timestamp.
-- `DB.UpdateClipboard(id int64, data []byte) (bool, error)` — replaces note content and refreshes timestamp; returns false if ID not found.
+- `OpenDB(path string) (*DB, error)` — opens/creates the SQLite file and initialises/migrates the schema.
+- `DB.InsertClipboard(title string, data []byte) (id, ts int64, err error)` — inserts a new note with the current Unix timestamp.
+- `DB.UpdateClipboard(id int64, title *string, data []byte) (bool, error)` — replaces note content and refreshes timestamp; a nil `title` keeps the existing one; returns false if ID not found.
 - `DB.DeleteClipboard(id int64) (bool, error)` — deletes a note; returns false if ID not found.
 - `DB.ListClipboard() ([]ClipItem, error)` — returns all notes ordered by `id`; `data` is base64-encoded in the returned struct.
 
-The `ClipItem` struct is `{ID int64, TS int64, Data string}` and serialises to `{"id":…,"ts":…,"data":"<base64>"}`.
+The `ClipItem` struct is `{ID int64, TS int64, Title string, Data string}` and serialises to `{"id":…,"ts":…,"title":"…","data":"<base64>"}`.
 
 ### `clip.go`
 
 Handlers `handleClipList`, `handleClipNew`, `handleClipEdit`, `handleClipDelete` — all registered via `withAuth`. Base64 decoding of the incoming `data` field is done in the handler before passing raw bytes to the DB layer.
+`title` is a plain JSON string (not base64), validated by `validClipTitle`: valid UTF-8, at most
+`clipTitleMaxLen` (200) characters, no control characters (so single-line); invalid → `400`.
+`handleClipEdit` decodes it into a `*string` so an omitted title (e.g. from an older client) keeps
+the stored one.
 
 ## Frontend (`web/`)
 
@@ -797,9 +805,10 @@ label text.
 
 ### Clipboard tab
 
-- Large textarea for composing a note; Submit button creates a new note via `/api/clip/new`.
-- Clicking ✏ on a note pre-fills the textarea for editing; the button becomes "Update" / "Cancel". Pressing Escape or clicking "Cancel" discards the edit.
-- Each note shows its timestamp and decoded text, with footer action buttons: ⬇ (download as `.txt`), 📋 (copy to system clipboard), ✏ (edit).
+- Optional single-line title input (`clipTitle`) above a large textarea for composing a note; Submit button creates a new note via `/api/clip/new`. Control characters in the title are replaced by spaces client-side before sending.
+- Clicking ✏ on a note pre-fills title and textarea for editing; the button becomes "Update" / "Cancel". Pressing Escape (in either field) or clicking "Cancel" discards the edit.
+- Each note shows its title (bold, only if non-empty — no placeholder for untitled notes), timestamp and decoded text, with footer action buttons: ⬇ (download as `.txt`), 📋 (copy to system clipboard), ✏ (edit).
+- Search box + scope selector (Title + content / Title / Content, `settings.clipSearchScope`, persisted) above the list; the query (`clipSearch`) is not persisted. Purely client-side — `/api/clip/list` already returns every note in full. `visibleClipItems()` sorts, filters (case-insensitive substring), and splits title/content into `{t, m}` segments via `highlightSegments`; matches render as `<span class="clip-hl">` through `x-text`, never `x-html`, since note content comes from untrusted machines.
 - ✕ delete button in the note header; optionally prompts for confirmation (controlled by "Confirm note delete" in the General panel section).
 
 ### Benchmark tab

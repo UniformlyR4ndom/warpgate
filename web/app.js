@@ -167,7 +167,9 @@ function filesApp() {
     benchmarkPrepProgress: null, // not persisted: 0-1 during chunked buffer generation (real signal), null during hashing (no incremental API)
     clipItems: [],
     clipText: '',
+    clipTitle: '',
     clipEditId: null,
+    clipSearch: '', // not persisted: transient filter, like navigation
     clipError: null,
     authShowKey: false, // not persisted: always start masked
     authKeyHash: '', // not persisted: derived from settings.auth.key, recomputed on change
@@ -200,6 +202,7 @@ function filesApp() {
       autoRefresh: false,
       confirmDelete: true,
       clipSortDesc: true, // notes tab: true = newest first (default), false = oldest first
+      clipSearchScope: 'all', // notes tab: 'all' | 'title' | 'content'
       wsFrameSizeKB: 4096, // 4M default, clamped to the server's max
       contentType: {
         preset: 'auto', // 'auto' = let the transform pick, 'custom' = use `custom`, anything else = the literal value
@@ -874,12 +877,42 @@ function filesApp() {
 
     downloadClip(item) {
       var text = this.base64ToText(item.data);
-      this.triggerDownload(new TextEncoder().encode(text), 'note-' + item.id + '.txt');
+      // Strip characters that are invalid in Windows or Unix filenames.
+      var name = item.title.replace(/[<>:"\/\\|?*\u0000-\u001f\u007f]/g, '_').replace(/^[\s.]+|[\s.]+$/g, '').slice(0, 100);
+      this.triggerDownload(new TextEncoder().encode(text), (name || 'note-' + item.id) + '.txt');
     },
 
-    sortedClipItems() {
+    // Splits str into [{t, m}] segments, m marking case-insensitive matches of q.
+    highlightSegments(str, q) {
+      if (!q) return [{ t: str, m: false }];
+      var re = new RegExp(q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'giu');
+      var segs = [];
+      var last = 0;
+      var match;
+      while ((match = re.exec(str)) !== null) {
+        if (match.index > last) segs.push({ t: str.slice(last, match.index), m: false });
+        segs.push({ t: match[0], m: true });
+        last = re.lastIndex;
+      }
+      if (last < str.length) segs.push({ t: str.slice(last), m: false });
+      return segs;
+    },
+
+    visibleClipItems() {
+      var q = this.clipSearch;
+      var scope = this.settings.clipSearchScope;
       var dir = this.settings.clipSortDesc ? -1 : 1;
-      return this.clipItems.slice().sort(function(a, b) { return (a.ts - b.ts) * dir; });
+      var self = this;
+      return this.clipItems.slice()
+        .sort(function(a, b) { return (a.ts - b.ts) * dir; })
+        .map(function(item) {
+          var text  = self.base64ToText(item.data);
+          var title = self.highlightSegments(item.title, scope !== 'content' ? q : '');
+          var body  = self.highlightSegments(text, scope !== 'title' ? q : '');
+          var hit = !q || title.some(function(s) { return s.m; }) || body.some(function(s) { return s.m; });
+          return hit ? { item: item, title: title, body: body } : null;
+        })
+        .filter(Boolean);
     },
 
     async loadClipboard() {
@@ -901,7 +934,8 @@ function filesApp() {
       var editing = this.clipEditId !== null;
       try {
         var url  = editing ? API_BASE + '/api/clip/edit' : API_BASE + '/api/clip/new';
-        var body = { data: this.textToBase64(this.clipText) };
+        var title = this.clipTitle.replace(/[\u0000-\u001f\u007f-\u009f]/g, ' ').trim();
+        var body = { title: title, data: this.textToBase64(this.clipText) };
         if (editing) { body.id = this.clipEditId; }
         var res = await fetch(url, {
           method:  'POST',
@@ -910,6 +944,7 @@ function filesApp() {
         });
         if (!res.ok) throw new Error('HTTP ' + res.status);
         this.clipText   = '';
+        this.clipTitle  = '';
         this.clipEditId = null;
         await this.loadClipboard();
       } catch(err) {
@@ -919,12 +954,14 @@ function filesApp() {
 
     editClip(item) {
       this.clipText   = this.base64ToText(item.data);
+      this.clipTitle  = item.title;
       this.clipEditId = item.id;
       this.$refs.clipTextarea.focus();
     },
 
     cancelEdit() {
       this.clipText   = '';
+      this.clipTitle  = '';
       this.clipEditId = null;
     },
 

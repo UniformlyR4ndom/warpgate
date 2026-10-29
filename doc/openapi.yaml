@@ -118,7 +118,7 @@ components:
 
     ClipItem:
       type: object
-      required: [id, ts, data]
+      required: [id, ts, title, data]
       properties:
         id:
           type: integer
@@ -130,6 +130,10 @@ components:
           format: int64
           description: Unix timestamp of when the note was created or last edited.
           example: 1751400000
+        title:
+          type: string
+          description: Note title; empty string if the note is untitled.
+          example: DC01 – nmap internal
         data:
           type: string
           format: byte
@@ -780,12 +784,20 @@ paths:
               type: object
               required: [data]
               properties:
+                title:
+                  type: string
+                  maxLength: 200
+                  description: |
+                    Optional title; omitted or empty means untitled. A single line of at most
+                    200 characters, no control characters.
+                  example: DC01 – nmap internal
                 data:
                   type: string
                   format: byte
                   description: Note content, base64-encoded.
                   example: SGVsbG8gd29ybGQh
             example:
+              title: DC01 – nmap internal
               data: SGVsbG8gd29ybGQh
       responses:
         "200":
@@ -802,7 +814,7 @@ paths:
                 id: 42
                 ts: 1751400000
         "400":
-          description: "`data` is not valid base64."
+          description: "`data` is not valid base64, or `title` is invalid."
         "401":
           description: |
             Missing or invalid `X-Auth` header, or the request body is malformed or fails to
@@ -818,7 +830,8 @@ paths:
       summary: Edit a clipboard note
       description: |
         Replaces the content of an existing note and updates its timestamp to the current time.
-        The `data` field must be the new note content base64-encoded.
+        The `data` field must be the new note content base64-encoded. If `title` is omitted, the
+        note's existing title is kept; an empty string clears it.
       requestBody:
         required: true
         content:
@@ -832,6 +845,13 @@ paths:
                   format: int64
                   description: ID of the note to update.
                   example: 42
+                title:
+                  type: string
+                  maxLength: 200
+                  description: |
+                    New title (same rules as on `/api/clip/new`). Omit to keep the current
+                    title; empty string clears it.
+                  example: DC01 – nmap internal
                 data:
                   type: string
                   format: byte
@@ -844,7 +864,7 @@ paths:
         "204":
           description: Note updated successfully.
         "400":
-          description: "`data` is not valid base64."
+          description: "`data` is not valid base64, or `title` is invalid."
         "401":
           description: |
             Missing or invalid `X-Auth` header, or the request body is malformed or fails to

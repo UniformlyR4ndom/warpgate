@@ -227,6 +227,7 @@ input.readonly {
 
 input[type="text"],
 input[type="number"],
+input[type="search"],
 select {
   width: 100%;
   background: var(--input-bg);
@@ -239,6 +240,7 @@ select {
 
 input[type="text"]:focus,
 input[type="number"]:focus,
+input[type="search"]:focus,
 select:focus {
   outline: 1px solid var(--accent);
   border-color: var(--accent);
@@ -476,8 +478,18 @@ th {
 
 .clip-list-header {
   display: flex;
-  justify-content: flex-end;
+  align-items: center;
+  gap: 0.5rem;
   margin-bottom: 0.5rem;
+}
+
+.clip-list-header .clip-search {
+  flex: 1;
+  min-width: 0;
+}
+
+.clip-list-header .clip-search-scope {
+  width: auto;
 }
 
 .clip-sort-btn {
@@ -490,6 +502,7 @@ th {
   padding: 0;
   font-size: 0.75rem;
   color: var(--dim);
+  white-space: nowrap;
   transition: color 0.15s;
 }
 
@@ -521,9 +534,28 @@ th {
   margin-bottom: 0.35rem;
 }
 
+.clip-head {
+  display: flex;
+  align-items: baseline;
+  gap: 0.6rem;
+  min-width: 0;
+}
+
+.clip-title {
+  font-weight: bold;
+  color: var(--text);
+  word-break: break-word;
+}
+
 .clip-ts {
   font-size: 0.75rem;
   color: var(--dim);
+  white-space: nowrap;
+}
+
+.clip-hl {
+  background: var(--accent);
+  color: #1e1e1e;
 }
 
 .clip-delete {

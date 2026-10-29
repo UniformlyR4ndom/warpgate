@@ -631,12 +631,14 @@ def run_clipboard_tests(wgcli_bin: Path, base_url: str, auth_key: str, param_cry
     p = run_cli(wgcli_bin, ["clip", "new", *common, "Hello, this is a test note!"])
     check("new #1", p)
 
-    p = run_cli(wgcli_bin, ["clip", "new", *common, "Second note with unicode: héllo 世界"])
-    check("new #2 (unicode)", p)
+    p = run_cli(wgcli_bin, ["clip", "new", *common, "-title", "ACME – nmap 世界", "Second note with unicode: héllo 世界"])
+    check("new #2 (unicode, titled)", p)
 
     p = run_cli(wgcli_bin, ["clip", "list", *common])
     ok = p.returncode == 0 and "Hello, this is a test note!" in p.stdout and "héllo 世界" in p.stdout
     results.append(TestResult(f"clip list shows both notes{label_suffix}", ok, "" if ok else p.stdout))
+    ok = "ACME – nmap 世界" in p.stdout
+    results.append(TestResult(f"clip list shows title{label_suffix}", ok, "" if ok else p.stdout))
 
     ids = re.findall(r"^\[(\d+)\]", p.stdout, re.MULTILINE)
     if len(ids) < 2:
@@ -654,6 +656,19 @@ def run_clipboard_tests(wgcli_bin: Path, base_url: str, auth_key: str, param_cry
         check(f"edit -f {id2}", p)
     finally:
         note_file.unlink(missing_ok=True)
+
+    p = run_cli(wgcli_bin, ["clip", "list", *common])
+    ok = p.returncode == 0 and "ACME – nmap 世界" in p.stdout
+    results.append(TestResult(f"clip edit without -title keeps title{label_suffix}", ok, "" if ok else p.stdout))
+
+    p = run_cli(wgcli_bin, ["clip", "edit", *common, "-title", "line1\nline2", id2, "x"])
+    check("edit with multi-line title rejected", p, expect_ok=False)
+
+    p = run_cli(wgcli_bin, ["clip", "edit", *common, "-title", "", id2, "content from a file"])
+    check(f"edit -title '' {id2}", p)
+    p = run_cli(wgcli_bin, ["clip", "list", *common])
+    ok = p.returncode == 0 and "ACME – nmap" not in p.stdout
+    results.append(TestResult(f"clip edit -title '' clears title{label_suffix}", ok, "" if ok else p.stdout))
 
     p = run_cli(wgcli_bin, ["clip", "delete", *common, id1])
     check(f"delete {id1}", p)
