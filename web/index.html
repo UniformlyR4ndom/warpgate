@@ -368,13 +368,15 @@
               <div class="clip-text"><template x-for="(seg, i) in v.body" :key="i"><span :class="{ 'clip-hl': seg.m }" x-text="seg.t"></span></template></div>
               <div class="clip-attachments" x-show="v.item.attachments && v.item.attachments.length > 0">
                 <template x-for="att in v.item.attachments" :key="att.id">
-                  <div class="clip-thumb" x-init="ensureAttachment(att)">
+                  <div class="clip-thumb" :class="{ 'clip-thumb-removing': isAttachmentRemoved(att.id) }" x-init="ensureAttachment(att)">
                     <template x-if="clipImages[att.id] && String(clipImages[att.id]).indexOf('blob:') === 0">
                       <img :src="clipImages[att.id]" alt="" title="Open image" @click="openAttachment(att.id)">
                     </template>
                     <span class="clip-thumb-ph" x-show="!clipImages[att.id] || clipImages[att.id] === 'loading'">…</span>
                     <span class="clip-thumb-ph" x-show="clipImages[att.id] === 'error'" title="Failed to load">⚠</span>
-                    <button class="clip-thumb-del" x-show="clipEditId === v.item.id" @click="deleteAttachment(att.id)" title="Delete image">✕</button>
+                    <button class="clip-thumb-del" x-show="clipEditId === v.item.id" @click="toggleRemoveAttachment(att.id)"
+                            x-text="isAttachmentRemoved(att.id) ? '↺' : '✕'"
+                            :title="isAttachmentRemoved(att.id) ? 'Keep image (will no longer be removed on Update)' : 'Remove image on Update'"></button>
                   </div>
                 </template>
               </div>
@@ -393,6 +395,12 @@
           </template>
           <div x-show="!clipError && clipItems.length === 0" class="upload-empty">No notes yet.</div>
           <div x-show="clipItems.length > 0 && visibleClipItems().length === 0" class="upload-empty">No notes match.</div>
+        </div>
+        <div class="lightbox" :class="{ 'lightbox-scroll': clipLightboxZoom }" x-show="clipLightbox" @click.self="closeLightbox()"
+             @keydown.escape.window="clipLightbox && closeLightbox()">
+          <button class="lightbox-close" @click="closeLightbox()" title="Close (Esc)">✕</button>
+          <img :src="clipLightbox" :class="{ 'lightbox-zoomed': clipLightboxZoom }"
+               :title="clipLightboxZoom ? 'Click to fit' : 'Click to zoom'" @click.stop="toggleLightboxZoom()" alt="">
         </div>
       </div>
 

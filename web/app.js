@@ -168,7 +168,10 @@ function filesApp() {
     clipItems: [],
     clipCursor: 0, // not persisted: last synced rev (see /api/clip/state)
     clipImages: {}, // not persisted: attachment id -> object URL | 'loading' | 'error'
+    clipLightbox: null, // not persisted: object URL of the image shown in the overlay, or null
+    clipLightboxZoom: false, // not persisted: overlay image shown at actual size (scrollable) vs fit-to-screen
     pendingAttachments: [], // not persisted: images pasted into the composer, uploaded on submit
+    clipRemovedAttachments: [], // not persisted: existing images marked for deletion, applied on Update
     clipText: '',
     clipTitle: '',
     clipEditId: null,
@@ -1009,7 +1012,18 @@ function filesApp() {
 
     openAttachment(id) {
       var url = this.clipImages[id];
-      if (typeof url === 'string' && url.indexOf('blob:') === 0) window.open(url, '_blank');
+      if (typeof url === 'string' && url.indexOf('blob:') === 0) {
+        this.clipLightboxZoom = false;
+        this.clipLightbox = url;
+      }
+    },
+
+    closeLightbox() {
+      this.clipLightbox = null;
+    },
+
+    toggleLightboxZoom() {
+      this.clipLightboxZoom = !this.clipLightboxZoom;
     },
 
     handleClipPaste(event) {
@@ -1087,10 +1101,14 @@ function filesApp() {
           var created = await this.decodeResponseJSON(res, encrypted);
           noteId = created.id;
         }
+        for (var r = 0; r < this.clipRemovedAttachments.length; r++) {
+          await this.apiDeleteAttachment(this.clipRemovedAttachments[r]);
+        }
         for (var i = 0; i < this.pendingAttachments.length; i++) {
           await this.uploadAttachment(noteId, this.pendingAttachments[i]);
         }
         this.clearPendingAttachments();
+        this.clipRemovedAttachments = [];
         this.clipText   = '';
         this.clipTitle  = '';
         this.clipEditId = null;
@@ -1104,6 +1122,7 @@ function filesApp() {
       this.clipText   = this.base64ToText(item.data);
       this.clipTitle  = item.title;
       this.clipEditId = item.id;
+      this.clipRemovedAttachments = [];
       this.$refs.clipTextarea.focus();
     },
 
@@ -1111,6 +1130,18 @@ function filesApp() {
       this.clipText   = '';
       this.clipTitle  = '';
       this.clipEditId = null;
+      this.clipRemovedAttachments = [];
+    },
+
+    isAttachmentRemoved(id) {
+      return this.clipRemovedAttachments.indexOf(id) !== -1;
+    },
+
+    // Mark/unmark an existing image for deletion; applied on Update.
+    toggleRemoveAttachment(id) {
+      var i = this.clipRemovedAttachments.indexOf(id);
+      if (i === -1) this.clipRemovedAttachments.push(id);
+      else this.clipRemovedAttachments.splice(i, 1);
     },
 
     async deleteClip(id) {
@@ -1129,19 +1160,13 @@ function filesApp() {
       }
     },
 
-    async deleteAttachment(id) {
-      this.clipError = null;
-      try {
-        var res = await fetch(API_BASE + '/api/clip/attachment/delete', {
-          method:  'DELETE',
-          headers: this.jsonHeaders(),
-          body:    this.encodeBody({ id: id }),
-        });
-        if (!res.ok) throw new Error('HTTP ' + res.status);
-        await this.pollClipboard();
-      } catch(err) {
-        this.clipError = 'Failed to delete image (' + err.message + ')';
-      }
+    async apiDeleteAttachment(id) {
+      var res = await fetch(API_BASE + '/api/clip/attachment/delete', {
+        method:  'DELETE',
+        headers: this.jsonHeaders(),
+        body:    this.encodeBody({ id: id }),
+      });
+      if (!res.ok) throw new Error('HTTP ' + res.status);
     },
 
     createPDFWithAttachment(fileBytes, filename) {
