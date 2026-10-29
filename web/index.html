@@ -255,12 +255,12 @@
         </div>
         <table x-show="!error">
           <thead>
-            <tr><th>Name</th><th class="col-size">Size</th></tr>
+            <tr><th>Name</th><th class="col-mtime" x-text="'Modified (' + utcOffsetLabel(currentUTCOffset()) + ')'"></th><th class="col-size">Size</th></tr>
           </thead>
           <tbody>
             <template x-if="pathSegments.length > 0">
               <tr class="entry dir" @click="navigateTo(pathSegments.length - 2)">
-                <td><span class="icon">📁</span>..</td><td></td>
+                <td><span class="icon">📁</span>..</td><td></td><td></td>
               </tr>
             </template>
             <template x-for="entry in entries" :key="entry.name">
@@ -269,6 +269,7 @@
                 <td>
                   <span class="icon" x-text="entry.type === 'd' ? '📁' : '📄'"></span><span x-text="entry.name"></span>
                 </td>
+                <td class="col-mtime" x-text="entry.mtime ? formatTSAt(entry.mtime, currentUTCOffset()) : ''"></td>
                 <td class="col-size" x-text="entry.type === 'f' ? formatSize(entry.size) : ''"></td>
               </tr>
             </template>
@@ -302,12 +303,13 @@
         </div>
         <table x-show="uploadEntries.length > 0">
           <thead>
-            <tr><th>Name</th><th class="col-size">Size</th></tr>
+            <tr><th>Name</th><th class="col-mtime" x-text="'Modified (' + utcOffsetLabel(currentUTCOffset()) + ')'"></th><th class="col-size">Size</th></tr>
           </thead>
           <tbody>
             <template x-for="entry in uploadEntries" :key="entry.name">
               <tr class="entry file">
                 <td><span class="icon">📄</span><span x-text="entry.name"></span></td>
+                <td class="col-mtime" x-text="entry.mtime ? formatTSAt(entry.mtime, currentUTCOffset()) : ''"></td>
                 <td class="col-size" x-text="formatSize(entry.size)"></td>
               </tr>
             </template>

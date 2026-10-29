@@ -276,6 +276,12 @@ th {
   width: 6rem;
 }
 
+.col-mtime {
+  color: var(--muted);
+  white-space: nowrap;
+  width: 11rem;
+}
+
 .icon {
   margin-right: 0.4rem;
   font-style: normal;

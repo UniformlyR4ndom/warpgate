@@ -59,6 +59,11 @@ components:
           format: int64
           description: Size in bytes. Present for files only; omitted for directories.
           example: 1048576
+        mtime:
+          type: integer
+          format: int64
+          description: Last modification time (Unix seconds). Omitted if it couldn't be read.
+          example: 1761735600
 
     UploadResponse:
       type: object

@@ -845,8 +845,27 @@ function filesApp() {
       return new TextDecoder().decode(this.binaryStringToBytes(atob(b64)));
     },
 
+    // offMin: minutes east of UTC.
+    formatTSAt(ts, offMin) {
+      var d = new Date(ts * 1000 + offMin * 60000);
+      var p = function(n) { return String(n).padStart(2, '0'); };
+      return d.getUTCFullYear() + '-' + p(d.getUTCMonth() + 1) + '-' + p(d.getUTCDate()) + ' ' +
+        p(d.getUTCHours()) + ':' + p(d.getUTCMinutes()) + ':' + p(d.getUTCSeconds());
+    },
+
+    utcOffsetLabel(offMin) {
+      var p = function(n) { return String(n).padStart(2, '0'); };
+      var abs = Math.abs(offMin);
+      return 'UTC' + (offMin < 0 ? '-' : '+') + p(Math.floor(abs / 60)) + ':' + p(abs % 60);
+    },
+
     formatTS(ts) {
-      return new Date(ts * 1000).toLocaleString();
+      var off = -new Date(ts * 1000).getTimezoneOffset();
+      return this.formatTSAt(ts, off) + ' ' + this.utcOffsetLabel(off);
+    },
+
+    currentUTCOffset() {
+      return -new Date().getTimezoneOffset();
     },
 
     async copyClip(b64) {

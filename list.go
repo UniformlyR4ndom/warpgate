@@ -10,9 +10,10 @@ type listRequest struct {
 }
 
 type listEntry struct {
-	Name string `json:"name"`
-	Type string `json:"type"`
-	Size *int64 `json:"size,omitempty"`
+	Name  string `json:"name"`
+	Type  string `json:"type"`
+	Size  *int64 `json:"size,omitempty"`
+	MTime *int64 `json:"mtime,omitempty"`
 }
 
 func listDir(root string) ([]listEntry, error) {
@@ -27,9 +28,10 @@ func listDir(root string) ([]listEntry, error) {
 			t = "d"
 		}
 		entry := listEntry{Name: e.Name(), Type: t}
-		if !e.IsDir() {
-			info, err := e.Info()
-			if err == nil {
+		if info, err := e.Info(); err == nil {
+			mtime := info.ModTime().Unix()
+			entry.MTime = &mtime
+			if !e.IsDir() {
 				size := info.Size()
 				entry.Size = &size
 			}
