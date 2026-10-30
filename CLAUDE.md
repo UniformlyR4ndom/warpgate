@@ -110,7 +110,8 @@ logs.
   than the base path. A dedicated `-ip-reg-path` is the only registration URL in its mode, since the
   UI URL doesn't contain it. While registration is open (window not expired,
   `len(registered) < regMax`), GET returns `regPageHTML`, a page that auto-submits an empty form
-  POST to the same URL; only the POST registers, then 303s to `<prefix>/static/`. This keeps link
+  POST to the same URL; only the POST registers, then 303s to `<prefix>/static/`. The page's one inline
+  script is allowed by its own CSP (`regPageCSP`, `csp.go`) via a SHA-256 hash, replacing the global one. This keeps link
   scanners/proxies that just GET the URL from consuming slots. Admitted IPs bypass registration handling
   entirely (so `/static/` serves the UI), except on a dedicated `-ip-reg-path`, which 303s them to the
   UI.
@@ -765,6 +766,17 @@ Image bytes reuse the file transform system: upload sends transform-encoded byte
 as fallback) and returns raw bytes — not param-crypted, since the transform already covers them. The
 transform used to store an image is independent of the one used to fetch it later (storage is raw),
 exactly like file upload vs. download.
+
+## Content Security Policy (`csp.go`)
+
+`withCSP` is the outermost wrapper in `Server.handler()`, so every response — UI, API, blank pages —
+carries `contentSecurityPolicy`: `script-src 'self'` and `style-src 'self'` with no `unsafe-*`, plus
+`img-src 'self' blob:` (clipboard thumbnails), `connect-src 'self'` (fetch + same-origin WS),
+`worker-src 'self'` (pdf.js worker), `object-src`/`base-uri`/`form-action 'none'`, `frame-ancestors
+'none'`. This works because the frontend has no inline `<script>`/`<style>`, no import map, no
+`eval`/`new Function`, and sets styles only via the CSSOM (Preact's `style` prop). Keep it that way: a
+CSP violation shows up only as a console error, not a server-side failure. The IP registration page is
+the one exception, with its own hash-based policy (see "IP firewall").
 
 ## Frontend (`web/`)
 

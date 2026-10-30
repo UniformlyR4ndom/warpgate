@@ -170,10 +170,10 @@ func (s *Server) handler() http.Handler {
 	if s.ipFilter != nil {
 		h = s.withIPFilter(h)
 	}
-	if s.cfg.PathPrefix == "" {
-		return h
+	if s.cfg.PathPrefix != "" {
+		h = withPathPrefix(s.cfg.PathPrefix, h)
 	}
-	return withPathPrefix(s.cfg.PathPrefix, h)
+	return withCSP(h)
 }
 
 func (s *Server) ListenAndServe() error {

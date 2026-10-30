@@ -99,8 +99,9 @@ func (c fwClient) do(method, path, ip string) *httptest.ResponseRecorder {
 func (c fwClient) expectBlank(method, path, ip string) {
 	c.t.Helper()
 	rec := c.do(method, path, ip)
-	if rec.Code != http.StatusOK || rec.Body.Len() != 0 || len(rec.Header()) != 1 ||
-		rec.Header().Get("Content-Type") != "text/html; charset=utf-8" {
+	if rec.Code != http.StatusOK || rec.Body.Len() != 0 || len(rec.Header()) != 2 ||
+		rec.Header().Get("Content-Type") != "text/html; charset=utf-8" ||
+		rec.Header().Get("Content-Security-Policy") != contentSecurityPolicy {
 		c.t.Errorf("%s %s from %s: got %d %q headers=%v; want blank", method, path, ip, rec.Code, rec.Body.String(), rec.Header())
 	}
 }
@@ -108,7 +109,8 @@ func (c fwClient) expectBlank(method, path, ip string) {
 func (c fwClient) expectRegPage(path, ip string) {
 	c.t.Helper()
 	rec := c.do(http.MethodGet, path, ip)
-	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `<form method="post">`) {
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `<form method="post">`) ||
+		rec.Header().Get("Content-Security-Policy") != regPageCSP {
 		c.t.Errorf("GET %s from %s: got %d %q; want registration page", path, ip, rec.Code, rec.Body.String())
 	}
 }

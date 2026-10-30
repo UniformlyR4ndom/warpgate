@@ -13,7 +13,9 @@ import (
 // regPageHTML registers via a script-submitted POST so that link scanners
 // which merely GET the registration URL don't claim a slot.
 const regPageHTML = `<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="referrer" content="no-referrer"></head>` +
-	`<body><form method="post"></form><script>document.forms[0].submit()</script></body></html>`
+	`<body><form method="post"></form><script>` + regPageScript + `</script></body></html>`
+
+const regPageScript = `document.forms[0].submit()`
 
 // parseIPList parses a comma-separated list of IPs and CIDR ranges.
 func parseIPList(s string) ([]netip.Prefix, error) {
@@ -227,6 +229,7 @@ func (s *Server) withIPFilter(h http.Handler) http.Handler {
 				if f.regOpen() {
 					w.Header().Set("Cache-Control", "no-store")
 					w.Header().Set("Content-Type", "text/html; charset=utf-8")
+					w.Header().Set("Content-Security-Policy", regPageCSP)
 					fmt.Fprint(w, regPageHTML)
 					return
 				}
