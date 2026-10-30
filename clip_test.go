@@ -51,7 +51,7 @@ func TestUpdateClipboardTitle(t *testing.T) {
 	}
 	defer db.Close()
 
-	id, _, err := db.InsertClipboard("nmap scan", []byte("a"))
+	id, _, err := db.InsertClipboard("nmap scan", "", []byte("a"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -100,7 +100,7 @@ func TestValidClipTitle(t *testing.T) {
 
 func mustInsert(t *testing.T, db *DB, title, text string) int64 {
 	t.Helper()
-	id, _, err := db.InsertClipboard(title, []byte(text))
+	id, _, err := db.InsertClipboard(title, "", []byte(text))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -205,6 +205,45 @@ func TestHandleClipStateDeleteLastNote(t *testing.T) {
 	}
 }
 
+func TestHandleClipNewSource(t *testing.T) {
+	s := newParamDecodeTestServer(t, Config{NoAuth: true})
+	post := func(body string) *httptest.ResponseRecorder {
+		rec := httptest.NewRecorder()
+		s.handleClipNew(rec, httptest.NewRequest(http.MethodPost, "/api/clip/new", strings.NewReader(body)))
+		return rec
+	}
+	if rec := post(`{"data":"YQ==","source":"outbox"}`); rec.Code != http.StatusOK {
+		t.Fatalf("outbox source: status %d", rec.Code)
+	}
+	if rec := post(`{"data":"Yg=="}`); rec.Code != http.StatusOK {
+		t.Fatalf("no source: status %d", rec.Code)
+	}
+	if rec := post(`{"data":"Yw==","source":"other"}`); rec.Code != http.StatusBadRequest {
+		t.Fatalf("invalid source: status %d, want 400", rec.Code)
+	}
+
+	_, notes, _, _, err := s.db.ClipState(0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(notes) != 2 || notes[0].Source != clipSourceOutbox || notes[1].Source != "" {
+		t.Fatalf("got %+v, want sources [outbox, \"\"]", notes)
+	}
+	if _, err := s.db.UpdateClipboard(notes[0].ID, nil, []byte("edited")); err != nil {
+		t.Fatal(err)
+	}
+	_, notes, _, _, _ = s.db.ClipState(0)
+	if notes[0].Source != clipSourceOutbox {
+		t.Fatalf("edit must keep source, got %q", notes[0].Source)
+	}
+
+	rec := httptest.NewRecorder()
+	s.handleClipState(rec, httptest.NewRequest(http.MethodGet, "/api/clip/state?since=0", nil))
+	if got := strings.Count(rec.Body.String(), `"source":`); got != 1 {
+		t.Fatalf("source should only be sent for the outbox note, got %d in %s", got, rec.Body.String())
+	}
+}
+
 func TestClipStateResetWhenSinceAhead(t *testing.T) {
 	db, err := OpenDB(":memory:")
 	if err != nil {
@@ -303,7 +342,7 @@ func TestMigrateSeedsRevAboveLegacyRows(t *testing.T) {
 	if rev != 3 || len(changed) != 3 {
 		t.Fatalf("after migrate: rev=%d changed=%d", rev, len(changed))
 	}
-	id, _, err := db.InsertClipboard("", []byte("d"))
+	id, _, err := db.InsertClipboard("", "", []byte("d"))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -67,7 +67,7 @@ The Go module (`warpgate`, Go 1.25.0) lives at the repo root. The frontend is em
 | GET/Upgrade | `/api/sim/ws/download`  | Yes (in-band) | WebSocket alternative to `/api/sim/download`; see below |
 | GET/Upgrade | `/api/sim/ws/upload`    | Yes (in-band) | WebSocket alternative to `/api/sim/upload` (requires `-ul-root`); see below |
 | GET      | `/api/clip/state`       | Yes           | Incremental sync; query `since=<rev>` → `{rev,changed,ids,reset}` (see "Clipboard sync") |
-| POST     | `/api/clip/new`         | Yes           | Create a clipboard note; body: `{"title":"...","data":"<base64>"}` (`title` optional) |
+| POST     | `/api/clip/new`         | Yes           | Create a clipboard note; body: `{"title":"...","data":"<base64>","source":"outbox"}` (`title`, `source` optional) |
 | POST     | `/api/clip/edit`        | Yes           | Update a note's content and timestamp; body: `{"id":<id>,"title":"...","data":"<base64>"}` (`title` omitted = keep) |
 | DELETE   | `/api/clip/delete`      | Yes           | Delete a note by ID; body: `{"id":<id>}` |
 | POST     | `/api/clip/attachment`  | Yes           | Attach an image to a note; multipart (`transform` part `{transform,args,note_id,mime}` + `file`), ≤20 MiB |
@@ -695,7 +695,8 @@ CREATE TABLE clipboard (
     timestamp INTEGER NOT NULL,
     data      TEXT    NOT NULL,
     title     TEXT    NOT NULL DEFAULT '',
-    rev       INTEGER NOT NULL DEFAULT 0      -- global clip_rev value at last create/edit
+    rev       INTEGER NOT NULL DEFAULT 0,     -- global clip_rev value at last create/edit
+    source    TEXT    NOT NULL DEFAULT ''     -- '' = typed in the UI, 'outbox' = pushed by a local script
 )
 CREATE TABLE meta (key TEXT PRIMARY KEY, value INTEGER NOT NULL)  -- 'clip_rev', 'last_del_rev'
 CREATE TABLE clip_attachment (
@@ -707,7 +708,7 @@ CREATE TABLE clip_attachment (
 )
 ```
 
-`migrate` (in `OpenDB`) is idempotent: `addColumnIfMissing` adds `title`/`rev`, pre-existing rows get
+`migrate` (in `OpenDB`) is idempotent: `addColumnIfMissing` adds `title`/`rev`/`source`, pre-existing rows get
 `rev = id` backfilled (monotonic, distinct, positive), and `meta` is seeded (`clip_rev` to
 `MAX(rev)`, `last_del_rev` to 0) via `INSERT OR IGNORE`. `''` is the only representation of an
 untitled note. `OpenDB` sets `SetMaxOpenConns(1)`: it keeps a `:memory:` test DB single-shared (each
@@ -742,12 +743,12 @@ note are last-writer-wins (no per-note optimistic concurrency).
 ### `db.go`
 
 - `OpenDB(path string) (*DB, error)` — opens/creates the SQLite file and initialises/migrates the schema.
-- `DB.InsertClipboard(title string, data []byte) (id, ts int64, err error)` / `UpdateClipboard(id, *title, data)` / `DeleteClipboard(id)` — each bumps `clip_rev` in its own transaction; delete also sets `last_del_rev` and removes the note's attachments.
+- `DB.InsertClipboard(title, source string, data []byte) (id, ts int64, err error)` / `UpdateClipboard(id, *title, data)` / `DeleteClipboard(id)` — each bumps `clip_rev` in its own transaction; delete also sets `last_del_rev` and removes the note's attachments.
 - `DB.InsertAttachment(noteID, mime, data) (id, error)` — stores a BLOB and bumps the note's `rev`; returns `errNoteNotFound` if the note is gone. `DeleteAttachment(id)` / `GetAttachment(id)` round it out.
 - `DB.ClipState(since)` — the sync query above.
 - `DB.ListClipboard()` — retained for tests only (not exposed via the API since `/api/clip/list` was replaced by `/api/clip/state`).
 
-`NoteMeta` = `{ID, TS, Title, Data(base64 text), Attachments []AttachmentMeta}`; `AttachmentMeta` =
+`NoteMeta` = `{ID, TS, Title, Source (omitted when empty), Data(base64 text), Attachments []AttachmentMeta}`; `AttachmentMeta` =
 `{ID, Mime, Size}`.
 
 ### `clip.go` / `clip_attachment.go`
@@ -758,7 +759,8 @@ Handlers `handleClipState`, `handleClipNew`, `handleClipEdit`, `handleClipDelete
 is done in the handler before passing raw bytes to the DB layer. `title` is a plain JSON string (not
 base64), validated by `validClipTitle`: valid UTF-8, at most `clipTitleMaxLen` (200) characters, no
 control characters (so single-line); invalid → `400`. `handleClipEdit` decodes it into a `*string` so
-an omitted title (e.g. from an older client) keeps the stored one.
+an omitted title (e.g. from an older client) keeps the stored one. `source` (`handleClipNew` only)
+must be `''` or `clipSourceOutbox` (`"outbox"`), else `400`; edits never change it.
 
 Image bytes reuse the file transform system: upload sends transform-encoded bytes in the multipart
 `file` part (server `Untransform`s, stores raw, 20 MiB cap, `image/...` mime only); download applies
@@ -799,9 +801,11 @@ Preact + htm + `@preact/signals` + `deepsignal`, as native ES modules — no bui
 - `app/lib/` — logic, no rendering: `api.js` (auth headers, `encodeBody`/`decodeResponseJSON`/
   `sendWSControl` choke points, `closeWSSession`), `paramcrypt.js`, `authhash.js`, `ws.js`,
   `transform.js` (decode + upload encode), `transfers.js` (progress list, `updateIfChanged`),
-  `util.js`, and one module per tab: `download.js`, `upload.js`, `clipboard.js`, `benchmark.js`
+  `util.js`, `outbox.js` (see "Outbox"), and one module per tab: `download.js`, `upload.js`,
+  `clipboard.js`, `benchmark.js`
 - `app/components/` — `html.js` (bound `html` tag + `text`/`num`/`check`/`sel` two-way-binding prop
-  spreads), `app.js` (header, breadcrumb, tabs), `panel.js`, `transfers.js`, one component file per tab
+  spreads), `app.js` (header, breadcrumb, tabs), `panel.js`, `transfers.js`, `outbox.js` (panel section, notices, PowerShell dialog), one component file per tab
+- `push-to-wgclip.ps1` — the PowerShell push function shown by the Outbox dialog (see "Outbox")
 
 All JS libraries are served locally (embedded in the binary); no CDN requests at runtime.
 
@@ -872,6 +876,7 @@ could point at a since-deleted directory), `wsFrameMinKB`/`wsFrameMaxKB` (fetche
 | Benchmark | Benchmark tab only; Size (MB, 1-1024) and Chunk size (MB, ≤ Size) for the synthetic transfer — see "Benchmark tab" below |
 | Chunking  | Download tab: enable chunked download, set chunk size, enable File System Access API reassembly. Upload tab: enable chunked upload and set chunk size (HTTP POST backend only — hidden when Backend is Websocket) |
 | General   | Auto-refresh (polls the active tab every second; re-renders only on changes); Confirm note delete; Backend (HTTP POST/Websocket, download+upload+benchmark tabs); WS frame size in KB (download+upload+benchmark tabs, only when Backend is Websocket; default 4M, clamped to the server's `-ws-frame-max` via `/api/public/settings`); Content-Type (download tab only, only when Backend is HTTP POST — a preset dropdown of common MIME types plus "Custom…", overriding the download response's `Content-Type` header; see `/api/files/download`'s `contentType` field above) |
+| Outbox    | Connect/reconnect/disconnect the outbox folder, status, last pushes/failures, "PowerShell function" dialog; all tabs, hidden without `showDirectoryPicker` (see "Outbox") |
 | Transform | Select transform type and configure its parameters (auto-generate keys/IVs) |
 
 Every setting in the side panel has a `title` attribute (on both its `<label>` and its input/select)
@@ -887,6 +892,51 @@ label text.
 - **Sync** (`pollClipboard` → `applyClipState`): the list is maintained incrementally against `/api/clip/state?since=<clipCursor>` (see "Clipboard sync" above) — upsert `changed`, drop ids absent from `ids`, honor `reset`; `pruneClipImages` revokes object URLs for attachments no longer referenced. Auto-refresh, `setTab`, and post-write refreshes all call `pollClipboard`; an auth-key change calls `resetClipSync` (cursor 0, clear items/images) then re-polls.
 - Search box + scope selector (Title + content / Title / Content, `settings.clipSearchScope`, persisted) above the list; the query (`clipSearch`) is not persisted. Purely client-side over the already-synced notes. `visibleClipItems()` sorts, filters (case-insensitive substring, over title/text only — images aren't searched), and splits title/content into `{t, m}` segments via `highlightSegments`; matches render as `<span class="clip-hl">` text children, never `dangerouslySetInnerHTML`, since note content comes from untrusted machines.
 - ✕ delete button in the note header; optionally prompts for confirmation (controlled by "Confirm note delete" in the General panel section).
+
+### Outbox (push to clipboard from local scripts)
+
+Lets a local script push text into the clipboard when only the browser can reach the server (the
+proxy is configured only there): the script writes into a folder, the open warpgate tab picks it
+up and creates the note. Design notes and measurements: `push-to-clip.md`. Chromium only
+(`showDirectoryPicker`); elsewhere the panel section is hidden.
+
+- **Protocol**: the script writes `<name>` (UTF-8 text, ≤ 512 KiB), closes it, then writes
+  `<name>.sha256`: line 1 `<hex>` or `<hex>  <name>` (any case), optional line 2 the note title. The
+  hash file is the only trigger and doubles as completion signal and integrity check (the folder
+  watcher sees files while they are still being written). The tab verifies size, hash and strict
+  UTF-8, strips a leading BOM (Windows PowerShell 5.1 writes one, in both files), and creates the
+  note via `createNote(title, text, 'outbox')` (`lib/clipboard.js`, shared with Submit). On success
+  it deletes `<name>.sha256` first, then `<name>`; on failure it renames `<name>.sha256` to
+  `<name>.failed`. The script polls for one of the two outcomes.
+- **The tab never writes files.** Edge annotates page-written files (Mark of the Web) and such
+  writes occasionally fail; reading, deleting and renaming script-written files is reliable.
+- **Retries**: missing content, hash mismatch or a server/network error are retried until 10 s after
+  the hash file was first seen (`FAIL_AFTER_MS`), then fail; too large / not UTF-8 fail immediately.
+  A `401` pauses the outbox (`status: 'auth'`) without failing; any auth key change resumes it.
+- **No duplicates**: before deleting, the pushed name+hash is recorded in IndexedDB
+  (`warpgate-outbox` DB, `kv` store, key `pushed:<name>.sha256`); a hash file found with a matching
+  record is only cleaned up. The same store keeps the folder handle (`dir`).
+- **Leftovers**: `.failed` files and orphaned content are deleted after 1 h, but only `push-*` names
+  (the push function's naming), so unrelated files in the folder are never touched.
+- **One tab**: the watcher runs inside `navigator.locks.request('warpgate-outbox')`; other tabs
+  show "Another warpgate tab handles this outbox" and take over when the holder closes.
+- **Watching**: `FileSystemObserver` (when available) kicks an immediate scan; a full scan also runs
+  every 5 s. No Worker: in a hidden tab the observer still fires within milliseconds, and timers
+  are only rounded to ~1 s. But Chrome throttles *chained* timers to once a minute after 5 min
+  hidden, so every timer here is set only after awaiting a file system call (`sleep` in the scan
+  loop) — keep it that way.
+- **Permissions**: the folder needs `readwrite`. After a reload, `queryPermission` is `granted` only
+  if the user chose "Allow on every visit"; otherwise the section shows Reconnect.
+- **Marker**: notes created here carry `source: 'outbox'` and show ⇪ in the note header. It is
+  informational, not a security property: any process of the same user can push.
+- **`push-to-wgclip.ps1`** must stay compatible with Windows PowerShell 5.1 and PowerShell 7, in
+  Constrained Language Mode too (no .NET method calls on non-core types, no
+  `$PSBoundParameters.ContainsKey`), and is meant to be loaded interactively, not run as a script
+  file (execution policy only governs files). The dialog recommends Copy +
+  `Get-Clipboard -Raw | Invoke-Expression`: pasting 80 lines directly crashes Windows PowerShell
+  5.1's PSReadLine 2.0 when the paste is taller than the console window. The panel warns when the
+  connected folder isn't named `wgclip-outbox` (the function's default; `$env:WGCLIP_OUTBOX`
+  overrides it).
 
 ### Benchmark tab
 

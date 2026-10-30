@@ -189,6 +189,10 @@ components:
         title:
           type: string
           example: DC01 – nmap internal
+        source:
+          type: string
+          enum: [outbox]
+          description: Present only for notes pushed through the outbox.
         data:
           type: string
           format: byte
@@ -880,6 +884,13 @@ paths:
                     Optional title; omitted or empty means untitled. A single line of at most
                     200 characters, no control characters.
                   example: DC01 – nmap internal
+                source:
+                  type: string
+                  enum: ['', outbox]
+                  description: |
+                    Where the note came from: omitted or empty for notes typed in the UI,
+                    `outbox` for text pushed by a local script through the outbox folder.
+                    Kept on edit. Any other value is rejected with 400.
                 data:
                   type: string
                   format: byte

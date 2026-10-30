@@ -32,7 +32,7 @@ export const settings = deepSignal({
   benchmark: { sizeMB: 10, chunkSizeMB: 4 },
   panel: {
     open: true, authOpen: true, benchmarkOpen: true,
-    transformOpen: true, chunkingOpen: true, generalOpen: true,
+    transformOpen: true, chunkingOpen: true, generalOpen: true, outboxOpen: true,
   },
 });
 
@@ -66,6 +66,8 @@ export const state = deepSignal({
   wsFrameMinKB: 1,
   wsFrameMaxKB: 262144,
   hasFileSystemAccess: typeof window.showSaveFilePicker === 'function',
+  // status: off | reconnect | other-tab | watching | auth | error
+  outbox: { supported: false, status: 'off', folder: '', error: '', events: [], notices: [], showScript: false },
 });
 
 // Derived from settings.auth.key, recomputed on change (not per request).

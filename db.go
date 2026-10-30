@@ -66,6 +66,9 @@ func migrate(conn *sql.DB) error {
 	if err := addColumnIfMissing(conn, "clipboard", "rev", `INTEGER NOT NULL DEFAULT 0`); err != nil {
 		return fmt.Errorf("migrating schema: %w", err)
 	}
+	if err := addColumnIfMissing(conn, "clipboard", "source", `TEXT NOT NULL DEFAULT ''`); err != nil {
+		return fmt.Errorf("migrating schema: %w", err)
+	}
 	// Indexes after the rev column exists.
 	for _, q := range []string{
 		`CREATE INDEX IF NOT EXISTS idx_clipboard_rev ON clipboard(rev)`,
@@ -151,11 +154,12 @@ type NoteMeta struct {
 	ID          int64            `json:"id"`
 	TS          int64            `json:"ts"`
 	Title       string           `json:"title"`
+	Source      string           `json:"source,omitempty"`
 	Data        string           `json:"data"` // base64-encoded text
 	Attachments []AttachmentMeta `json:"attachments"`
 }
 
-func (db *DB) InsertClipboard(title string, data []byte) (id int64, ts int64, err error) {
+func (db *DB) InsertClipboard(title, source string, data []byte) (id int64, ts int64, err error) {
 	ts = time.Now().Unix()
 	tx, err := db.sql.Begin()
 	if err != nil {
@@ -166,8 +170,8 @@ func (db *DB) InsertClipboard(title string, data []byte) (id int64, ts int64, er
 	if err != nil {
 		return 0, 0, err
 	}
-	res, err := tx.Exec(`INSERT INTO clipboard (timestamp, title, data, rev) VALUES (?, ?, ?, ?)`,
-		ts, title, data, rev)
+	res, err := tx.Exec(`INSERT INTO clipboard (timestamp, title, source, data, rev) VALUES (?, ?, ?, ?, ?)`,
+		ts, title, source, data, rev)
 	if err != nil {
 		return 0, 0, err
 	}
@@ -347,7 +351,7 @@ func (db *DB) ClipState(since int64) (rev int64, changed []NoteMeta, ids []int64
 }
 
 func queryNotes(tx *sql.Tx, since int64) ([]NoteMeta, error) {
-	rows, err := tx.Query(`SELECT id, timestamp, title, data FROM clipboard WHERE rev > ? ORDER BY id`, since)
+	rows, err := tx.Query(`SELECT id, timestamp, title, source, data FROM clipboard WHERE rev > ? ORDER BY id`, since)
 	if err != nil {
 		return nil, err
 	}
@@ -357,7 +361,7 @@ func queryNotes(tx *sql.Tx, since int64) ([]NoteMeta, error) {
 	for rows.Next() {
 		var n NoteMeta
 		var raw []byte
-		if err := rows.Scan(&n.ID, &n.TS, &n.Title, &raw); err != nil {
+		if err := rows.Scan(&n.ID, &n.TS, &n.Title, &n.Source, &raw); err != nil {
 			return nil, err
 		}
 		n.Data = base64.StdEncoding.EncodeToString(raw)

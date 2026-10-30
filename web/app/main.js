@@ -4,6 +4,7 @@ import { html } from './components/html.js';
 import { settings } from './store.js';
 import { initStore } from './store.js';
 import { load } from './lib/download.js';
+import { initOutbox } from './lib/outbox.js';
 import { refreshActive, onAuthKeyChange } from './nav.js';
 import { App } from './components/app.js';
 
@@ -33,6 +34,7 @@ async function boot() {
   });
 
   render(html`<${App} />`, document.getElementById('app'));
+  initOutbox();
 }
 
 boot();

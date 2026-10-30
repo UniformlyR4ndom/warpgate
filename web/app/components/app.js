@@ -7,6 +7,7 @@ import { DownloadTab } from './download.js';
 import { UploadTab } from './upload.js';
 import { ClipboardTab } from './clipboard.js';
 import { BenchmarkTab } from './benchmark.js';
+import { OutboxNotices, OutboxScriptDialog } from './outbox.js';
 
 const TABS = [
   { id: 'download',  label: 'Download' },
@@ -54,5 +55,7 @@ export function App() {
           ${state.tab === 'benchmark' && html`<${BenchmarkTab} />`}
         </main>
       </div>
+      <${OutboxNotices} />
+      ${state.outbox.showScript && html`<${OutboxScriptDialog} />`}
     <//>`;
 }

@@ -739,3 +739,115 @@ th {
 .bench-fail {
   color: var(--error);
 }
+
+/* ── Outbox ── */
+
+.outbox-status {
+  font-size: 0.8rem;
+  color: var(--muted);
+  margin-bottom: 0.4rem;
+  word-break: break-word;
+}
+
+.outbox-warn {
+  color: var(--error);
+}
+
+.outbox-hint {
+  font-size: 0.75rem;
+  color: var(--muted);
+  margin-bottom: 0.4rem;
+  word-break: break-word;
+}
+
+.outbox-hint.outbox-warn {
+  color: var(--error);
+}
+
+.outbox-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.outbox-events {
+  list-style: none;
+  margin: 0.5rem 0 0;
+  padding: 0;
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+
+.outbox-events li {
+  margin-top: 0.2rem;
+  word-break: break-word;
+}
+
+.clip-source {
+  color: var(--accent);
+  cursor: help;
+}
+
+.notices {
+  position: fixed;
+  right: 1rem;
+  bottom: 1rem;
+  z-index: 900;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  max-width: 28rem;
+}
+
+.notice {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.6rem;
+  background: var(--input-bg);
+  border: 1px solid var(--accent);
+  padding: 0.5rem 0.7rem;
+  font-size: 0.85rem;
+  word-break: break-word;
+}
+
+.notice-error {
+  border-color: var(--error);
+}
+
+.notice-close {
+  background: none;
+  border: none;
+  color: var(--muted);
+  cursor: pointer;
+  margin-left: auto;
+}
+
+.notice-close:hover {
+  color: var(--error);
+}
+
+.script-dialog {
+  background: #1e1e1e;
+  border: 1px solid var(--border);
+  padding: 1rem;
+  max-width: 90vw;
+  max-height: 90vh;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  font-size: 0.85rem;
+}
+
+.script-dialog p {
+  margin: 0;
+  max-width: 60rem;
+}
+
+.script-code {
+  margin: 0;
+  overflow: auto;
+  background: var(--input-bg);
+  padding: 0.6rem;
+  font-size: 0.8rem;
+  min-height: 10rem;
+}

@@ -1,6 +1,7 @@
 import { html, text, num, check, sel } from './html.js';
 import { settings, state, backendTypes, transformTypes } from '../store.js';
 import { randomHex } from '../lib/util.js';
+import { OutboxSettings } from './outbox.js';
 
 // Tooltips, shared by each setting's label and its input.
 const TIP = {
@@ -133,6 +134,10 @@ export function Panel() {
               ${settings.contentType.preset === 'custom' && html`
                 <input type="text" ...${text(settings.contentType, 'custom')} placeholder="e.g. application/vnd.custom-type" title=${TIP.ccustom} />`}
             </div>`}
+          <//>
+
+          <${Section} title="Outbox" openKey="outboxOpen" hidden=${!state.outbox.supported}>
+            <${OutboxSettings} />
           <//>
 
           <${Section} title="Transform" openKey="transformOpen">

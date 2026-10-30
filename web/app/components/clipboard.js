@@ -83,6 +83,7 @@ function Note(props) {
     <div class="clip-item">
       <div class="clip-meta">
         <span class="clip-head">
+          ${item.source === 'outbox' && html`<span class="clip-source" title="Pushed via outbox by a local script">⇪</span>`}
           ${item.title && html`<span class="clip-title"><${Segments} segs=${v.title} /></span>`}
           <span class="clip-ts">${formatTS(item.ts)}</span>
         </span>

@@ -1,7 +1,7 @@
 // Clipboard tab logic: incremental sync against /api/clip/state, note
 // create/edit/delete, and image attachments.
 import { API_BASE, state, settings } from '../store.js';
-import { authHeaders, jsonHeaders, encodeBody, decodeResponseJSON, paramEncryptEnabled } from './api.js';
+import { authHeaders, jsonHeaders, encodeBody, decodeResponseJSON, paramEncryptEnabled, assertOk } from './api.js';
 import { decrypt, buildTransformArgs, perRequestSecrets, encodeBytesForUpload } from './transform.js';
 import { textToBase64, base64ToText, triggerDownload } from './util.js';
 
@@ -186,21 +186,33 @@ export function canSubmitClip() {
   return !!state.clipText.trim() || !!state.clipTitle.trim() || state.pendingAttachments.length > 0;
 }
 
+// The server rejects control characters and titles over 200 code points.
+export function sanitizeClipTitle(title) {
+  return Array.from(title.replace(/[\u0000-\u001f\u007f-\u009f]/g, ' ').trim()).slice(0, 200).join('');
+}
+
+// Creates a note and returns its id. source: '' (typed in the UI) or 'outbox'.
+export async function createNote(title, text, source) {
+  var body = { title: sanitizeClipTitle(title), data: textToBase64(text) };
+  if (source) { body.source = source; }
+  var encrypted = paramEncryptEnabled();
+  var res = await fetch(API_BASE + '/api/clip/new', { method: 'POST', headers: jsonHeaders(), body: encodeBody(body) });
+  assertOk(res);
+  return (await decodeResponseJSON(res, encrypted)).id;
+}
+
 export async function submitClip() {
   if (!canSubmitClip()) return;
   state.clipError = null;
   var editing = state.clipEditId !== null;
   try {
-    var url   = API_BASE + (editing ? '/api/clip/edit' : '/api/clip/new');
-    var title = state.clipTitle.replace(/[\u0000-\u001f\u007f-\u009f]/g, ' ').trim();
-    var body  = { title: title, data: textToBase64(state.clipText) };
-    if (editing) { body.id = state.clipEditId; }
-    var encrypted = paramEncryptEnabled();
-    var res = await fetch(url, { method: 'POST', headers: jsonHeaders(), body: encodeBody(body) });
-    if (!res.ok) throw new Error('HTTP ' + res.status);
     var noteId = state.clipEditId;
-    if (!editing) {
-      noteId = (await decodeResponseJSON(res, encrypted)).id;
+    if (editing) {
+      var body = { id: noteId, title: sanitizeClipTitle(state.clipTitle), data: textToBase64(state.clipText) };
+      var res = await fetch(API_BASE + '/api/clip/edit', { method: 'POST', headers: jsonHeaders(), body: encodeBody(body) });
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+    } else {
+      noteId = await createNote(state.clipTitle, state.clipText, '');
     }
     for (var r = 0; r < state.clipRemovedAttachments.length; r++) {
       await apiDeleteAttachment(state.clipRemovedAttachments[r]);

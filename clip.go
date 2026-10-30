@@ -10,6 +10,9 @@ import (
 
 const clipTitleMaxLen = 200
 
+// clipSourceOutbox marks notes pushed from a local outbox folder; "" means created in the UI.
+const clipSourceOutbox = "outbox"
+
 // validClipTitle accepts a single line of at most clipTitleMaxLen characters.
 func validClipTitle(t string) bool {
 	if !utf8.ValidString(t) || utf8.RuneCountInString(t) > clipTitleMaxLen {
@@ -29,8 +32,9 @@ func (s *Server) handleClipNew(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		Title string `json:"title"`
-		Data  string `json:"data"`
+		Title  string `json:"title"`
+		Source string `json:"source"`
+		Data   string `json:"data"`
 	}
 	wasEncrypted, err := s.decodeParams(r.Body, &req)
 	if err != nil {
@@ -41,12 +45,16 @@ func (s *Server) handleClipNew(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid title", http.StatusBadRequest)
 		return
 	}
+	if req.Source != "" && req.Source != clipSourceOutbox {
+		http.Error(w, "invalid source", http.StatusBadRequest)
+		return
+	}
 	raw, err := base64.StdEncoding.DecodeString(req.Data)
 	if err != nil {
 		http.Error(w, "data is not valid base64", http.StatusBadRequest)
 		return
 	}
-	id, ts, err := s.db.InsertClipboard(req.Title, raw)
+	id, ts, err := s.db.InsertClipboard(req.Title, req.Source, raw)
 	if err != nil {
 		http.Error(w, "internal server error", http.StatusInternalServerError)
 		return
