@@ -770,12 +770,16 @@ exactly like file upload vs. download.
 ## Content Security Policy (`csp.go`)
 
 `withCSP` is the outermost wrapper in `Server.handler()`, so every response — UI, API, blank pages —
-carries `contentSecurityPolicy`: `script-src 'self'` and `style-src 'self'` with no `unsafe-*`, plus
-`img-src 'self' blob:` (clipboard thumbnails), `connect-src 'self'` (fetch + same-origin WS),
-`worker-src 'self'` (pdf.js worker), `object-src`/`base-uri`/`form-action 'none'`, `frame-ancestors
-'none'`. This works because the frontend has no inline `<script>`/`<style>`, no import map, no
-`eval`/`new Function`, and sets styles only via the CSSOM (Preact's `style` prop). Keep it that way: a
-CSP violation shows up only as a console error, not a server-side failure. The IP registration page is
+carries `contentSecurityPolicy`: `default-src 'none'`, then `script-src 'self'` and `style-src 'self'`
+with no `unsafe-*`, `img-src 'self' blob:` (clipboard thumbnails), `connect-src 'self'` (fetch +
+same-origin WS), `worker-src 'self'` (pdf.js worker), `base-uri`/`form-action 'none'`, `frame-ancestors
+'none'`, and Trusted Types (`require-trusted-types-for 'script'; trusted-types pdfjs-worker`). This
+works because the frontend has no inline `<script>`/`<style>`, no import map, no `eval`/`new Function`,
+no string HTML sinks (`innerHTML`, `dangerouslySetInnerHTML`), and sets styles only via the CSSOM
+(Preact's `style` prop). The one Trusted Types policy, `pdfjs-worker` (`web/app/main.js`), vouches only
+for `pdf.worker.min.js`; the worker is created there and handed to pdf.js as `workerPort`, since pdf.js
+would otherwise call `new Worker` with a plain string. Keep it that way: a CSP violation shows up only
+as a console error, not a server-side failure. The IP registration page is
 the one exception, with its own hash-based policy (see "IP firewall").
 
 ## Frontend (`web/`)

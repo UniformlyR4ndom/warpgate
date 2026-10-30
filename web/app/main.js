@@ -7,8 +7,17 @@ import { load } from './lib/download.js';
 import { refreshActive, onAuthKeyChange } from './nav.js';
 import { App } from './components/app.js';
 
-// pdf.js needs its worker path set before any getDocument call.
-pdfjsLib.GlobalWorkerOptions.workerSrc = 'pdf.worker.min.js';
+var PDF_WORKER = 'pdf.worker.min.js';
+var workerURL = window.trustedTypes
+  ? trustedTypes.createPolicy('pdfjs-worker', {
+      createScriptURL: function(url) {
+        if (url !== PDF_WORKER) throw new TypeError('untrusted script URL: ' + url);
+        return url;
+      },
+    }).createScriptURL(PDF_WORKER)
+  : PDF_WORKER;
+// pdf.js would construct the worker from a plain string, which Trusted Types rejects.
+pdfjsLib.GlobalWorkerOptions.workerPort = new Worker(workerURL);
 
 var refreshTimer = null;
 

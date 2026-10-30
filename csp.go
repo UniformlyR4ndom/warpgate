@@ -8,9 +8,12 @@ import (
 
 // contentSecurityPolicy is sent on every response. The frontend has no inline
 // scripts/styles and never evaluates strings as code, so 'self' suffices.
-const contentSecurityPolicy = "default-src 'self'; script-src 'self'; style-src 'self'; " +
-	"img-src 'self' blob:; connect-src 'self'; worker-src 'self'; object-src 'none'; " +
-	"base-uri 'none'; frame-ancestors 'none'; form-action 'none'"
+// Trusted Types blocks strings in DOM injection sinks; the one allowed policy
+// vouches for the pdf.js worker URL.
+const contentSecurityPolicy = "default-src 'none'; script-src 'self'; style-src 'self'; " +
+	"img-src 'self' blob:; connect-src 'self'; worker-src 'self'; " +
+	"base-uri 'none'; frame-ancestors 'none'; form-action 'none'; " +
+	"require-trusted-types-for 'script'; trusted-types pdfjs-worker"
 
 // regPageCSP replaces contentSecurityPolicy on the registration page, whose
 // inline script is allowed by hash.
