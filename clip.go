@@ -116,12 +116,13 @@ func (s *Server) handleClipDelete(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// clipStateResponse is the incremental-sync feed. Changed and Ids are omitted
-// when empty/absent; see CLAUDE.md's clipboard sync section.
+// clipStateResponse is the incremental-sync feed; see CLAUDE.md's clipboard
+// sync section. Ids is null when absent but [] when no notes are live, so a
+// delete of the last note still propagates.
 type clipStateResponse struct {
 	Rev     int64      `json:"rev"`
 	Changed []NoteMeta `json:"changed,omitempty"`
-	Ids     []int64    `json:"ids,omitempty"`
+	Ids     []int64    `json:"ids"`
 	Reset   bool       `json:"reset,omitempty"`
 }
 

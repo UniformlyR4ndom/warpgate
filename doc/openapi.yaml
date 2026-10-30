@@ -214,9 +214,10 @@ components:
             $ref: '#/components/schemas/NoteMeta'
         ids:
           type: array
+          nullable: true
           description: |
-            All live note ids, for deletion reconciliation. Present only when a deletion
-            happened since `since`.
+            All live note ids, for deletion reconciliation. `null` unless a deletion
+            happened since `since`; `[]` when no notes remain.
           items:
             type: integer
             format: int64

@@ -2,7 +2,10 @@ package main
 
 import (
 	"database/sql"
+	"net/http"
+	"net/http/httptest"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -184,6 +187,21 @@ func TestClipStateDeletion(t *testing.T) {
 	}
 	if len(ids) != 1 || ids[0] != id2 {
 		t.Fatalf("ids should be live set [%d], got %v", id2, ids)
+	}
+}
+
+func TestHandleClipStateDeleteLastNote(t *testing.T) {
+	s := newParamDecodeTestServer(t, Config{NoAuth: true})
+	id := mustInsert(t, s.db, "a", "one")
+	rev, _, _, _, _ := s.db.ClipState(0)
+	if ok, err := s.db.DeleteClipboard(id); err != nil || !ok {
+		t.Fatalf("delete: ok=%v err=%v", ok, err)
+	}
+
+	rec := httptest.NewRecorder()
+	s.handleClipState(rec, httptest.NewRequest(http.MethodGet, "/api/clip/state?since="+strconv.FormatInt(rev, 10), nil))
+	if !strings.Contains(rec.Body.String(), `"ids":[]`) {
+		t.Fatalf("empty live set must be sent as ids:[], got %s", rec.Body.String())
 	}
 }
 
