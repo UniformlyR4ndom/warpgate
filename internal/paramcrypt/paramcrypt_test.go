@@ -104,7 +104,7 @@ func TestDecryptRejectsBadBase64(t *testing.T) {
 
 // TestVector is a fixed, hardcoded input/output pair used to cross-check the
 // JS-side implementation (web/sha256.js + web/aes.js based encryptParams in
-// web/app.js) byte-for-byte — see CLAUDE.md's Parameter Encryption section.
+// web/app/lib/paramcrypt.js) byte-for-byte — see CLAUDE.md's Parameter Encryption section.
 // Any change to the wire format, labels, or derivation must update this
 // vector (and re-verify the JS side) deliberately, not accidentally.
 func TestVector(t *testing.T) {

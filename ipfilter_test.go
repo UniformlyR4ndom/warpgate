@@ -144,17 +144,17 @@ func TestIPFilterRegistration(t *testing.T) {
 
 	const a, b, d = "198.51.100.1", "198.51.100.2", "198.51.100.3"
 
-	c.expectServed("/pfx/static/app.js", "192.0.2.77") // allowlisted
-	c.expectBlank(http.MethodGet, "/pfx/static/app.js", a)
+	c.expectServed("/pfx/static/style.css", "192.0.2.77") // allowlisted
+	c.expectBlank(http.MethodGet, "/pfx/static/style.css", a)
 	c.expectBlank(http.MethodGet, "/pfx/api/public/settings", a)
 	c.expectBlank(http.MethodGet, "/pfx", a)
 	c.expectBlank(http.MethodGet, "/reg", a) // registration path is under the prefix
 	c.expectBlank(http.MethodPut, "/pfx/reg", a)
 
 	c.expectRegPage("/pfx/reg", a)
-	c.expectBlank(http.MethodGet, "/pfx/static/app.js", a) // GET alone doesn't register
+	c.expectBlank(http.MethodGet, "/pfx/static/style.css", a) // GET alone doesn't register
 	c.expectRedirect(http.MethodPost, "/pfx/reg", a, "/pfx/static/")
-	c.expectServed("/pfx/static/app.js", a)
+	c.expectServed("/pfx/static/style.css", a)
 	c.expectServed("/pfx/api/public/settings", a)
 	c.expectRedirect(http.MethodGet, "/pfx", a, "/pfx/static/")
 	c.expectRedirect(http.MethodGet, "/pfx/reg", a, "/pfx/static/")
@@ -163,8 +163,8 @@ func TestIPFilterRegistration(t *testing.T) {
 	c.expectRedirect(http.MethodPost, "/pfx/reg", b, "/pfx/static/")
 	c.expectBlank(http.MethodGet, "/pfx/reg", d) // limit reached
 	c.expectBlank(http.MethodPost, "/pfx/reg", d)
-	c.expectBlank(http.MethodGet, "/pfx/static/app.js", d)
-	c.expectServed("/pfx/static/app.js", b)
+	c.expectBlank(http.MethodGet, "/pfx/static/style.css", d)
+	c.expectServed("/pfx/static/style.css", b)
 
 	// Window expiry: with a free slot, registration still closes.
 	delete(s.ipFilter.registered, netip.MustParseAddr(b))
@@ -172,7 +172,7 @@ func TestIPFilterRegistration(t *testing.T) {
 	now = now.Add(time.Minute)
 	c.expectBlank(http.MethodGet, "/pfx/reg", d)
 	c.expectBlank(http.MethodPost, "/pfx/reg", d)
-	c.expectServed("/pfx/static/app.js", a) // existing registrations survive the window
+	c.expectServed("/pfx/static/style.css", a) // existing registrations survive the window
 }
 
 func TestIPFilterBasePathRegistration(t *testing.T) {
@@ -188,12 +188,12 @@ func TestIPFilterBasePathRegistration(t *testing.T) {
 	c.expectRegPage("/pfx/", a)
 	c.expectRegPage("/pfx/static/", a)
 	c.expectBlank(http.MethodGet, "/pfx/static", a)
-	c.expectBlank(http.MethodGet, "/pfx/static/app.js", a)
+	c.expectBlank(http.MethodGet, "/pfx/static/style.css", a)
 	c.expectBlank(http.MethodGet, "/pfx/static/index.html", a)
 	c.expectRedirect(http.MethodPost, "/pfx/", a, "/pfx/static/")
 	c.expectRedirect(http.MethodGet, "/pfx", a, "/pfx/static/")
 	c.expectServed("/pfx/static/", a)
-	c.expectServed("/pfx/static/app.js", a)
+	c.expectServed("/pfx/static/style.css", a)
 
 	c.expectRedirect(http.MethodPost, "/pfx/static/", b, "/pfx/static/")
 	c.expectServed("/pfx/static/", b)

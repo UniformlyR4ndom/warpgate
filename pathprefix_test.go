@@ -43,7 +43,7 @@ func TestPathPrefixRouting(t *testing.T) {
 		return rec
 	}
 
-	for _, p := range []string{"/", "/static/", "/static/app.js", "/api/public/settings", "/api/files/list", "/pfxx", "/pfxx/static/", "/x/pfx/static/"} {
+	for _, p := range []string{"/", "/static/", "/static/style.css", "/api/public/settings", "/api/files/list", "/pfxx", "/pfxx/static/", "/x/pfx/static/"} {
 		for _, m := range []string{http.MethodGet, http.MethodPost} {
 			rec := do(m, p)
 			if rec.Code != http.StatusOK || rec.Body.Len() != 0 || rec.Header().Get("Location") != "" ||
@@ -63,10 +63,10 @@ func TestPathPrefixRouting(t *testing.T) {
 	if rec := do(http.MethodGet, "/pfx/api/public/settings"); rec.Code != http.StatusOK || rec.Body.Len() == 0 {
 		t.Errorf("GET /pfx/api/public/settings: got %d %q", rec.Code, rec.Body.String())
 	}
-	if rec := do(http.MethodGet, "/pfx/static/app.js"); rec.Code != http.StatusOK || rec.Body.Len() == 0 {
-		t.Errorf("GET /pfx/static/app.js: got %d, %d bytes", rec.Code, rec.Body.Len())
+	if rec := do(http.MethodGet, "/pfx/static/style.css"); rec.Code != http.StatusOK || rec.Body.Len() == 0 {
+		t.Errorf("GET /pfx/static/style.css: got %d, %d bytes", rec.Code, rec.Body.Len())
 	}
-	if rec := do(http.MethodGet, "/pfx/%73tatic/app.js"); rec.Code != http.StatusOK || rec.Body.Len() == 0 {
-		t.Errorf("GET /pfx/%%73tatic/app.js: got %d, %d bytes", rec.Code, rec.Body.Len())
+	if rec := do(http.MethodGet, "/pfx/%73tatic/style.css"); rec.Code != http.StatusOK || rec.Body.Len() == 0 {
+		t.Errorf("GET /pfx/%%73tatic/style.css: got %d, %d bytes", rec.Code, rec.Body.Len())
 	}
 }

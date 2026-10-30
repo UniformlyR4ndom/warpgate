@@ -89,7 +89,7 @@ any method, including `<prefix>foo` — gets an identical empty `200 text/html; 
 response, with no Go-specific body or redirect, to be hard to fingerprint. The `/` → `/static/`
 redirect becomes `<prefix>/static/`.
 
-The frontend needs no configuration: `API_BASE` (`web/app.js`) is derived from `location.pathname`
+The frontend needs no configuration: `API_BASE` (`web/app/store.js`) is derived from `location.pathname`
 (everything before `/static/`) and prepended to every `fetch` URL and to `wsBaseURL()`. Static assets
 already use relative URLs. `wgcli` just takes the prefix as part of `-url`.
 
@@ -187,7 +187,7 @@ chunked benchmark upload — see "Benchmark/Simulation Endpoints" below.
   `Server.uploadSessions`, a `*sessionStore[*ulSession]`) rejects a request outright (`409`) rather
   than queuing it if another request for the same filename is already being processed —
   deliberately simple given chunks are expected to be sent strictly one at a time, each awaited
-  before the next (`web/app.js`'s `uploadFileHTTPChunked` does this).
+  before the next (`web/app/lib/upload.js`'s `uploadFileHTTPChunked` does this).
 - **Continuation-key rotation**: the server remembers both the current and immediately-previous key
   for an in-progress session. A request bearing the previous key (an ack that was lost in transit,
   so the client retried) is answered idempotently with the current key, without reprocessing — this
@@ -430,13 +430,13 @@ below) — knowing one gives no information about, and can't be confused with, t
 server and every client (frontend, `wgcli`) compute this independently from the same raw key rather
 than one side transmitting a derived value to the other. `internal/authhash` is imported by both the
 server and `cmd/wgcli`, the same pattern `internal/transform` uses, so the two can't drift apart;
-`web/app.js`'s `hashAuthKey()` is a separate, independently-verified JS reimplementation (frontend
+`web/app/lib/authhash.js`'s `hashAuthKey()` is a separate, independently-verified JS reimplementation (frontend
 JS can't import the Go package), reusing the same `hmacSha256Bytes()` helper `paramCrypt`'s key
 derivation uses for its own labeled HMAC round.
 
 - Set the key with `-auth-key <key>`. If omitted and `-no-auth` is not set, a random 32-byte hex key is auto-generated and printed to the log at startup. `Server.authHash` (`server.go`) is computed once from this key at startup, not per-request.
 - `-no-auth` disables authentication entirely (no header check).
-- The frontend persists the raw key in `sessionStorage`, separately from the rest of the unified UI settings (see "UI settings persistence" below), and restores it on reload within the same tab/session; the derived token is cached separately in the non-persisted `authKeyHash` property, recomputed via `updateAuthKeyHash()` whenever the key changes (including once at `init()`, awaited before the first request goes out) rather than on every request.
+- The frontend persists the raw key in `sessionStorage`, separately from the rest of the unified UI settings (see "UI settings persistence" below), and restores it on reload within the same tab/session; the derived token is cached in the non-persisted `authKeyHash` signal (`store.js`), recomputed whenever the key changes (including once in `initStore()`, awaited before the first request goes out) rather than on every request.
 - The side panel has an **Auth** section where the user enters the raw key (displayed masked; a toggle reveals it). Changing it immediately refreshes the file listing.
 - `wgcli`'s `-auth-key` flag likewise takes the raw key; `globalFlags.authToken()` derives the token sent on the wire.
 
@@ -485,8 +485,8 @@ fallback in that mode.
 **Frontend**: a checkbox in the side panel's **Auth** section ("Parameter obfuscation",
 `settings.paramCrypt.enabled`, disabled when no auth key is set) toggles this per-client — purely a
 local preference, not negotiated with the server. `paramEncKeyBytes`/`paramMacKeyBytes` are derived
-from `settings.auth.key` and cached the same way `authKeyHash` is (recomputed via
-`updateParamCryptKeys()` in `init()` and the `settings.auth.key` watcher, not per-request).
+from `settings.auth.key` and cached as signals the same way `authKeyHash` is (recomputed by
+`store.js`'s `recomputeDerivedKeys()` at startup and on every key change, not per-request).
 `encodeBody(obj)` (returns either `JSON.stringify(obj)` or the encrypted blob) and `sendWSControl(ws,
 obj)` are the two choke points every request body and WS control send routes through, so the toggle
 only needs to be checked in one place per transport. AES-CTR uses the same `aes-js`
@@ -538,7 +538,7 @@ whatever the request already was.
   detect; this is an accepted, deliberate tradeoff (no client-side enforcement was added to reject an
   unexpectedly-plaintext response), unlike every other case in this feature where tampering causes a
   hard failure (401) rather than a silent one. Ignored entirely under `-no-auth`, same as everywhere
-  else. `loadUploadDir()`/`pollClipboard()` (`web/app.js`) append `?e=1` (`&e=1` for the latter) to the URL when
+  else. `loadUploadDir()`/`pollClipboard()` (`web/app/lib/upload.js`/`clipboard.js`) append `?e=1` (`&e=1` for the latter) to the URL when
   `paramEncryptEnabled()` and use the same `decodeResponseJSON` as every other GET-with-encryption call
   site.
 - **WebSocket connections decide once, at the handshake, for the whole connection.** `readWSControl`
@@ -553,7 +553,7 @@ whatever the request already was.
   `decodeResponseJSON(res, encrypted)` is the HTTP-side counterpart to `decodeParams` — but note the
   client doesn't auto-detect; it already knows whether *it* encrypted the request, so it just passes
   that same `encrypted` flag through to know how to read the response. `wsNextJSON(ws, decrypt)` takes
-  an optional decrypt callback (`this.decryptParams.bind(this)` or `null`) instead of always calling
+  an optional decrypt callback (`wsDecryptFor(encrypted)`: `decryptParams` or `null`) instead of always calling
   `JSON.parse` directly. For the two WS flows with a persistent `wsSession` object reused across
   multiple calls (`fetchChunkWS`, `fetchSimChunkWS`), the encrypted flag is captured once into
   `wsSession.encrypted` alongside `wsSession.password`/`wsSession.htmlB64Key`, the same
@@ -768,79 +768,85 @@ exactly like file upload vs. download.
 
 ## Frontend (`web/`)
 
-- `index.html` — Alpine.js v3 SPA with **Download**, **Upload**, **Clipboard**, and **Benchmark** tabs
-- `app.js` — single `filesApp()` factory function registered with Alpine; no build step required
+Preact + htm + `@preact/signals` + `deepsignal`, as native ES modules — no build step, no import map.
+
+- `index.html` — `<div id="app">`, the classic vendored scripts that set globals (`pdf.min.js`,
+  `pdf-lib.min.js`, `aes.js`, `sha256.js`), and `<script type="module" src="app/main.js">`
 - `style.css` — dark theme
-- `aes.js`, `alpine.min.js`, `pdf.min.js`, `pdf.worker.min.js`, `pdf-lib.min.js` — vendored libraries
+- `pdf.worker.min.js` — loaded by pdf.js
+- `app/vendor/` — `preact`, `hooks`, `signals`, `signals-core`, `htm`, `deepsignal` ES modules; their
+  internal bare import specifiers are rewritten to relative paths so no import map is needed
+- `app/main.js` — boot: `initStore`, initial listing, auto-refresh effect, `render(App)`
+- `app/store.js` — `settings` (persisted) and `state` (transient) `deepSignal` objects, the derived
+  `authKeyHash`/`paramEncKeyBytes`/`paramMacKeyBytes` signals, `initStore`, `API_BASE`
+- `app/nav.js` — `setTab`, `refreshActive` (Refresh button + auto-refresh), `onAuthKeyChange`
+- `app/lib/` — logic, no rendering: `api.js` (auth headers, `encodeBody`/`decodeResponseJSON`/
+  `sendWSControl` choke points, `closeWSSession`), `paramcrypt.js`, `authhash.js`, `ws.js`,
+  `transform.js` (decode + upload encode), `transfers.js` (progress list, `updateIfChanged`),
+  `util.js`, and one module per tab: `download.js`, `upload.js`, `clipboard.js`, `benchmark.js`
+- `app/components/` — `html.js` (bound `html` tag + `text`/`num`/`check`/`sel` two-way-binding prop
+  spreads), `app.js` (header, breadcrumb, tabs), `panel.js`, `transfers.js`, one component file per tab
 
 All JS libraries are served locally (embedded in the binary); no CDN requests at runtime.
 
+**htm pitfalls.** htm has no notion of HTML void elements and closes tags positionally (`</div>` and
+`<//>` just pop one level), so an unclosed `<input …>` silently swallows its following siblings and
+shifts every later close. Always self-close void elements: `<input … />`, `<img … />`, `<br />`.
+
+**Reactivity.** Components read `settings`/`state` fields directly during render and re-render when
+those fields change (signals auto-tracking). Mutate through the proxies (`state.x = …`,
+`state.list.push(…)`), and when keeping a reference to a pushed object, read it back from the array
+(see `addTransfer`) so later mutations go through the proxy. Rendering is asynchronous: after an
+`input` event, a dependent `disabled` attribute updates only on the next render.
+
 ### Key frontend logic
 
-- `authHeaders()` — returns `{"X-Auth": key}` if key is non-empty, else `{}`. Merged into every API request.
+- `authHeaders()` — returns `{"X-Auth": token}` if a key is set, else `{}`. Merged into every API request.
 - `encodeBytesForUpload(bytes, filename)` — async; the transform-type switch shared by the whole-file
-  and per-chunk upload paths, resolving to `{data: Blob, args: {}}` for whatever `bytes` it's given.
+  and per-chunk upload paths (and clipboard images), resolving to `{data: Blob, args: {}}`.
 - `encodeForUpload(file)` — async; reads the whole file and delegates to `encodeBytesForUpload`.
 - `decrypt(buffer, password, htmlB64Key)` — reverses the transform on a downloaded chunk's `ArrayBuffer`.
 - `fetchChunk(wsSession, path, start, size)` — dispatches to `fetchChunkHTTP` (POSTs to `/api/files/download`) or `fetchChunkWS` based on the `settings.backend` setting, calling `decrypt` on the (re)assembled response either way. `wsSession` is a plain `{ws, password, htmlB64Key}` object owned by the caller (`downloadFile`), threaded through repeated calls for the same file so the WS backend reuses one connection per file instead of opening one per chunk; `closeWSSession` ends it. Ignored for the HTTP backend.
 - Chunked downloads with optional reassembly via the File System Access API (`showSaveFilePicker`). Requires a secure context (HTTPS or localhost); the checkbox is disabled otherwise.
 - `uploadFiles(files)` — dispatches each file to `uploadFileHTTP` or `uploadFileWS` based on `settings.backend`, in parallel, then refreshes the upload listing. `uploadFileHTTP` further dispatches to `uploadFileHTTPChunked` when `settings.uploadChunking.enabled` — HTTP backend only, see "`/api/files/upload` multipart form" above for the protocol.
 - `load()` / `loadUploadDir()` — each compares the fetched data against the current state with `JSON.stringify` (`updateIfChanged`) and only updates the reactive array on a change, preserving scroll position during auto-refresh. The clipboard instead syncs incrementally via `pollClipboard`/`applyClipState` (see "Clipboard tab").
+- `onAuthKeyChange()` — after a key change: `resetClipSync()`, reload the download listing (kept across tab switches), and refresh the active tab.
 - `textToBase64` / `base64ToText` — UTF-8–safe helpers used by the clipboard tab.
 - `sha256Hex(buffer)` — wraps `crypto.subtle.digest('SHA-256', ...)`, hex-encoding via the shared `bytesToHex` helper (also used by `randomHex`). Used by the benchmark tab (see below); requires a secure context (HTTPS or localhost).
 - `runDownloadBenchmark()` / `runUploadBenchmark()` — drive the benchmark tab; see "Benchmark tab" below.
 
 ### UI settings persistence
 
-Everything under Alpine's `settings` object (backend choice, auto-refresh, confirm-delete, WS frame
-size, transform config, chunking config, benchmark size/chunk-size config, and side-panel
-open/collapsed state) is persisted as one JSON blob in `localStorage["warpgate-settings"]`, restored
-on the next page load. Deliberately **not** persisted there: `tab`/`pathSegments` (navigation, not
-configuration — a stale restored path could point at a since-deleted directory), `wsFrameMinKB`/
-`wsFrameMaxKB` (fetched fresh from `/api/public/settings` every load, not user configuration),
-`authShowKey` (whether the auth key is currently unmasked — always starts masked for basic
-shoulder-surf hygiene, kept as a standalone top-level property outside `settings` specifically so it
-can never end up in the persisted blob), and `benchmarkResults` (a run history, not configuration —
-kept as a standalone top-level property for the same reason).
+Everything under `store.js`'s `settings` object (backend choice, auto-refresh, confirm-delete, WS frame
+size, transform config, chunking config, benchmark size/chunk-size config, clipboard sort/search scope,
+and side-panel open/collapsed state) is persisted as one JSON blob in
+`localStorage["warpgate-settings"]`, restored on the next page load. Everything else lives in the
+separate, never-persisted `state` object: navigation (`tab`/`pathSegments` — a stale restored path
+could point at a since-deleted directory), `wsFrameMinKB`/`wsFrameMaxKB` (fetched fresh from
+`/api/public/settings` every load), `authShowKey` (the auth key always starts masked), and
+`benchmarkResults` (a run history, not configuration).
 
 - **`settings.auth.key` is the one field of `settings` carved out of that blob.** It stays in the
-  reactive tree (so every existing `x-model="settings.auth.key"` binding and watcher is unaffected),
-  but is persisted separately in `sessionStorage["warpgate-auth-key"]` instead of `localStorage`, so
-  it doesn't outlive the browser tab/session the way the rest of the settings do — closing the tab (or
-  browser) clears it, and it isn't shared with a different tab either, since `sessionStorage` is
-  per-tab. `saveSettings()` zeroes `auth.key` out of the object before serializing it to
-  `localStorage` (which also scrubs a key persisted there by a pre-this-change client on the next
-  save) and separately `sessionStorage.setItem`/`removeItem`s it; `loadSettings()` restores the rest
-  of `settings` from `localStorage` as usual, then unconditionally overwrites `settings.auth.key` from
-  `sessionStorage` (or `''` if absent) — so even a stale `localStorage` blob that still has a key in
-  it from before this change can never leak the key back in.
+  reactive tree, but is persisted separately in `sessionStorage["warpgate-auth-key"]` instead of
+  `localStorage`, so it doesn't outlive the browser tab/session the way the rest of the settings do —
+  closing the tab (or browser) clears it, and it isn't shared with a different tab either, since
+  `sessionStorage` is per-tab. `saveSettings()` zeroes `auth.key` out of the object before serializing
+  it to `localStorage` and separately `sessionStorage.setItem`/`removeItem`s it; `loadSettings()`
+  restores the rest of `settings` from `localStorage`, then unconditionally overwrites
+  `settings.auth.key` from `sessionStorage` (or `''` if absent) — so even a stale `localStorage` blob
+  that still has a key in it can never leak the key back in.
 - Shape: `{"version":1,"settings":{...}}` — mirrors the `settings` object exactly (auth key aside), so
   persistence is just "serialize `settings`, merge back into `settings`" with no separate allowlist to
-  maintain. Any new UI-configurable value should be added under `settings`, not as a new top-level
-  Alpine property, or it won't be persisted.
-- `mergeSettings(target, source)` (module-level in `app.js`) recursively copies fields from the parsed
-  stored blob onto the live `settings` object, but only for keys that already exist on the target —
-  this ignores stale/unknown fields from an older schema version rather than grafting them on
-  (relevant if `SETTINGS_VERSION` is ever bumped and old/new fields briefly coexist).
-- `loadSettings()` runs synchronously as the very first line of `init()`, before `applyAuto()` — that
-  order matters: it lets a restored `auto: false` + custom key survive untouched, while `auto: true`
-  still gets a fresh key generated every load (`applyAuto()` only overwrites when the auto flag is
-  true), matching the pre-existing "never reuse an old auto-generated key" behavior.
-- `saveSettings()` is triggered by `this.$watch('JSON.stringify(settings)', ...)` — evaluating
-  `JSON.stringify` reads every nested field, which is what makes the watcher fire on a change
-  anywhere in the tree; a plain `$watch('settings', ...)` only fires when the `settings` reference
-  itself is reassigned, not on nested mutations, since almost every field here is edited via a plain
-  `x-model` binding with no dedicated change handler to hook a manual save into.
-- **`<select x-model="settings.backend">` and `<select x-model="settings.transform.type">` need an
-  extra nudge.** Their `<option>`s are rendered by a child `x-for`; Alpine's tree walk processes a
-  parent's directives (including `x-model`'s initial DOM sync) before recursing into that child, so
-  `x-model` tries to apply the restored value before the matching `<option>` exists. A native
-  `<select>.value` assignment to a not-yet-existing option value is a silent no-op with no automatic
-  retry once the option later appears — so without a fix, these two selects visually stick on their
-  default option after a restore even though the underlying `settings` value is correct.
-  `$nextTick` fires too early to reliably fix this; `init()` instead force-resyncs both via
-  `x-ref="backendSelect"`/`x-ref="transformTypeSelect"` inside a `setTimeout(fn, 0)` (a full macrotask
-  later, after Alpine's render has definitely settled).
+  maintain. Any new UI-configurable value should be added under `settings`, not `state`, or it won't
+  be persisted.
+- `mergeSettings(target, source)` (`store.js`) recursively copies fields from the parsed stored blob
+  onto the live `settings` object, but only for keys that already exist on the target — this ignores
+  stale/unknown fields from an older schema version rather than grafting them on.
+- `initStore()` runs `loadSettings()` before `applyAuto()` — that order matters: it lets a restored
+  `auto: false` + custom key survive untouched, while `auto: true` still gets a fresh key generated
+  every load (`applyAuto()` only overwrites when the auto flag is true).
+- `saveSettings()` is triggered by an `effect` that evaluates `JSON.stringify(settings)` — reading
+  every nested field subscribes the effect to all of them, so a change anywhere in the tree saves.
 
 ### Side panel sections (alphabetical order)
 
@@ -859,11 +865,11 @@ label text.
 ### Clipboard tab
 
 - Optional single-line title input (`clipTitle`) above a large textarea for composing a note; Submit button creates a new note via `/api/clip/new`. Control characters in the title are replaced by spaces client-side before sending. Submit is enabled (`canSubmitClip()`) when there's any text, title, or pending image.
-- **Pasting an image** (`@paste` → `handleClipPaste`) into the title or textarea captures `image/*` entries from `clipboardData.items` into `pendingAttachments` (shown as thumbnails with a ✕). On Submit the note is created/edited first, then each pending image is uploaded to it via `uploadAttachment` (`encodeBytesForUpload` + the multipart `/api/clip/attachment`). Pending images are *new* only; existing images are managed on the note card. To add images to an existing note: edit it, paste, Submit. (Capture uses the `paste` event, which works over plain HTTP; copying an image back out would need a secure context, so it's not in the core path.)
+- **Pasting an image** (`onPaste` → `handleClipPaste`) into the title or textarea captures `image/*` entries from `clipboardData.items` into `pendingAttachments` (shown as thumbnails with a ✕). On Submit the note is created/edited first, then each pending image is uploaded to it via `uploadAttachment` (`encodeBytesForUpload` + the multipart `/api/clip/attachment`). Pending images are *new* only; existing images are managed on the note card. To add images to an existing note: edit it, paste, Submit. (Capture uses the `paste` event, which works over plain HTTP; copying an image back out would need a secure context, so it's not in the core path.)
 - Clicking ✏ on a note pre-fills title and textarea for editing; the button becomes "Update" / "Cancel". Pressing Escape (in either field) or clicking "Cancel" discards the edit.
-- Each note shows its title (bold, only if non-empty — no placeholder for untitled notes), timestamp and decoded text, then a thumbnail per attachment (lazy-fetched once via `ensureAttachment` → `/api/clip/attachment/download`, decoded with the current transform, cached in `clipImages` by attachment id as an object URL; the `<img>` renders via `x-if` only once a `blob:` URL exists, so a `loading`/`error` placeholder never triggers a spurious image request). Click a thumbnail to open it; ✕ on a thumbnail deletes that image live (`deleteAttachment`). Footer buttons: ⬇ (download as `.txt`, named after the title), 📋 (copy text to system clipboard), ✏ (edit).
+- Each note shows its title (bold, only if non-empty — no placeholder for untitled notes), timestamp and decoded text, then a thumbnail per attachment (lazy-fetched once via `ensureAttachment` → `/api/clip/attachment/download`, from a `useEffect` in the `Thumb` component, decoded with the current transform, cached in `state.clipImages` by attachment id as an object URL; the `<img>` renders only once a `blob:` URL exists, so a `loading`/`error` placeholder never triggers a spurious image request). Click a thumbnail to open it in the lightbox (Esc closes). While editing a note, ✕ on its thumbnail marks the image for removal (`toggleRemoveAttachment`, ↺ undoes); removals are applied on Update. Footer buttons: ⬇ (download as `.txt`, named after the title), 📋 (copy text to system clipboard), ✏ (edit).
 - **Sync** (`pollClipboard` → `applyClipState`): the list is maintained incrementally against `/api/clip/state?since=<clipCursor>` (see "Clipboard sync" above) — upsert `changed`, drop ids absent from `ids`, honor `reset`; `pruneClipImages` revokes object URLs for attachments no longer referenced. Auto-refresh, `setTab`, and post-write refreshes all call `pollClipboard`; an auth-key change calls `resetClipSync` (cursor 0, clear items/images) then re-polls.
-- Search box + scope selector (Title + content / Title / Content, `settings.clipSearchScope`, persisted) above the list; the query (`clipSearch`) is not persisted. Purely client-side over the already-synced notes. `visibleClipItems()` sorts, filters (case-insensitive substring, over title/text only — images aren't searched), and splits title/content into `{t, m}` segments via `highlightSegments`; matches render as `<span class="clip-hl">` through `x-text`, never `x-html`, since note content comes from untrusted machines.
+- Search box + scope selector (Title + content / Title / Content, `settings.clipSearchScope`, persisted) above the list; the query (`clipSearch`) is not persisted. Purely client-side over the already-synced notes. `visibleClipItems()` sorts, filters (case-insensitive substring, over title/text only — images aren't searched), and splits title/content into `{t, m}` segments via `highlightSegments`; matches render as `<span class="clip-hl">` text children, never `dangerouslySetInnerHTML`, since note content comes from untrusted machines.
 - ✕ delete button in the note header; optionally prompts for confirmation (controlled by "Confirm note delete" in the General panel section).
 
 ### Benchmark tab
