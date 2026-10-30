@@ -1,7 +1,7 @@
 // Clipboard tab logic: incremental sync against /api/clip/state, note
 // create/edit/delete, and image attachments.
 import { API_BASE, state, settings } from '../store.js';
-import { authHeaders, jsonHeaders, encodeBody, decodeResponseJSON, paramEncryptEnabled, assertOk } from './api.js';
+import { authHeaders, jsonHeaders, encodeBody, decodeResponseJSON, paramEncryptEnabled, assertOk, noteAuthStatus } from './api.js';
 import { decrypt, buildTransformArgs, perRequestSecrets, encodeBytesForUpload } from './transform.js';
 import { textToBase64, base64ToText, triggerDownload } from './util.js';
 
@@ -61,6 +61,7 @@ export async function pollClipboard() {
     var encrypted = paramEncryptEnabled();
     var url = API_BASE + '/api/clip/state?since=' + state.clipCursor + (encrypted ? '&e=1' : '');
     var res = await fetch(url, { headers: authHeaders() });
+    noteAuthStatus(res);
     if (!res.ok) throw new Error('HTTP ' + res.status);
     applyClipState(await decodeResponseJSON(res, encrypted));
   } catch(err) {

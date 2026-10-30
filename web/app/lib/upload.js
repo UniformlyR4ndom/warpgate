@@ -1,7 +1,7 @@
 // Upload tab logic: upload-directory listing and whole-file/chunked uploads
 // over HTTP or WS.
 import { API_BASE, state, settings, authKeyHash } from '../store.js';
-import { authHeaders, encodeBody, decodeResponseJSON, assertOk,
+import { authHeaders, encodeBody, decodeResponseJSON, assertOk, noteAuthStatus,
          paramEncryptEnabled, wsBaseURL, sendWSControl, wsDecryptFor } from './api.js';
 import { wsOpen, wsNextJSON, sendWSBinary } from './ws.js';
 import { encodeBytesForUpload, encodeForUpload, uploadFilename } from './transform.js';
@@ -13,6 +13,7 @@ export async function loadUploadDir() {
     var encrypted = paramEncryptEnabled();
     var url = API_BASE + '/api/files/ul-list' + (encrypted ? '?e=1' : '');
     var res = await fetch(url, { headers: authHeaders() });
+    noteAuthStatus(res);
     if (!res.ok) {
       state.uploadEntries = [];
       state.uploadError = res.status === 404

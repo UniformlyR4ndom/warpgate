@@ -42,6 +42,7 @@ export const state = deepSignal({
   pathSegments: [],
   entries: [],
   error: null,
+  authFailed: false,
   uploadEntries: [],
   uploadError: null,
   transfers: [],

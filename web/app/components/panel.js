@@ -1,4 +1,5 @@
 import { html, text, num, check, sel } from './html.js';
+import { useEffect } from '../vendor/hooks.module.js';
 import { settings, state, backendTypes, transformTypes } from '../store.js';
 import { randomHex } from '../lib/util.js';
 import { OutboxSettings } from './outbox.js';
@@ -53,12 +54,18 @@ export function Panel() {
   var tab = state.tab;
   var t = settings.transform;
   var tabTransport = tab === 'download' || tab === 'upload' || tab === 'benchmark';
+  useEffect(() => {
+    function onKey(e) {
+      if (e.key !== 'Escape' || e.defaultPrevented || state.clipLightbox || state.outbox.showScript) return;
+      // Esc in a field outside the panel belongs to that field.
+      if (e.target.closest('input, textarea, select') && !e.target.closest('.panel')) return;
+      settings.panel.open = false;
+    }
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
   return html`
-    <aside class="panel ${settings.panel.open ? '' : 'collapsed'}">
-      <button class="panel-toggle" onClick=${() => (settings.panel.open = !settings.panel.open)} title="Toggle panel">
-        ${settings.panel.open ? '◀' : '▶'}
-      </button>
-      ${settings.panel.open && html`
+    <aside class="panel">
         <div class="panel-content">
 
           <${Section} title="Auth" openKey="authOpen">
@@ -176,6 +183,6 @@ export function Panel() {
             </div>`}
           <//>
 
-        </div>`}
+        </div>
     </aside>`;
 }

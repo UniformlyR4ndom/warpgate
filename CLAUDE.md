@@ -839,7 +839,7 @@ those fields change (signals auto-tracking). Mutate through the proxies (`state.
 
 Everything under `store.js`'s `settings` object (backend choice, auto-refresh, confirm-delete, WS frame
 size, transform config, chunking config, benchmark size/chunk-size config, clipboard sort/search scope,
-and side-panel open/collapsed state) is persisted as one JSON blob in
+and side-panel open/section-collapsed state) is persisted as one JSON blob in
 `localStorage["warpgate-settings"]`, restored on the next page load. Everything else lives in the
 separate, never-persisted `state` object: navigation (`tab`/`pathSegments` — a stale restored path
 could point at a since-deleted directory), `wsFrameMinKB`/`wsFrameMaxKB` (fetched fresh from
@@ -869,6 +869,12 @@ could point at a since-deleted directory), `wsFrameMinKB`/`wsFrameMaxKB` (fetche
   every nested field subscribes the effect to all of them, so a change anywhere in the tree saves.
 
 ### Side panel sections (alphabetical order)
+
+The panel (`components/panel.js`) is shown and hidden by the ⚙ Settings button next to Refresh
+(`settings.panel.open`); Esc closes it, except while the lightbox or the PowerShell dialog is open
+or when the key goes to a field outside the panel. While it is closed, an orange dot on the button
+flags a state the user has to act on: `state.authFailed` (the last list/poll request got a `401`,
+set by `noteAuthStatus` in `lib/api.js`) or an outbox in `reconnect`/`auth`/`error`.
 
 | Section   | Purpose |
 |-----------|---------|

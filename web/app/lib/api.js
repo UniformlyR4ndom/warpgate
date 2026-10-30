@@ -1,7 +1,7 @@
 // Request/response plumbing shared by every tab: auth headers, the
 // encode/decode choke points for parameter encryption, and WS helpers that
 // depend on the store.
-import { API_BASE, settings, authKeyHash, paramEncKeyBytes } from '../store.js';
+import { API_BASE, settings, state, authKeyHash, paramEncKeyBytes } from '../store.js';
 import { encryptParams, decryptParams } from './paramcrypt.js';
 
 export { API_BASE, decryptParams };
@@ -32,6 +32,11 @@ export function sendWSControl(ws, obj) {
 export async function decodeResponseJSON(res, encrypted) {
   if (!encrypted) return res.json();
   return decryptParams(await res.text());
+}
+
+// Any other status means the auth check passed (it runs before routing).
+export function noteAuthStatus(res) {
+  state.authFailed = res.status === 401;
 }
 
 export function assertOk(res) {

@@ -7,6 +7,7 @@
   --border: #3a4750;
   --input-bg: #2f3d44;
   --error: #f44747;
+  --warn: #e8a33d;
 }
 
 * {
@@ -60,6 +61,33 @@ h1 {
   color: var(--accent);
 }
 
+.header-actions {
+  display: flex;
+  gap: 1rem;
+}
+
+.settings-btn {
+  position: relative;
+}
+
+.settings-btn.active {
+  color: var(--text);
+}
+
+.settings-btn.active:hover {
+  color: var(--accent);
+}
+
+.settings-dot {
+  position: absolute;
+  top: -2px;
+  left: 0.65rem;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--warn);
+}
+
 .refresh-btn svg {
   display: block;
   width: 0.9rem;
@@ -96,36 +124,20 @@ h1 {
 
 .panel {
   display: flex;
-  flex-direction: row;
   width: 260px;
   min-width: 260px;
   border-right: 1px solid var(--border);
-  transition: min-width 0.2s ease, width 0.2s ease;
-  overflow: hidden;
 }
 
-.panel.collapsed {
-  width: 32px;
-  min-width: 32px;
+.panel-content {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 0 1.5rem;
+  align-items: start;
 }
 
-.panel-toggle {
-  flex-shrink: 0;
-  width: 32px;
-  background: none;
-  border: none;
-  border-right: 1px solid var(--border);
-  color: var(--muted);
-  cursor: pointer;
-  font-size: 0.75rem;
-  padding: 0;
-  align-self: flex-start;
-  height: 2rem;
-  margin-top: 0.5rem;
-}
-
-.panel-toggle:hover {
-  color: var(--text);
+.panel-mode {
+  margin-bottom: 1rem;
 }
 
 .panel-content {

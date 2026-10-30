@@ -1,7 +1,7 @@
 // Download tab logic: directory listing, navigation, and chunked/whole-file
 // downloads over HTTP or WS.
 import { API_BASE, state, settings } from '../store.js';
-import { jsonHeaders, authHeaders, encodeBody, decodeResponseJSON, assertOk,
+import { jsonHeaders, authHeaders, encodeBody, decodeResponseJSON, assertOk, noteAuthStatus,
          paramEncryptEnabled, wsBaseURL, sendWSControl, wsDecryptFor, closeWSSession } from './api.js';
 import { wsOpen, wsNextJSON, receiveWSBinary, readBodyWithProgress } from './ws.js';
 import { decrypt, buildTransformArgs, perRequestSecrets, resolveContentTypeOverride } from './transform.js';
@@ -22,6 +22,7 @@ export async function load() {
       headers: jsonHeaders(),
       body:    encodeBody({ path: currentPath() }),
     });
+    noteAuthStatus(res);
     if (!res.ok) throw new Error('HTTP ' + res.status);
     var data = await decodeResponseJSON(res, encrypted);
     updateIfChanged('entries', data);
