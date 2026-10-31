@@ -71,9 +71,9 @@ func parseHostAddr(s string) (netip.Addr, error) {
 }
 
 // clientIP returns the TCP peer address, or — if the peer is a trusted proxy —
-// the rightmost untrusted X-Forwarded-For entry. A missing or malformed header
-// yields the peer address. The result is invalid only if RemoteAddr is
-// unparseable.
+// the rightmost untrusted X-Forwarded-For entry. The result is invalid if
+// RemoteAddr is unparseable or a trusted peer's header doesn't identify an
+// untrusted client (missing, malformed, or only trusted hops).
 func clientIP(r *http.Request, trusted []netip.Prefix) netip.Addr {
 	peer, err := parseHostAddr(r.RemoteAddr)
 	if err != nil || !ipListContains(trusted, peer) {
@@ -87,12 +87,12 @@ func clientIP(r *http.Request, trusted []netip.Prefix) netip.Addr {
 	for i := len(hops) - 1; i >= 0 && ipListContains(trusted, cur); i-- {
 		a, err := parseHostAddr(strings.TrimSpace(hops[i]))
 		if err != nil {
-			return peer
+			return netip.Addr{}
 		}
 		cur = a
 	}
 	if ipListContains(trusted, cur) {
-		return peer
+		return netip.Addr{}
 	}
 	return cur
 }

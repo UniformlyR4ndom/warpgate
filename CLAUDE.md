@@ -130,8 +130,9 @@ logs.
   registrations outlive the window. State is an in-memory map — lost on restart.
 - **Client IP** (`clientIP`, also used by `handleCheckin`'s log line): the TCP peer, normalized
   (IPv4-mapped IPv6 unmapped). Only if the peer is in `-trusted-proxies` is `X-Forwarded-For` walked
-  right to left, skipping trusted hops; the first untrusted entry is the client. A malformed entry or
-  a chain of only trusted hops falls back to the peer.
+  right to left, skipping trusted hops; the first untrusted entry is the client. A missing header, a
+  malformed entry or a chain of only trusted hops leaves the client unknown: the IP firewall then
+  blocks the request (fail closed), and the check-in log shows the peer marked "client unknown".
 
 The full API is documented in `doc/openapi.yaml`.
 

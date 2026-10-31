@@ -6,7 +6,7 @@ import (
 )
 
 func (s *Server) handleCheckin(w http.ResponseWriter, r *http.Request) {
-	ip := r.RemoteAddr
+	ip := r.RemoteAddr + " (client unknown)"
 	if a := clientIP(r, s.trustedProxies); a.IsValid() {
 		ip = a.String()
 	}

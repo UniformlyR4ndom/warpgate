@@ -41,12 +41,13 @@ func TestClientIP(t *testing.T) {
 		{"198.51.100.7:1234", nil, "198.51.100.7"},
 		{"198.51.100.7:1234", []string{"203.0.113.1"}, "198.51.100.7"}, // untrusted peer: header ignored
 		{"[::ffff:198.51.100.7]:1234", nil, "198.51.100.7"},
-		{"10.0.0.1:1234", nil, "10.0.0.1"},
+		{"10.0.0.1:1234", nil, ""}, // trusted peer without a client hop: indeterminate
 		{"10.0.0.1:1234", []string{"203.0.113.1"}, "203.0.113.1"},
 		{"10.0.0.1:1234", []string{"6.6.6.6, 203.0.113.1, 10.0.0.2"}, "203.0.113.1"},
 		{"10.0.0.1:1234", []string{"6.6.6.6", "203.0.113.1"}, "203.0.113.1"},
-		{"10.0.0.1:1234", []string{"garbage, 10.0.0.2"}, "10.0.0.1"},
-		{"10.0.0.1:1234", []string{"10.0.0.3, 10.0.0.2"}, "10.0.0.1"},
+		{"10.0.0.1:1234", []string{"garbage, 10.0.0.2"}, ""},
+		{"10.0.0.1:1234", []string{"10.0.0.3, 10.0.0.2"}, ""},
+		{"10.0.0.1:1234", []string{"6.6.6.6, garbage"}, ""},
 	}
 	for _, tt := range tests {
 		r := httptest.NewRequest(http.MethodGet, "/", nil)
@@ -54,7 +55,11 @@ func TestClientIP(t *testing.T) {
 		for _, v := range tt.xff {
 			r.Header.Add("X-Forwarded-For", v)
 		}
-		if got := clientIP(r, trusted).String(); got != tt.want {
+		got := ""
+		if a := clientIP(r, trusted); a.IsValid() {
+			got = a.String()
+		}
+		if got != tt.want {
 			t.Errorf("remote %s xff %v: got %s, want %s", tt.remote, tt.xff, got, tt.want)
 		}
 	}
@@ -219,4 +224,16 @@ func TestIPFilterDedicatedPathOnly(t *testing.T) {
 	c.expectRegPage("/pfx/reg", a)
 	c.expectRedirect(http.MethodPost, "/pfx/reg", a, "/pfx/static/")
 	c.expectServed("/pfx/static/", a)
+}
+
+// TestIPFilterUnknownClientBlocked: a trusted proxy that is itself
+// allowlisted must not admit requests whose client it doesn't identify.
+func TestIPFilterUnknownClientBlocked(t *testing.T) {
+	s, err := NewServer(Config{Root: t.TempDir(), NoAuth: true, IPAllow: "10.0.0.0/8", TrustedProxies: "10.0.0.1"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := fwClient{t, s.handler()}
+	c.expectBlank(http.MethodGet, "/api/public/settings", "10.0.0.1")
+	c.expectServed("/api/public/settings", "10.0.0.2")
 }
