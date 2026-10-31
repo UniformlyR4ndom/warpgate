@@ -46,7 +46,9 @@ given proxy tolerates, independent of any transform.
 
 The Go module (`warpgate`, Go 1.25.0) lives at the repo root. The frontend is embedded into the binary from the `web/` subdirectory.
 `cmd/wgcli` is a same-module Go CLI client that exercises the HTTP/WS API from the command line
-(mainly for testing); see the `wgcli` skill for usage details.
+(for testing and scripted/agent use: global flags fall back to `WGCLI_*` environment variables,
+flags may follow positional arguments, transform keys default to random, `-cert`/`-cert-key` for
+TLS client auth); see the `wgcli` skill for usage details.
 
 ## Architecture
 

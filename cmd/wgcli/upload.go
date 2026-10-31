@@ -219,13 +219,15 @@ func runUpload(args []string) error {
 	g := addGlobalFlags(fs)
 	remoteName := fs.String("remote-name", "", "name to store the file as on the server (defaults to the local file's base name)")
 	transformName := fs.String("transform", "id", "transform: id|xor|aes-ctr|pdf|html-b64")
-	key := fs.String("key", "", "hex key (xor, aes-ctr, html-b64)")
-	iv := fs.String("iv", "", "hex IV (aes-ctr, 16 bytes)")
+	key := fs.String("key", "", "hex key (xor, aes-ctr, html-b64); random if omitted")
+	iv := fs.String("iv", "", "hex IV (aes-ctr, 16 bytes); random if omitted")
 	filename := fs.String("filename", "", "attachment filename embedded in the PDF (pdf transform only)")
 	backend := fs.String("backend", "http", "transport: http|ws")
 	frameSize := fs.Int64("frame-size", 0, "WS frame size in bytes (ws backend only; 0 = 1 MiB default)")
 	chunkSize := fs.Int64("chunk-size", 0, "chunk size in bytes for chunked upload via the continuation-key protocol (0 = one-shot; http backend only)")
-	fs.Parse(args)
+	if err := parseFlags(fs, g, args); err != nil {
+		return err
+	}
 
 	if fs.NArg() < 1 {
 		return fmt.Errorf("usage: wgcli upload [flags] <local-file>")

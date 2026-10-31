@@ -199,7 +199,9 @@ func runSimDownload(args []string) error {
 	chunkSize := fs.Int64("chunk-size", 4<<20, "chunk size in bytes for the download loop")
 	backend := fs.String("backend", "http", "transport: http|ws")
 	frameSize := fs.Int64("frame-size", 0, "WS frame size in bytes (ws backend only; 0 = server ceiling)")
-	fs.Parse(args)
+	if err := parseFlags(fs, g, args); err != nil {
+		return err
+	}
 
 	if *totalSize <= 0 {
 		return fmt.Errorf("-total-size is required and must be positive")
@@ -406,7 +408,9 @@ func runSimUpload(args []string) error {
 	chunkSize := fs.Int64("chunk-size", 0, "chunk size in bytes for chunked upload via the continuation-key protocol (0 = one-shot; http backend only)")
 	backend := fs.String("backend", "http", "transport: http|ws")
 	frameSize := fs.Int64("frame-size", 0, "WS frame size in bytes (ws backend only; 0 = 1 MiB default)")
-	fs.Parse(args)
+	if err := parseFlags(fs, g, args); err != nil {
+		return err
+	}
 
 	if *totalSize <= 0 {
 		return fmt.Errorf("-total-size is required and must be positive")

@@ -53,7 +53,9 @@ func fetchList(g *globalFlags, dirPath string) ([]listEntry, error) {
 func runList(args []string) error {
 	fs := flag.NewFlagSet("list", flag.ExitOnError)
 	g := addGlobalFlags(fs)
-	fs.Parse(args)
+	if err := parseFlags(fs, g, args); err != nil {
+		return err
+	}
 
 	dirPath := ""
 	if fs.NArg() > 0 {

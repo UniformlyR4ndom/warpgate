@@ -177,7 +177,9 @@ func clipTextArg(fs *flag.FlagSet, file string, argIndex int) ([]byte, error) {
 func runClipList(args []string) error {
 	fs := flag.NewFlagSet("clip list", flag.ExitOnError)
 	g := addGlobalFlags(fs)
-	fs.Parse(args)
+	if err := parseFlags(fs, g, args); err != nil {
+		return err
+	}
 
 	items, err := fetchClipList(g)
 	if err != nil {
@@ -216,7 +218,9 @@ func runClipNew(args []string) error {
 	g := addGlobalFlags(fs)
 	file := fs.String("f", "", "read note content from this file instead of the positional argument")
 	title := fs.String("title", "", "note title (optional)")
-	fs.Parse(args)
+	if err := parseFlags(fs, g, args); err != nil {
+		return err
+	}
 
 	data, err := clipTextArg(fs, *file, 0)
 	if err != nil {
@@ -236,7 +240,9 @@ func runClipEdit(args []string) error {
 	g := addGlobalFlags(fs)
 	file := fs.String("f", "", "read note content from this file instead of the positional argument")
 	titleFlag := fs.String("title", "", "new note title; empty clears it, omitting the flag keeps the current one")
-	fs.Parse(args)
+	if err := parseFlags(fs, g, args); err != nil {
+		return err
+	}
 
 	var title *string
 	fs.Visit(func(f *flag.Flag) {
@@ -267,7 +273,9 @@ func runClipEdit(args []string) error {
 func runClipDelete(args []string) error {
 	fs := flag.NewFlagSet("clip delete", flag.ExitOnError)
 	g := addGlobalFlags(fs)
-	fs.Parse(args)
+	if err := parseFlags(fs, g, args); err != nil {
+		return err
+	}
 
 	if fs.NArg() < 1 {
 		return fmt.Errorf("usage: wgcli clip delete [flags] <id>")

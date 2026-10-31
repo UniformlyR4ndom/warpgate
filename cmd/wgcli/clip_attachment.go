@@ -140,10 +140,12 @@ func runClipAttach(args []string) error {
 	fs := flag.NewFlagSet("clip attach", flag.ExitOnError)
 	g := addGlobalFlags(fs)
 	transformName := fs.String("transform", "id", "transform to disguise the image bytes with")
-	key := fs.String("key", "", "transform key (hex), where applicable")
-	iv := fs.String("iv", "", "transform IV (hex), for aes-ctr")
+	key := fs.String("key", "", "transform key (hex), where applicable; random if omitted")
+	iv := fs.String("iv", "", "transform IV (hex), for aes-ctr; random if omitted")
 	caption := fs.String("caption", "", "image caption")
-	fs.Parse(args)
+	if err := parseFlags(fs, g, args); err != nil {
+		return err
+	}
 
 	if fs.NArg() < 2 {
 		return fmt.Errorf("usage: wgcli clip attach [flags] <note-id> <image-file>")
@@ -173,9 +175,11 @@ func runClipGetAttachment(args []string) error {
 	g := addGlobalFlags(fs)
 	out := fs.String("o", "", "output file (required)")
 	transformName := fs.String("transform", "id", "transform the server should disguise the bytes with")
-	key := fs.String("key", "", "transform key (hex), where applicable")
-	iv := fs.String("iv", "", "transform IV (hex), for aes-ctr")
-	fs.Parse(args)
+	key := fs.String("key", "", "transform key (hex), where applicable; random if omitted")
+	iv := fs.String("iv", "", "transform IV (hex), for aes-ctr; random if omitted")
+	if err := parseFlags(fs, g, args); err != nil {
+		return err
+	}
 
 	if fs.NArg() < 1 || *out == "" {
 		return fmt.Errorf("usage: wgcli clip get-attachment [flags] -o <file> <attachment-id>")

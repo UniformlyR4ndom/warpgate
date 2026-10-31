@@ -1,27 +1,24 @@
 package main
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 )
 
 // buildTransformArgs builds the JSON args object for a given transform name
 // from the CLI's flat set of flags, matching the shapes documented in
-// CLAUDE.md ("Transform System").
+// CLAUDE.md ("Transform System"). A key or IV left empty is generated
+// randomly, as the frontend does; both sides of a transfer use the same args.
 func buildTransformArgs(transform, key, iv, password, filename string) (json.RawMessage, error) {
 	switch transform {
 	case "id":
 		return nil, nil
 	case "xor":
-		if key == "" {
-			return nil, fmt.Errorf("--key is required for the xor transform")
-		}
-		return json.Marshal(map[string]string{"key": key})
+		return json.Marshal(map[string]string{"key": orRandomHex(key, 32)})
 	case "aes-ctr":
-		if key == "" || iv == "" {
-			return nil, fmt.Errorf("--key and --iv are required for the aes-ctr transform")
-		}
-		return json.Marshal(map[string]string{"key": key, "iv": iv})
+		return json.Marshal(map[string]string{"key": orRandomHex(key, 32), "iv": orRandomHex(iv, 16)})
 	case "pdf":
 		args := map[string]string{}
 		if filename != "" {
@@ -32,11 +29,18 @@ func buildTransformArgs(transform, key, iv, password, filename string) (json.Raw
 		}
 		return json.Marshal(args)
 	case "html-b64":
-		if key == "" {
-			return nil, fmt.Errorf("--key is required for the html-b64 transform (16 bytes hex)")
-		}
-		return json.Marshal(map[string]string{"key": key})
+		return json.Marshal(map[string]string{"key": orRandomHex(key, 16)})
 	default:
 		return nil, fmt.Errorf("unknown transform %q", transform)
 	}
+}
+
+// orRandomHex returns s, or n random bytes hex-encoded if s is empty.
+func orRandomHex(s string, n int) string {
+	if s != "" {
+		return s
+	}
+	b := make([]byte, n)
+	rand.Read(b)
+	return hex.EncodeToString(b)
 }

@@ -1,7 +1,6 @@
 package main
 
 import (
-	"crypto/tls"
 	"fmt"
 	"io"
 	"net/url"
@@ -50,10 +49,7 @@ func (g *globalFlags) dialWS(path string) (*websocket.Conn, error) {
 	if err != nil {
 		return nil, err
 	}
-	dialer := websocket.Dialer{}
-	if g.insecure {
-		dialer.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
-	}
+	dialer := websocket.Dialer{TLSClientConfig: g.tlsConfig}
 	conn, _, err := dialer.Dial(target, nil)
 	if err != nil {
 		return nil, fmt.Errorf("dialing %s: %w", target, err)

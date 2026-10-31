@@ -51,8 +51,13 @@ func usage() {
 Usage:
   wgcli <command> [flags] [args...]
 
-Note: flags must come before positional arguments (Go's flag package stops
-parsing at the first non-flag argument).
+Flags may come before or after positional arguments; "--" ends flag
+parsing (for an argument starting with "-").
+
+Global flags fall back to environment variables when not given:
+  WGCLI_URL, WGCLI_AUTH_KEY, WGCLI_INSECURE, WGCLI_PARAM_CRYPT,
+  WGCLI_CERT, WGCLI_CERT_KEY
+Transform keys/IVs left empty are generated randomly per invocation.
 
 Commands:
   list      [flags] [remote-dir]              list files/directories
