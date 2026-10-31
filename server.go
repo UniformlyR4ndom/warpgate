@@ -139,6 +139,7 @@ func NewServer(cfg Config, db *DB) (*Server, error) {
 		s.uploadSessions = newSessionStore[*ulSession]()
 		s.simUploadSessions = newSessionStore[*simUlSession]()
 		s.registerBrowse("/api/ul/", s.ulRoot)
+		s.mux.Handle("/api/ul/mkdir", s.withAuth(s.handleMkdir))
 		s.mux.Handle("/api/files/upload", s.withAuth(s.handleUpload))
 		s.mux.Handle("/api/files/ul-list", s.withAuth(s.handleUlList))
 		s.mux.Handle("/api/files/ws/upload", http.HandlerFunc(s.handleWSUpload))

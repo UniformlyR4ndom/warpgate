@@ -66,6 +66,7 @@ TLS client auth, `wgcli register` for the IP firewall, `-json` output, filtered/
 | POST     | `/api/ul/list`          | Yes           | Like `/api/files/list`, in the upload directory (requires `-ul-root`) |
 | POST     | `/api/ul/download`      | Yes           | Like `/api/files/download`, from the upload directory (requires `-ul-root`) |
 | GET/Upgrade | `/api/ul/ws/download` | Yes (in-band) | Like `/api/files/ws/download`, from the upload directory (requires `-ul-root`) |
+| POST     | `/api/ul/mkdir`         | Yes           | Create one directory in the upload directory; body: `{"path":"a/b"}`; see below |
 | GET/Upgrade | `/api/files/ws/download`  | Yes (in-band) | WebSocket alternative to `/api/files/download`; see below |
 | GET/Upgrade | `/api/files/ws/upload`    | Yes (in-band) | WebSocket alternative to `/api/files/upload` (requires `-ul-root`); see below |
 | POST     | `/api/sim/download`     | Yes           | Download a chunk of a synthesized file, no transform applied; see "Benchmark/Simulation Endpoints" |
@@ -223,6 +224,13 @@ chunked benchmark upload — see "Benchmark/Simulation Endpoints" below.
   an escaping symlink); the file name is reduced to its base name (`ulBaseName`). The resulting
   relative path keys the upload session and is returned as `name` (slash-separated). A directory
   at the target is a `409`.
+- **Directory creation** (`mkdir.go`, `POST /api/ul/mkdir`): creates exactly one directory whose
+  parent must exist (`ulRoot.Mkdir`): `201`, `409` if the name exists, `404` if the parent is
+  missing. The path goes through `rootRelPath` and the temp-dir guard; it may be at most
+  `ulMkdirMaxDepth` (4) levels below `-ul-root` — a limit on creation only, deeper pre-existing
+  directories stay fully usable. The new name must pass `validDirName` (no control characters or
+  backslashes, no trailing dots/spaces, ≤ 255 bytes). There is deliberately no delete, rename or
+  symlink endpoint.
 - **Locking**: a per-target-path claim (`sessionStore.tryClaim`/`release`, called via
   `Server.uploadSessions`, a `*sessionStore[*ulSession]`) rejects a request outright (`409`) rather
   than queuing it if another request for the same filename is already being processed —
@@ -518,7 +526,7 @@ client can't reliably tell which occurred, and the frontend already denies the u
 mismatch regardless.
 
 **Scope**: every client→server JSON request body (`/api/files/list`, `/api/files/download`,
-`/api/ul/list`, `/api/ul/download`,
+`/api/ul/list`, `/api/ul/download`, `/api/ul/mkdir`,
 `/api/clip/new`, `/api/clip/edit`, `/api/clip/delete`, `/api/clip/attachment/download`,
 `/api/clip/attachment/edit`,
 `/api/sim/download`); only the JSON `transform`

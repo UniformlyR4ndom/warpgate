@@ -834,6 +834,49 @@ paths:
     $ref: '#/paths/~1api~1files~1list'
   /api/ul/download:
     $ref: '#/paths/~1api~1files~1download'
+  /api/ul/mkdir:
+    post:
+      summary: Create a directory in the upload directory
+      description: |
+        Creates exactly one directory below the upload root; its parent must already exist. The
+        new directory may be at most 4 levels below the upload root (deeper pre-existing
+        directories remain usable for listing, download and upload). Registered only when
+        `-ul-root` is set. The body may be an encrypted blob (see CLAUDE.md's "Parameter
+        Encryption").
+      operationId: mkdirUpload
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [path]
+              properties:
+                path:
+                  type: string
+                  description: Path of the new directory, relative to the upload root.
+                  example: reports/2026
+      responses:
+        "201":
+          description: Directory created (empty body).
+        "400":
+          description: |
+            Invalid path (traversal, empty, a `.warpgate-tmp` segment, deeper than 4 levels) or
+            an invalid name (control characters, backslash, trailing dot/space, over 255 bytes).
+        "401":
+          description: Missing or invalid `X-Auth` header, or the body fails to decrypt.
+        "403":
+          description: |
+            The parent passes through a symlink pointing outside the upload root, or is the
+            upload temp directory under another spelling.
+        "404":
+          description: The parent directory does not exist.
+        "405":
+          description: Method not allowed.
+        "409":
+          description: A file or directory with this name already exists.
+        "500":
+          description: Internal server error.
   /api/clip/state:
     get:
       operationId: clipboardState
