@@ -800,3 +800,91 @@ func TestWSUploadIntoSubdir(t *testing.T) {
 		}
 	}
 }
+
+func TestWSIdleUploadReleasesClaim(t *testing.T) {
+	old := wsIdleTimeout
+	wsIdleTimeout = 200 * time.Millisecond
+	t.Cleanup(func() { wsIdleTimeout = old })
+
+	ulRoot := t.TempDir()
+	ts := newSimTestServer(t, Config{Root: t.TempDir(), UlRoot: ulRoot, NoAuth: true, WSFrameMax: 1 << 20})
+	start := func() *websocket.Conn {
+		conn, _, err := websocket.DefaultDialer.Dial(wsURL(ts, "/api/files/ws/upload"), nil)
+		if err != nil {
+			t.Fatalf("dial: %v", err)
+		}
+		if err := conn.WriteJSON(wsUploadRequest{Filename: "idle.bin", Transform: "id"}); err != nil {
+			t.Fatalf("writing request: %v", err)
+		}
+		var ack wsAck
+		if err := conn.ReadJSON(&ack); err != nil || !ack.OK {
+			t.Fatalf("handshake ack: %+v, %v", ack, err)
+		}
+		return conn
+	}
+
+	idle := start()
+	defer idle.Close()
+	_ = idle.SetReadDeadline(time.Now().Add(5 * time.Second))
+	_, _, err := idle.ReadMessage()
+	var ne net.Error
+	if err == nil || errors.As(err, &ne) && ne.Timeout() {
+		t.Fatalf("server did not close the idle upload: %v", err)
+	}
+
+	// Poll: the handler releases the claim after closing the connection.
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		tmp, _ := os.ReadDir(filepath.Join(ulRoot, ulTmpDirName))
+		if len(tmp) == 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("temp files left after idle close: %d", len(tmp))
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	start().Close()
+}
+
+func TestWSSlowFrameNotCutOff(t *testing.T) {
+	old := wsIdleTimeout
+	wsIdleTimeout = 300 * time.Millisecond
+	t.Cleanup(func() { wsIdleTimeout = old })
+
+	ulRoot := t.TempDir()
+	ts := newSimTestServer(t, Config{Root: t.TempDir(), UlRoot: ulRoot, NoAuth: true, WSFrameMax: 1 << 20})
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL(ts, "/api/files/ws/upload"), nil)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer conn.Close()
+	if err := conn.WriteJSON(wsUploadRequest{Filename: "slow.bin", Transform: "id"}); err != nil {
+		t.Fatalf("writing request: %v", err)
+	}
+	var ack wsAck
+	if err := conn.ReadJSON(&ack); err != nil || !ack.OK {
+		t.Fatalf("handshake ack: %+v, %v", ack, err)
+	}
+
+	// One masked binary frame (all-zero mask key), trickled out over ~1 s:
+	// longer than wsIdleTimeout in total, but never idle that long.
+	payload := bytes.Repeat([]byte("slow"), 250)
+	frame := append([]byte{0x82, 0x80 | 126, byte(len(payload) >> 8), byte(len(payload)), 0, 0, 0, 0}, payload...)
+	for i := 0; i < len(frame); i += 100 {
+		if _, err := conn.NetConn().Write(frame[i:min(i+100, len(frame))]); err != nil {
+			t.Fatalf("writing frame piece: %v", err)
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	if err := conn.WriteJSON(wsDoneMessage{Done: true}); err != nil {
+		t.Fatalf("writing done: %v", err)
+	}
+	var final wsAck
+	if err := conn.ReadJSON(&final); err != nil || !final.OK {
+		t.Fatalf("final ack: %+v, %v", final, err)
+	}
+	if got, err := os.ReadFile(filepath.Join(ulRoot, "slow.bin")); err != nil || !bytes.Equal(got, payload) {
+		t.Fatalf("uploaded content: %d bytes, %v", len(got), err)
+	}
+}

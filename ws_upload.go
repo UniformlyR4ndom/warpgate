@@ -39,7 +39,7 @@ func (s *Server) handleWSUpload(w http.ResponseWriter, r *http.Request) {
 	}
 	defer conn.Close()
 
-	req, encrypted, err := readWSControl[wsUploadRequest](s, conn)
+	req, encrypted, err := readWSHandshake[wsUploadRequest](s, conn)
 	if err != nil {
 		log.Printf("ws upload: reading control message: %v", err)
 		return
@@ -102,7 +102,7 @@ func (s *Server) handleWSUpload(w http.ResponseWriter, r *http.Request) {
 	}
 
 	for {
-		mt, p, err := conn.ReadMessage()
+		mt, p, err := wsReadMessage(conn)
 		if err != nil {
 			if !websocket.IsCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway) {
 				log.Printf("ws upload: reading message for %q: %v", filename, err)

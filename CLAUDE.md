@@ -295,7 +295,10 @@ violation).
 
 Pre-auth limits (`Server.upgradeWS`, `ws.go`): right after upgrade the read limit is
 `maxParamBodySize` and the first message must arrive within `wsAuthTimeout` (10 s);
-`Server.authorizeWS` lifts the deadline once the token checks out. The upload endpoints then raise
+`Server.authorizeWS` lifts the deadline once the token checks out. After that, `wsIdleTimeout` (5 min)
+applies: `wsReadMessage` renews the read deadline whenever data arrives (so a slow but moving
+frame isn't cut off), and `wsWriteMessage` bounds each outgoing message; a dead connection thus
+releases its upload claim and temp files. The upload endpoints then raise
 the read limit to the negotiated `frameSize`, so a larger message closes the connection with 1009.
 The upgrader's buffers are a fixed `wsBufferSize` (64 KiB), independent of the frame size —
 Gorilla's `WriteMessage` sends a payload of any size as one frame.

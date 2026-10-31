@@ -41,7 +41,7 @@ func (s *Server) handleWSDownload(w http.ResponseWriter, r *http.Request, root *
 	}
 	defer conn.Close()
 
-	req, encrypted, err := readWSControl[wsDownloadRequest](s, conn)
+	req, encrypted, err := readWSHandshake[wsDownloadRequest](s, conn)
 	if err != nil {
 		log.Printf("ws download: reading control message: %v", err)
 		return
@@ -158,7 +158,7 @@ func (s *Server) handleWSDownload(w http.ResponseWriter, r *http.Request, root *
 		for {
 			n, rerr := io.ReadFull(reader, frameBuf)
 			if n > 0 {
-				if werr := conn.WriteMessage(websocket.BinaryMessage, frameBuf[:n]); werr != nil {
+				if werr := wsWriteMessage(conn, websocket.BinaryMessage, frameBuf[:n]); werr != nil {
 					log.Printf("ws download: writing frame for %q: %v", req.Path, werr)
 					return
 				}

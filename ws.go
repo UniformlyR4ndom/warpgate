@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"time"
 
@@ -20,6 +21,11 @@ const (
 // wsAuthTimeout bounds how long a fresh connection may take to send its
 // authenticating first control message. A var so tests can shorten it.
 var wsAuthTimeout = 10 * time.Second
+
+// wsIdleTimeout closes an authenticated connection once no data has arrived
+// for this long, or once a single outgoing message has taken this long to
+// send. A var so tests can shorten it.
+var wsIdleTimeout = 5 * time.Minute
 
 // wsAck is the JSON envelope sent in response to control messages
 // (the initial request and, for uploads, the final "done" message).
@@ -79,20 +85,33 @@ func (s *Server) resolveFrameSize(requested int64) (int, error) {
 	return int(requested), nil
 }
 
-// readWSControl reads the next WebSocket message, requires it to be a text
-// message, and decodes it into a value of type T — as plain JSON, or, if
-// that fails, as a base64 paramcrypt blob containing JSON (see
-// Server.decodeParams). A free function rather than a method because Go
-// does not allow a method to carry its own type parameter beyond the
-// receiver's. The returned bool reports whether the message was encrypted,
-// so a handler can encrypt its acks the same way for the rest of the
-// connection (see writeWSOK/writeWSError below).
-func readWSControl[T any](s *Server, conn *websocket.Conn) (T, bool, error) {
-	var v T
+// readWSHandshake reads and decodes the first control message, still under
+// the pre-auth deadline set by upgradeWS.
+func readWSHandshake[T any](s *Server, conn *websocket.Conn) (T, bool, error) {
 	mt, p, err := conn.ReadMessage()
 	if err != nil {
+		var v T
 		return v, false, err
 	}
+	return decodeWSControl[T](s, mt, p)
+}
+
+// readWSControl reads and decodes a control message after authentication.
+func readWSControl[T any](s *Server, conn *websocket.Conn) (T, bool, error) {
+	mt, p, err := wsReadMessage(conn)
+	if err != nil {
+		var v T
+		return v, false, err
+	}
+	return decodeWSControl[T](s, mt, p)
+}
+
+// decodeWSControl requires a text message and decodes it into T, as plain
+// JSON or as a paramcrypt blob (see Server.decodeParams). The returned bool
+// reports whether it was encrypted, so a handler can encrypt its acks the
+// same way for the rest of the connection.
+func decodeWSControl[T any](s *Server, mt int, p []byte) (T, bool, error) {
+	var v T
 	if mt != websocket.TextMessage {
 		return v, false, fmt.Errorf("expected text control message, got binary")
 	}
@@ -103,22 +122,49 @@ func readWSControl[T any](s *Server, conn *websocket.Conn) (T, bool, error) {
 	return v, encrypted, nil
 }
 
+// wsReadMessage reads one message, failing once no data has arrived for
+// wsIdleTimeout, so a large frame on a slow link is not cut off.
+func wsReadMessage(conn *websocket.Conn) (int, []byte, error) {
+	_ = conn.SetReadDeadline(time.Now().Add(wsIdleTimeout))
+	mt, r, err := conn.NextReader()
+	if err != nil {
+		return mt, nil, err
+	}
+	p, err := io.ReadAll(idleReader{conn, r})
+	return mt, p, err
+}
+
+type idleReader struct {
+	conn *websocket.Conn
+	r    io.Reader
+}
+
+func (ir idleReader) Read(p []byte) (int, error) {
+	_ = ir.conn.SetReadDeadline(time.Now().Add(wsIdleTimeout))
+	return ir.r.Read(p)
+}
+
+func wsWriteMessage(conn *websocket.Conn, mt int, data []byte) error {
+	_ = conn.SetWriteDeadline(time.Now().Add(wsIdleTimeout))
+	return conn.WriteMessage(mt, data)
+}
+
 // writeWSOK sends v as a control message: as an encrypted paramcrypt blob
 // when encrypted is true (only ever set from a connection whose handshake
 // itself arrived encrypted — see readWSControl), or as plain JSON otherwise.
 func (s *Server) writeWSOK(conn *websocket.Conn, encrypted bool, v any) error {
-	if !encrypted {
-		return conn.WriteJSON(v)
-	}
 	body, err := json.Marshal(v)
 	if err != nil {
 		return err
 	}
-	blob, err := paramcrypt.Encrypt(s.paramKeys, body)
-	if err != nil {
-		return err
+	if encrypted {
+		blob, err := paramcrypt.Encrypt(s.paramKeys, body)
+		if err != nil {
+			return err
+		}
+		body = []byte(blob)
 	}
-	return conn.WriteMessage(websocket.TextMessage, []byte(blob))
+	return wsWriteMessage(conn, websocket.TextMessage, body)
 }
 
 // writeWSError sends a {"ok":false,"error":...} control message followed by
