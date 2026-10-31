@@ -17,7 +17,7 @@ import (
 	"warpgate/internal/transform"
 )
 
-func fetchDownloadChunkHTTP(g *globalFlags, remotePath string, start, size int64, transformName string, transformArgs json.RawMessage) ([]byte, error) {
+func fetchDownloadChunkHTTP(g *globalFlags, prefix, remotePath string, start, size int64, transformName string, transformArgs json.RawMessage) ([]byte, error) {
 	reqBody, err := g.encodeBody(struct {
 		Path      string          `json:"path"`
 		Start     int64           `json:"start"`
@@ -29,7 +29,7 @@ func fetchDownloadChunkHTTP(g *globalFlags, remotePath string, start, size int64
 		return nil, err
 	}
 
-	req, err := g.newRequest(http.MethodPost, "/api/files/download", bytes.NewReader(reqBody))
+	req, err := g.newRequest(http.MethodPost, prefix+"download", bytes.NewReader(reqBody))
 	if err != nil {
 		return nil, err
 	}
@@ -48,14 +48,14 @@ func fetchDownloadChunkHTTP(g *globalFlags, remotePath string, start, size int64
 	return io.ReadAll(resp.Body)
 }
 
-func downloadHTTP(g *globalFlags, remotePath, out string, transformName string, transformArgs json.RawMessage, transformer transform.Transformer, chunkSize int64) error {
+func downloadHTTP(g *globalFlags, prefix, remotePath, out string, transformName string, transformArgs json.RawMessage, transformer transform.Transformer, chunkSize int64) error {
 	dirPath := path.Dir(remotePath)
 	if dirPath == "." {
 		dirPath = ""
 	}
 	baseName := path.Base(remotePath)
 
-	entries, err := fetchList(g, dirPath)
+	entries, err := fetchList(g, prefix, dirPath)
 	if err != nil {
 		return fmt.Errorf("listing %q to determine file size: %w", dirPath, err)
 	}
@@ -84,7 +84,7 @@ func downloadHTTP(g *globalFlags, remotePath, out string, transformName string, 
 			reqSize = remaining
 		}
 
-		chunk, err := fetchDownloadChunkHTTP(g, remotePath, transferred, reqSize, transformName, transformArgs)
+		chunk, err := fetchDownloadChunkHTTP(g, prefix, remotePath, transferred, reqSize, transformName, transformArgs)
 		if err != nil {
 			return fmt.Errorf("downloading chunk at offset %d: %w", transferred, err)
 		}
@@ -104,8 +104,8 @@ func downloadHTTP(g *globalFlags, remotePath, out string, transformName string, 
 	return nil
 }
 
-func downloadWS(g *globalFlags, remotePath, out string, transformName string, transformArgs json.RawMessage, transformer transform.Transformer, chunkSize, frameSize int64) error {
-	conn, err := g.dialWS("/api/files/ws/download")
+func downloadWS(g *globalFlags, prefix, remotePath, out string, transformName string, transformArgs json.RawMessage, transformer transform.Transformer, chunkSize, frameSize int64) error {
+	conn, err := g.dialWS(prefix + "ws/download")
 	if err != nil {
 		return err
 	}
@@ -202,6 +202,7 @@ func runDownload(args []string) error {
 	chunkSize := fs.Int64("chunk-size", 4<<20, "chunk size in bytes for the download loop")
 	backend := fs.String("backend", "http", "transport: http|ws")
 	frameSize := fs.Int64("frame-size", 0, "WS frame size in bytes (ws backend only; 0 = server ceiling)")
+	ul := fs.Bool("ul", false, "download from the upload directory instead of the download root")
 	if err := parseFlags(fs, g, args); err != nil {
 		return err
 	}
@@ -230,7 +231,7 @@ func runDownload(args []string) error {
 	}
 
 	if *backend == "ws" {
-		return downloadWS(g, remotePath, *out, *transformName, transformArgs, transformer, *chunkSize, *frameSize)
+		return downloadWS(g, apiPrefix(*ul), remotePath, *out, *transformName, transformArgs, transformer, *chunkSize, *frameSize)
 	}
-	return downloadHTTP(g, remotePath, *out, *transformName, transformArgs, transformer, *chunkSize)
+	return downloadHTTP(g, apiPrefix(*ul), remotePath, *out, *transformName, transformArgs, transformer, *chunkSize)
 }

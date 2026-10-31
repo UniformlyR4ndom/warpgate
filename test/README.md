@@ -4,7 +4,8 @@ End-to-end verification suite for warpgate. Builds the `warpgate` server and `wg
 (`cmd/wgcli`), starts a throwaway server instance, and exercises download/upload across all
 transforms (`id`, `xor`, `aes-ctr`, `pdf`, `html-b64`) and both transports (HTTP, WebSocket),
 the `/api/sim/*` benchmark/simulation endpoints (plain and chunked upload, both transports, no
-transform), `ul-list`, clipboard CRUD, a `--param-crypt` smoke test (parameter encryption, see
+transform), `ul-list`, the upload directory tree (`mkdir`, `upload -dir`, `list`/`download -ul`,
+and their confinement), clipboard CRUD, a `--param-crypt` smoke test (parameter encryption, see
 CLAUDE.md's "Parameter Encryption" section), and a handful of edge cases (bad auth, path
 traversal, invalid transform args). Every downloaded/uploaded file is compared byte-for-byte
 against its source; sim transfers are verified via wgcli's own end-to-end SHA-256 check instead,
@@ -57,7 +58,7 @@ given (the server is always stopped, keep or not).
   attachment embedding of a huge file is slow and not the interesting case at that size).
 - `--large-threshold` — the size boundary between the two lists above (default `1M`).
 
-Sim endpoints, `ul-list`, clipboard CRUD, the `--param-crypt` smoke test, and the edge-case checks
+Sim endpoints, `ul-list`, the upload directory tree, clipboard CRUD, the `--param-crypt` smoke test, and the edge-case checks
 all always run regardless of the matrix configuration — sim reuses the same `--sizes`/`--backends`
 lists as the download/upload matrix, but has no transform axis (the endpoints take none).
 

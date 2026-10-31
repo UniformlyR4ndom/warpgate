@@ -786,6 +786,69 @@ def run_edge_case_tests(wgcli_bin: Path, base_url: str, auth_key: str, sample_fi
     return results
 
 
+def run_ul_tree_tests(wgcli_bin: Path, base_url: str, auth_key: str, root_dir: Path, upload_dir: Path, download_dir: Path, sample_file: str) -> list[TestResult]:
+    """Subdirectories of the upload root: mkdir, upload -dir, list/download -ul, and confinement."""
+    results: list[TestResult] = []
+    g = ["-url", base_url, "-auth-key", auth_key]
+
+    def check(name: str, proc: subprocess.CompletedProcess, expect_ok: bool) -> bool:
+        ok = (proc.returncode == 0) == expect_ok
+        results.append(TestResult(name, ok, "" if ok else proc.stdout + proc.stderr))
+        return ok
+
+    for d in ("tree", "tree/a", "tree/a/b", "tree/a/b/c"):
+        check(f"mkdir {d}", run_cli(wgcli_bin, ["mkdir", *g, d]), expect_ok=True)
+    for d, why in (("tree/a/b/c/d", "depth limit"), ("tree", "exists"), ("missing/x", "missing parent"),
+                   ("../escape", "traversal"), ("tree/.warpgate-tmp", "reserved name"),
+                   (".WARPGATE-TMP/x", "reserved name, other case")):
+        check(f"mkdir {d} rejected ({why})", run_cli(wgcli_bin, ["mkdir", *g, d]), expect_ok=False)
+    escaped = upload_dir.parent / "escape"
+    results.append(TestResult("mkdir created nothing outside -ul-root", not escaped.exists(), str(escaped)))
+
+    src = root_dir / sample_file
+    variants = [
+        ("http", "id", [], []),
+        ("http", "xor", ["--chunk-size", "1000"], []),
+        ("ws", "aes-ctr", [], []),
+        ("http", "xor", [], ["-param-crypt"]),
+        ("ws", "id", [], ["-param-crypt"]),
+    ]
+    for i, (backend, t, extra, pc) in enumerate(variants):
+        name = f"tree-{i}.bin"
+        label = f"{backend}/{t}{' chunked' if extra else ''}{' param-crypt' if pc else ''}"
+        up = run_cli(wgcli_bin, ["upload", *g, *pc, "--backend", backend, *upload_transform_flags(t), *extra,
+                                 "-dir", "tree/a/b", "-remote-name", name, str(src)])
+        if not check(f"upload -dir tree/a/b ({label})", up, expect_ok=True):
+            continue
+        stored = upload_dir / "tree" / "a" / "b" / name
+        results.append(TestResult(f"upload landed in tree/a/b ({label})", files_equal(src, stored), str(stored)))
+        out = download_dir / f"ul-{name}"
+        dl = run_cli(wgcli_bin, ["download", *g, *pc, "-ul", "--backend", backend, *download_transform_flags(t),
+                                 "-o", str(out), f"tree/a/b/{name}"])
+        if check(f"download -ul tree/a/b/{name} ({label})", dl, expect_ok=True):
+            results.append(TestResult(f"download -ul content matches ({label})", files_equal(src, out), str(out)))
+        out.unlink(missing_ok=True)
+
+    ls = run_cli(wgcli_bin, ["list", *g, "-ul", "tree/a/b"])
+    check("list -ul tree/a/b", ls, expect_ok=True)
+    results.append(TestResult("list -ul shows c/ and the uploads", "c/" in ls.stdout and "tree-0.bin" in ls.stdout, ls.stdout))
+    ls = run_cli(wgcli_bin, ["list", *g, "-ul"])
+    results.append(TestResult("list -ul hides the temp dir", ".warpgate-tmp" not in ls.stdout, ls.stdout))
+
+    for d, why in (("missing", "missing dir"), ("../root", "traversal"), (".warpgate-tmp", "reserved name")):
+        p = run_cli(wgcli_bin, ["upload", *g, "-dir", d, str(src)])
+        check(f"upload -dir {d} rejected ({why})", p, expect_ok=False)
+        p = run_cli(wgcli_bin, ["upload", *g, "--backend", "ws", "-dir", d, str(src)])
+        check(f"upload -dir {d} rejected ({why}, ws)", p, expect_ok=False)
+    results.append(TestResult("upload created nothing outside -ul-root", not (upload_dir.parent / sample_file).exists(), ""))
+
+    for path, why in ((f"../root/{sample_file}", "traversal"), (sample_file, "only in -root"), (".warpgate-tmp", "reserved name")):
+        for backend in ("http", "ws"):
+            p = run_cli(wgcli_bin, ["download", *g, "-ul", "--backend", backend, "-o", os.devnull, path])
+            check(f"download -ul {path} rejected ({why}, {backend})", p, expect_ok=False)
+    return results
+
+
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
@@ -909,6 +972,12 @@ def main() -> int:
 
         print()
         sample_file = f"file_{sizes[0][0]}.bin"
+        print("upload directory tree (mkdir, upload -dir, list/download -ul):")
+        for r in run_ul_tree_tests(wgcli_bin, base_url, auth_key, root_dir, upload_dir, download_dir, sample_file):
+            print_result(r)
+            results.append(r)
+
+        print()
         for r in run_edge_case_tests(wgcli_bin, base_url, auth_key, sample_file):
             print_result(r)
             results.append(r)

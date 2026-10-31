@@ -26,6 +26,8 @@ func main() {
 		err = runDownload(args)
 	case "upload":
 		err = runUpload(args)
+	case "mkdir":
+		err = runMkdir(args)
 	case "clip":
 		err = runClip(args)
 	case "sim":
@@ -62,10 +64,11 @@ Global flags fall back to environment variables when not given:
 Transform keys/IVs left empty are generated randomly per invocation.
 
 Commands:
-  list      [flags] [remote-dir]              list files/directories
-  ul-list   [flags]                            list the upload directory
-  download  [flags] <remote-path>              download, reversing the transform
-  upload    [flags] <local-file>                upload, applying the transform
+  list      [flags] [remote-dir]              list files/directories (-ul: in the upload directory)
+  ul-list   [flags]                            list the top level of the upload directory (works with -ul-flat)
+  download  [flags] <remote-path>              download, reversing the transform (-ul: from the upload directory)
+  upload    [flags] <local-file>                upload, applying the transform (-dir: into a subdirectory)
+  mkdir     [flags] <remote-dir>                create one directory in the upload directory
   clip      list|get|new|edit|delete|attach|get-attachment|delete-attachment|caption
             manage clipboard notes/images (newest first)
   sim       download|upload [flags]             probe transport via a synthetic file/buffer (no filesystem I/O, no transform)

@@ -36,13 +36,22 @@ func printEntries(g *globalFlags, entries []listEntry) {
 	}
 }
 
-func fetchList(g *globalFlags, dirPath string) ([]listEntry, error) {
+// apiPrefix selects the download root (/api/files/) or, with ul, the upload
+// directory (/api/ul/) for listing and downloading.
+func apiPrefix(ul bool) string {
+	if ul {
+		return "/api/ul/"
+	}
+	return "/api/files/"
+}
+
+func fetchList(g *globalFlags, prefix, dirPath string) ([]listEntry, error) {
 	body, err := g.encodeBody(map[string]string{"path": dirPath})
 	if err != nil {
 		return nil, err
 	}
 
-	req, err := g.newRequest(http.MethodPost, "/api/files/list", bytes.NewReader(body))
+	req, err := g.newRequest(http.MethodPost, prefix+"list", bytes.NewReader(body))
 	if err != nil {
 		return nil, err
 	}
@@ -72,6 +81,7 @@ func fetchList(g *globalFlags, dirPath string) ([]listEntry, error) {
 func runList(args []string) error {
 	fs := flag.NewFlagSet("list", flag.ExitOnError)
 	g := addGlobalFlags(fs)
+	ul := fs.Bool("ul", false, "list the upload directory instead of the download root")
 	if err := parseFlags(fs, g, args); err != nil {
 		return err
 	}
@@ -81,7 +91,7 @@ func runList(args []string) error {
 		dirPath = fs.Arg(0)
 	}
 
-	entries, err := fetchList(g, dirPath)
+	entries, err := fetchList(g, apiPrefix(*ul), dirPath)
 	if err != nil {
 		return err
 	}
