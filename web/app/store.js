@@ -58,6 +58,7 @@ export const state = deepSignal({
   clipLightboxZoom: false,
   pendingAttachments: [],
   clipRemovedAttachments: [],
+  clipCaptionEdits: {},
   clipText: '',
   clipTitle: '',
   clipEditId: null,

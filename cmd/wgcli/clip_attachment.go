@@ -35,7 +35,7 @@ func mimeForExt(name string) string {
 	}
 }
 
-func postClipAttachment(g *globalFlags, noteID int64, localPath, transformName string, args json.RawMessage, t transform.Transformer) (int64, error) {
+func postClipAttachment(g *globalFlags, noteID int64, localPath, caption, transformName string, args json.RawMessage, t transform.Transformer) (int64, error) {
 	raw, err := os.ReadFile(localPath)
 	if err != nil {
 		return 0, err
@@ -56,7 +56,8 @@ func postClipAttachment(g *globalFlags, noteID int64, localPath, transformName s
 		Args      json.RawMessage `json:"args"`
 		NoteID    int64           `json:"note_id"`
 		Mime      string          `json:"mime"`
-	}{transformName, args, noteID, mimeForExt(localPath)})
+		Caption   string          `json:"caption,omitempty"`
+	}{transformName, args, noteID, mimeForExt(localPath), caption})
 	if err != nil {
 		return 0, err
 	}
@@ -141,6 +142,7 @@ func runClipAttach(args []string) error {
 	transformName := fs.String("transform", "id", "transform to disguise the image bytes with")
 	key := fs.String("key", "", "transform key (hex), where applicable")
 	iv := fs.String("iv", "", "transform IV (hex), for aes-ctr")
+	caption := fs.String("caption", "", "image caption")
 	fs.Parse(args)
 
 	if fs.NArg() < 2 {
@@ -158,7 +160,7 @@ func runClipAttach(args []string) error {
 	if err != nil {
 		return err
 	}
-	id, err := postClipAttachment(g, noteID, fs.Arg(1), *transformName, targs, t)
+	id, err := postClipAttachment(g, noteID, fs.Arg(1), *caption, *transformName, targs, t)
 	if err != nil {
 		return err
 	}

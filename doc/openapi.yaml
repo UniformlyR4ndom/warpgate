@@ -173,6 +173,10 @@ components:
           format: int64
           description: Stored (decoded) image size in bytes.
           example: 81234
+        caption:
+          type: string
+          description: Optional single-line caption (≤200 characters); omitted when empty.
+          example: admin-login
 
     NoteMeta:
       type: object
@@ -1021,9 +1025,11 @@ paths:
       summary: Attach an image to a note
       description: |
         Stores one image for an existing note. The multipart body mirrors `/api/files/upload`:
-        an optional-encrypted `transform` part (JSON `{transform,args,note_id,mime}`) plus a
+        an optional-encrypted `transform` part (JSON `{transform,args,note_id,mime,caption}`) plus a
         `file` part carrying the transform-encoded image bytes. The server reverses the transform
         and stores the raw bytes as a BLOB (capped at 20 MiB; `mime` must be `image/...`).
+        `caption` is optional and follows the note title rules: valid UTF-8, at most 200
+        characters, no control characters.
         Attaching bumps the owning note's revision (so it reappears in `/api/clip/state`).
       requestBody:
         required: true
@@ -1036,7 +1042,7 @@ paths:
                 transform:
                   type: string
                   description: |
-                    JSON (or an encrypted paramcrypt blob): `{transform,args,note_id,mime}`.
+                    JSON (or an encrypted paramcrypt blob): `{transform,args,note_id,mime,caption}`.
                 file:
                   type: string
                   format: binary
@@ -1049,7 +1055,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/AttachmentMeta'
         "400":
-          description: Invalid multipart form, mime, or image data.
+          description: Invalid multipart form, mime, caption, or image data.
         "401":
           description: Missing/invalid `X-Auth`, or the transform part fails to decrypt.
         "404":
@@ -1095,6 +1101,41 @@ paths:
                 format: binary
         "400":
           description: Invalid transform or contentType.
+        "401":
+          description: Missing/invalid `X-Auth`, or the body fails to decrypt.
+        "404":
+          description: No attachment with the given ID exists.
+        "405":
+          description: Method not allowed.
+
+  /api/clip/attachment/edit:
+    post:
+      operationId: editClipAttachment
+      summary: Set an image's caption
+      description: |
+        Replaces one attachment's caption (empty clears it) and bumps its owning note's revision.
+        The caption follows the note title rules.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [id, caption]
+              properties:
+                id:
+                  type: integer
+                  format: int64
+                caption:
+                  type: string
+            example:
+              id: 9
+              caption: admin-login
+      responses:
+        "204":
+          description: Caption updated.
+        "400":
+          description: Invalid caption.
         "401":
           description: Missing/invalid `X-Auth`, or the body fails to decrypt.
         "404":

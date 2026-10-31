@@ -90,11 +90,21 @@ export function formatTS(ts) {
 }
 
 export function triggerDownload(data, filename) {
-  var blob = new Blob([data]);
-  var url  = URL.createObjectURL(blob);
-  var a    = document.createElement('a');
+  var url = URL.createObjectURL(new Blob([data]));
+  saveURL(url, filename);
+  URL.revokeObjectURL(url);
+}
+
+export function saveURL(url, filename) {
+  var a = document.createElement('a');
   a.href = url;
   a.download = filename;
   a.click();
-  URL.revokeObjectURL(url);
+}
+
+// Replaces characters that are invalid in Windows or Unix filenames with '_'
+// and whitespace runs with '-'; may return ''.
+export function safeFileName(s) {
+  return s.replace(/[<>:"\/\\|?*\u0000-\u001f\u007f]/g, '_').replace(/^[\s.]+|[\s.]+$/g, '')
+    .replace(/\s+/g, '-').slice(0, 100);
 }

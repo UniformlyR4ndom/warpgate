@@ -3,7 +3,7 @@
 import { API_BASE, state, settings } from '../store.js';
 import { authHeaders, jsonHeaders, encodeBody, decodeResponseJSON, paramEncryptEnabled, assertOk, noteAuthStatus } from './api.js';
 import { decrypt, buildTransformArgs, perRequestSecrets, encodeBytesForUpload } from './transform.js';
-import { textToBase64, base64ToText, triggerDownload } from './util.js';
+import { textToBase64, base64ToText, triggerDownload, saveURL, safeFileName } from './util.js';
 
 export async function copyClip(b64) {
   await navigator.clipboard.writeText(base64ToText(b64));
@@ -11,9 +11,37 @@ export async function copyClip(b64) {
 
 export function downloadClip(item) {
   var text = base64ToText(item.data);
-  // Strip characters that are invalid in Windows or Unix filenames.
-  var name = item.title.replace(/[<>:"\/\\|?*\u0000-\u001f\u007f]/g, '_').replace(/^[\s.]+|[\s.]+$/g, '').slice(0, 100);
-  triggerDownload(new TextEncoder().encode(text), (name || 'note-' + item.id) + '.txt');
+  triggerDownload(new TextEncoder().encode(text), (safeFileName(item.title) || 'note-' + item.id) + '.txt');
+}
+
+function imageExt(mime) {
+  var sub = mime.slice('image/'.length).toLowerCase();
+  if (sub === 'jpeg') return 'jpg';
+  if (sub === 'svg+xml') return 'svg';
+  return sub.replace(/[^a-z0-9]/g, '') || 'img';
+}
+
+// Download name for an image: its caption, else the note title (numbered when
+// the note has several images), else note-<id>-<n>.
+export function attachmentFileName(item, att) {
+  var ext = imageExt(att.mime);
+  var name = safeFileName(att.caption || '');
+  if (name) {
+    var lower = name.toLowerCase();
+    if (lower.endsWith('.' + ext) || (ext === 'jpg' && lower.endsWith('.jpeg'))) return name;
+    return name + '.' + ext;
+  }
+  var atts = item.attachments || [];
+  var n = atts.findIndex(function(a) { return a.id === att.id; }) + 1;
+  var base = safeFileName(item.title);
+  if (!base) base = 'note-' + item.id + '-' + n;
+  else if (atts.length > 1) base += '-' + n;
+  return base + '.' + ext;
+}
+
+export function downloadAttachment(item, att) {
+  var url = state.clipImages[att.id];
+  if (isBlobURL(url)) saveURL(url, attachmentFileName(item, att));
 }
 
 // Splits str into [{t, m}] segments, m marking case-insensitive matches of q.
@@ -42,8 +70,13 @@ export function visibleClipItems() {
       var text  = base64ToText(item.data);
       var title = highlightSegments(item.title, scope !== 'content' ? q : '');
       var body  = highlightSegments(text, scope !== 'title' ? q : '');
-      var hit = !q || title.some(function(s) { return s.m; }) || body.some(function(s) { return s.m; });
-      return hit ? { item: item, title: title, body: body } : null;
+      var captions = {};
+      (item.attachments || []).forEach(function(a) {
+        captions[a.id] = highlightSegments(a.caption || '', scope !== 'title' ? q : '');
+      });
+      var matched = function(segs) { return segs.some(function(s) { return s.m; }); };
+      var hit = !q || matched(title) || matched(body) || Object.values(captions).some(matched);
+      return hit ? { item: item, title: title, body: body, captions: captions } : null;
     })
     .filter(Boolean);
 }
@@ -134,11 +167,11 @@ export async function ensureAttachment(att) {
   }
 }
 
-export function openAttachment(id) {
-  var url = state.clipImages[id];
+export function openAttachment(item, att) {
+  var url = state.clipImages[att.id];
   if (isBlobURL(url)) {
     state.clipLightboxZoom = false;
-    state.clipLightbox = url;
+    state.clipLightbox = { url: url, caption: att.caption || '', fileName: attachmentFileName(item, att) };
   }
 }
 
@@ -150,7 +183,7 @@ export function handleClipPaste(event) {
     if (it.kind === 'file' && it.type.indexOf('image/') === 0) {
       var blob = it.getAsFile();
       if (blob) {
-        state.pendingAttachments.push({ blob: blob, url: URL.createObjectURL(blob), mime: it.type });
+        state.pendingAttachments.push({ blob: blob, url: URL.createObjectURL(blob), mime: it.type, caption: '' });
         added = true;
       }
     }
@@ -175,7 +208,8 @@ function clearPendingAttachments() {
 async function uploadAttachment(noteId, pa) {
   var bytes = new Uint8Array(await pa.blob.arrayBuffer());
   var enc   = await encodeBytesForUpload(bytes, 'attachment');
-  var spec  = { transform: settings.transform.type, args: enc.args, note_id: noteId, mime: pa.mime };
+  var spec  = { transform: settings.transform.type, args: enc.args, note_id: noteId, mime: pa.mime,
+                caption: sanitizeClipTitle(pa.caption) };
   var fd    = new FormData();
   fd.append('transform', new Blob([encodeBody(spec)]), 'transform.json');
   fd.append('file', enc.data, 'image');
@@ -184,10 +218,11 @@ async function uploadAttachment(noteId, pa) {
 }
 
 export function canSubmitClip() {
-  return !!state.clipText.trim() || !!state.clipTitle.trim() || state.pendingAttachments.length > 0;
+  return state.clipEditId !== null || !!state.clipText.trim() || !!state.clipTitle.trim() || state.pendingAttachments.length > 0;
 }
 
-// The server rejects control characters and titles over 200 code points.
+// The server rejects control characters and titles/captions over 200 code
+// points.
 export function sanitizeClipTitle(title) {
   return Array.from(title.replace(/[\u0000-\u001f\u007f-\u009f]/g, ' ').trim()).slice(0, 200).join('');
 }
@@ -218,6 +253,15 @@ export async function submitClip() {
     for (var r = 0; r < state.clipRemovedAttachments.length; r++) {
       await apiDeleteAttachment(state.clipRemovedAttachments[r]);
     }
+    var editedItem = editing && state.clipItems.find(function(it) { return it.id === noteId; });
+    var editedAtts = (editedItem && editedItem.attachments) || [];
+    for (var c = 0; c < editedAtts.length; c++) {
+      var att = editedAtts[c];
+      var caption = sanitizeClipTitle(state.clipCaptionEdits[att.id] || '');
+      if (!isAttachmentRemoved(att.id) && caption !== (att.caption || '')) {
+        await apiEditAttachmentCaption(att.id, caption);
+      }
+    }
     for (var i = 0; i < state.pendingAttachments.length; i++) {
       await uploadAttachment(noteId, state.pendingAttachments[i]);
     }
@@ -234,6 +278,9 @@ export function editClip(item) {
   state.clipTitle  = item.title;
   state.clipEditId = item.id;
   state.clipRemovedAttachments = [];
+  var captions = {};
+  (item.attachments || []).forEach(function(a) { captions[a.id] = a.caption || ''; });
+  state.clipCaptionEdits = captions;
 }
 
 export function cancelEdit() {
@@ -241,6 +288,7 @@ export function cancelEdit() {
   state.clipTitle  = '';
   state.clipEditId = null;
   state.clipRemovedAttachments = [];
+  state.clipCaptionEdits = {};
 }
 
 export function isAttachmentRemoved(id) {
@@ -266,6 +314,13 @@ export async function deleteClip(id) {
   } catch(err) {
     state.clipError = 'Failed to delete note (' + err.message + ')';
   }
+}
+
+async function apiEditAttachmentCaption(id, caption) {
+  var res = await fetch(API_BASE + '/api/clip/attachment/edit', {
+    method: 'POST', headers: jsonHeaders(), body: encodeBody({ id: id, caption: caption }),
+  });
+  if (!res.ok) throw new Error('HTTP ' + res.status);
 }
 
 async function apiDeleteAttachment(id) {

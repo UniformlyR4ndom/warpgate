@@ -1,7 +1,11 @@
 package main
 
 import (
+	"bytes"
 	"database/sql"
+	"encoding/json"
+	"fmt"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -272,7 +276,7 @@ func TestAttachmentRoundTripAndRevBump(t *testing.T) {
 	revBefore, _, _, _, _ := db.ClipState(0)
 
 	img := []byte("\x89PNG\r\n\x1a\n fake png bytes")
-	aid, err := db.InsertAttachment(noteID, "image/png", img)
+	aid, err := db.InsertAttachment(noteID, "image/png", "first shot", img)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -285,8 +289,21 @@ func TestAttachmentRoundTripAndRevBump(t *testing.T) {
 	if len(changed) != 1 || len(changed[0].Attachments) != 1 || changed[0].Attachments[0].ID != aid {
 		t.Fatalf("attach: changed=%+v", changed)
 	}
-	if changed[0].Attachments[0].Size != int64(len(img)) {
-		t.Fatalf("size = %d, want %d", changed[0].Attachments[0].Size, len(img))
+	if a := changed[0].Attachments[0]; a.Size != int64(len(img)) || a.Caption != "first shot" {
+		t.Fatalf("attachment meta = %+v", a)
+	}
+
+	// Changing the caption bumps the note's rev as well.
+	revAttached, _, _, _, _ := db.ClipState(0)
+	if ok, err := db.UpdateAttachmentCaption(aid, "renamed"); err != nil || !ok {
+		t.Fatalf("caption update: ok=%v err=%v", ok, err)
+	}
+	_, changed, _, _, _ = db.ClipState(revAttached)
+	if len(changed) != 1 || changed[0].Attachments[0].Caption != "renamed" {
+		t.Fatalf("caption update: changed=%+v", changed)
+	}
+	if ok, err := db.UpdateAttachmentCaption(aid+100, "x"); err != nil || ok {
+		t.Fatalf("caption update of missing id: ok=%v err=%v", ok, err)
 	}
 
 	mime, data, err := db.GetAttachment(aid)
@@ -312,7 +329,7 @@ func TestInsertAttachmentMissingNote(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	if _, err := db.InsertAttachment(123, "image/png", []byte("x")); err != errNoteNotFound {
+	if _, err := db.InsertAttachment(123, "image/png", "", []byte("x")); err != errNoteNotFound {
 		t.Fatalf("want errNoteNotFound, got %v", err)
 	}
 }
@@ -349,5 +366,86 @@ func TestMigrateSeedsRevAboveLegacyRows(t *testing.T) {
 	rev2, changed2, _, _, _ := db.ClipState(3)
 	if rev2 != 4 || len(changed2) != 1 || changed2[0].ID != id {
 		t.Fatalf("new insert: rev=%d changed=%+v", rev2, changed2)
+	}
+}
+
+func TestOpenDBMigratesCaptionColumn(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "old.sqlite")
+	old, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, q := range []string{
+		`CREATE TABLE clipboard (id INTEGER PRIMARY KEY AUTOINCREMENT, timestamp INTEGER NOT NULL, data TEXT NOT NULL)`,
+		`CREATE TABLE clip_attachment (id INTEGER PRIMARY KEY AUTOINCREMENT, note_id INTEGER NOT NULL,
+			mime TEXT NOT NULL, size INTEGER NOT NULL, data BLOB NOT NULL)`,
+		`INSERT INTO clipboard (timestamp, data) VALUES (1, 'legacy')`,
+		`INSERT INTO clip_attachment (note_id, mime, size, data) VALUES (1, 'image/png', 1, x'00')`,
+	} {
+		if _, err := old.Exec(q); err != nil {
+			t.Fatal(err)
+		}
+	}
+	old.Close()
+
+	db, err := OpenDB(path)
+	if err != nil {
+		t.Fatalf("OpenDB: %v", err)
+	}
+	defer db.Close()
+	_, notes, _, _, err := db.ClipState(0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(notes) != 1 || len(notes[0].Attachments) != 1 || notes[0].Attachments[0].Caption != "" {
+		t.Fatalf("got %+v, want one note with one uncaptioned image", notes)
+	}
+}
+
+func TestHandleClipAttachmentCaption(t *testing.T) {
+	s := newParamDecodeTestServer(t, Config{NoAuth: true})
+	noteID := mustInsert(t, s.db, "n", "")
+
+	upload := func(caption string) *httptest.ResponseRecorder {
+		var body bytes.Buffer
+		mw := multipart.NewWriter(&body)
+		spec, _ := json.Marshal(map[string]any{"transform": "id", "note_id": noteID, "mime": "image/png", "caption": caption})
+		tw, _ := mw.CreateFormFile("transform", "transform.json")
+		tw.Write(spec)
+		fw, _ := mw.CreateFormFile("file", "image")
+		fw.Write([]byte("png"))
+		mw.Close()
+		r := httptest.NewRequest(http.MethodPost, "/api/clip/attachment", &body)
+		r.Header.Set("Content-Type", mw.FormDataContentType())
+		rec := httptest.NewRecorder()
+		s.handleClipAttachmentNew(rec, r)
+		return rec
+	}
+	rec := upload("screen 1")
+	var meta AttachmentMeta
+	if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &meta) != nil || meta.Caption != "screen 1" {
+		t.Fatalf("upload with caption: %d %s", rec.Code, rec.Body.String())
+	}
+	if rec := upload("two\nlines"); rec.Code != http.StatusBadRequest {
+		t.Fatalf("multi-line caption: status %d, want 400", rec.Code)
+	}
+
+	edit := func(body string) int {
+		rec := httptest.NewRecorder()
+		s.handleClipAttachmentEdit(rec, httptest.NewRequest(http.MethodPost, "/api/clip/attachment/edit", strings.NewReader(body)))
+		return rec.Code
+	}
+	if code := edit(fmt.Sprintf(`{"id":%d,"caption":"screen A"}`, meta.ID)); code != http.StatusNoContent {
+		t.Fatalf("edit: status %d", code)
+	}
+	if code := edit(fmt.Sprintf(`{"id":%d,"caption":"%s"}`, meta.ID, strings.Repeat("x", clipTitleMaxLen+1))); code != http.StatusBadRequest {
+		t.Fatalf("too long caption: status %d, want 400", code)
+	}
+	if code := edit(`{"id":99999,"caption":"x"}`); code != http.StatusNotFound {
+		t.Fatalf("missing id: status %d, want 404", code)
+	}
+	_, notes, _, _, _ := s.db.ClipState(0)
+	if got := notes[0].Attachments[0].Caption; got != "screen A" {
+		t.Fatalf("stored caption = %q", got)
 	}
 }

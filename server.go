@@ -116,6 +116,7 @@ func NewServer(cfg Config, db *DB) (*Server, error) {
 	s.mux.Handle("/api/clip/delete", s.withAuth(s.handleClipDelete))
 	s.mux.Handle("/api/clip/attachment", s.withAuth(s.handleClipAttachmentNew))
 	s.mux.Handle("/api/clip/attachment/download", s.withAuth(s.handleClipAttachmentDownload))
+	s.mux.Handle("/api/clip/attachment/edit", s.withAuth(s.handleClipAttachmentEdit))
 	s.mux.Handle("/api/clip/attachment/delete", s.withAuth(s.handleClipAttachmentDelete))
 	s.mux.Handle("/api/files/list", s.withAuth(s.handleList))
 	s.mux.Handle("/api/files/download", s.withAuth(s.handleDownload))

@@ -611,6 +611,33 @@ th {
   margin-top: 0;
 }
 
+.clip-fig {
+  width: 7rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+.clip-caption {
+  font-size: 0.75rem;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+input[type="text"].clip-caption-input {
+  font-size: 0.75rem;
+  padding: 0.15rem 0.3rem;
+}
+
+/* Grows over its neighbours while focused, so longer captions stay readable. */
+input[type="text"].clip-caption-input:focus {
+  position: relative;
+  z-index: 2;
+  width: 20rem;
+}
+
 .clip-thumb {
   position: relative;
   width: 7rem;
@@ -670,10 +697,15 @@ th {
   cursor: zoom-out;
 }
 
-.lightbox-close {
+.lightbox-actions {
   position: fixed;
   top: 1rem;
   right: 1rem;
+  display: flex;
+  gap: 0.4rem;
+}
+
+.lightbox-btn {
   background: rgba(0, 0, 0, 0.6);
   border: 1px solid var(--border);
   color: #eee;
@@ -683,8 +715,31 @@ th {
   cursor: pointer;
 }
 
+.lightbox-btn svg {
+  display: block;
+  width: 1.1rem;
+  height: 1.1rem;
+}
+
+.lightbox-btn:hover {
+  color: var(--accent);
+}
+
 .lightbox-close:hover {
   color: #e05252;
+}
+
+.lightbox-caption {
+  position: fixed;
+  bottom: 1rem;
+  left: 50%;
+  transform: translateX(-50%);
+  max-width: 90vw;
+  background: rgba(0, 0, 0, 0.6);
+  color: #eee;
+  font-size: 0.9rem;
+  padding: 0.3rem 0.7rem;
+  overflow-wrap: anywhere;
 }
 
 .clip-thumb-ph {
@@ -707,6 +762,34 @@ th {
 
 .clip-thumb-del:hover {
   color: #e05252;
+}
+
+.clip-thumb-dl {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  background: rgba(0, 0, 0, 0.6);
+  border: none;
+  color: #eee;
+  cursor: pointer;
+  padding: 0.2rem;
+  line-height: 0;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+
+.clip-thumb:hover .clip-thumb-dl,
+.clip-thumb-dl:focus-visible {
+  opacity: 1;
+}
+
+.clip-thumb-dl:hover {
+  color: var(--accent);
+}
+
+.clip-thumb-dl svg {
+  width: 0.85rem;
+  height: 0.85rem;
 }
 
 .clip-footer {

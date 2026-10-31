@@ -13,7 +13,8 @@ const clipTitleMaxLen = 200
 // clipSourceOutbox marks notes pushed from a local outbox folder; "" means created in the UI.
 const clipSourceOutbox = "outbox"
 
-// validClipTitle accepts a single line of at most clipTitleMaxLen characters.
+// validClipTitle accepts a single line of at most clipTitleMaxLen characters
+// (note titles and image captions).
 func validClipTitle(t string) bool {
 	if !utf8.ValidString(t) || utf8.RuneCountInString(t) > clipTitleMaxLen {
 		return false

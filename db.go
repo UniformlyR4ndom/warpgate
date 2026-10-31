@@ -69,6 +69,9 @@ func migrate(conn *sql.DB) error {
 	if err := addColumnIfMissing(conn, "clipboard", "source", `TEXT NOT NULL DEFAULT ''`); err != nil {
 		return fmt.Errorf("migrating schema: %w", err)
 	}
+	if err := addColumnIfMissing(conn, "clip_attachment", "caption", `TEXT NOT NULL DEFAULT ''`); err != nil {
+		return fmt.Errorf("migrating schema: %w", err)
+	}
 	// Indexes after the rev column exists.
 	for _, q := range []string{
 		`CREATE INDEX IF NOT EXISTS idx_clipboard_rev ON clipboard(rev)`,
@@ -143,9 +146,10 @@ type ClipItem struct {
 
 // AttachmentMeta describes an attachment without its bytes.
 type AttachmentMeta struct {
-	ID   int64  `json:"id"`
-	Mime string `json:"mime"`
-	Size int64  `json:"size"`
+	ID      int64  `json:"id"`
+	Mime    string `json:"mime"`
+	Size    int64  `json:"size"`
+	Caption string `json:"caption,omitempty"`
 }
 
 // NoteMeta is a note as sent in the sync feed: text inline, images by
@@ -241,7 +245,7 @@ func (db *DB) DeleteClipboard(id int64) (bool, error) {
 
 // InsertAttachment stores an image for a note and bumps that note's rev (but
 // not its display timestamp). Returns errNoteNotFound if the note is gone.
-func (db *DB) InsertAttachment(noteID int64, mime string, data []byte) (int64, error) {
+func (db *DB) InsertAttachment(noteID int64, mime, caption string, data []byte) (int64, error) {
 	tx, err := db.sql.Begin()
 	if err != nil {
 		return 0, err
@@ -260,8 +264,8 @@ func (db *DB) InsertAttachment(noteID int64, mime string, data []byte) (int64, e
 	} else if n == 0 {
 		return 0, errNoteNotFound
 	}
-	res, err = tx.Exec(`INSERT INTO clip_attachment (note_id, mime, size, data) VALUES (?, ?, ?, ?)`,
-		noteID, mime, int64(len(data)), data)
+	res, err = tx.Exec(`INSERT INTO clip_attachment (note_id, mime, caption, size, data) VALUES (?, ?, ?, ?, ?)`,
+		noteID, mime, caption, int64(len(data)), data)
 	if err != nil {
 		return 0, err
 	}
@@ -295,6 +299,34 @@ func (db *DB) DeleteAttachment(id int64) (bool, error) {
 		return false, err
 	}
 	if _, err := tx.Exec(`DELETE FROM clip_attachment WHERE id = ?`, id); err != nil {
+		return false, err
+	}
+	return true, tx.Commit()
+}
+
+// UpdateAttachmentCaption sets one image's caption and bumps its owner note's
+// rev. Returns false if no attachment with that id exists.
+func (db *DB) UpdateAttachmentCaption(id int64, caption string) (bool, error) {
+	tx, err := db.sql.Begin()
+	if err != nil {
+		return false, err
+	}
+	defer tx.Rollback()
+	var noteID int64
+	if err := tx.QueryRow(`SELECT note_id FROM clip_attachment WHERE id = ?`, id).Scan(&noteID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return false, nil
+		}
+		return false, err
+	}
+	rev, err := nextRev(tx)
+	if err != nil {
+		return false, err
+	}
+	if _, err := tx.Exec(`UPDATE clipboard SET rev = ? WHERE id = ?`, rev, noteID); err != nil {
+		return false, err
+	}
+	if _, err := tx.Exec(`UPDATE clip_attachment SET caption = ? WHERE id = ?`, caption, id); err != nil {
 		return false, err
 	}
 	return true, tx.Commit()
@@ -386,7 +418,7 @@ func attachMeta(tx *sql.Tx, notes []NoteMeta, index map[int64]int) error {
 	for i, n := range notes {
 		ids[i] = n.ID
 	}
-	q := `SELECT note_id, id, mime, size FROM clip_attachment WHERE note_id IN (?` +
+	q := `SELECT note_id, id, mime, size, caption FROM clip_attachment WHERE note_id IN (?` +
 		strings.Repeat(`,?`, len(ids)-1) + `) ORDER BY id`
 	rows, err := tx.Query(q, ids...)
 	if err != nil {
@@ -396,7 +428,7 @@ func attachMeta(tx *sql.Tx, notes []NoteMeta, index map[int64]int) error {
 	for rows.Next() {
 		var noteID int64
 		var a AttachmentMeta
-		if err := rows.Scan(&noteID, &a.ID, &a.Mime, &a.Size); err != nil {
+		if err := rows.Scan(&noteID, &a.ID, &a.Mime, &a.Size, &a.Caption); err != nil {
 			return err
 		}
 		if i, ok := index[noteID]; ok {

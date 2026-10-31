@@ -15,9 +15,10 @@ import (
 
 // clipAttachmentMeta mirrors the server's AttachmentMeta (db.go).
 type clipAttachmentMeta struct {
-	ID   int64  `json:"id"`
-	Mime string `json:"mime"`
-	Size int64  `json:"size"`
+	ID      int64  `json:"id"`
+	Mime    string `json:"mime"`
+	Size    int64  `json:"size"`
+	Caption string `json:"caption"`
 }
 
 // clipNoteMeta mirrors the server's NoteMeta (db.go).
@@ -199,6 +200,9 @@ func runClipList(args []string) error {
 					head += ", "
 				}
 				head += fmt.Sprintf("#%d %s %dB", a.ID, a.Mime, a.Size)
+				if a.Caption != "" {
+					head += fmt.Sprintf(" %q", a.Caption)
+				}
 			}
 			head += ")"
 		}

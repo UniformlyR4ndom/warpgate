@@ -20,7 +20,7 @@ func validImageMime(s string) bool {
 
 // handleClipAttachmentNew stores one pasted image for a note. The multipart
 // body mirrors /api/files/upload: an optional encrypted "transform" part
-// (JSON {transform,args,note_id,mime}) and a "file" part carrying the
+// (JSON {transform,args,note_id,mime,caption}) and a "file" part carrying the
 // transform-encoded image bytes. The server reverses the transform and stores
 // the raw bytes as a BLOB.
 func (s *Server) handleClipAttachmentNew(w http.ResponseWriter, r *http.Request) {
@@ -39,6 +39,7 @@ func (s *Server) handleClipAttachmentNew(w http.ResponseWriter, r *http.Request)
 		Args      json.RawMessage `json:"args"`
 		NoteID    int64           `json:"note_id"`
 		Mime      string          `json:"mime"`
+		Caption   string          `json:"caption"`
 	}
 	tf, _, err := r.FormFile("transform")
 	if err != nil {
@@ -53,6 +54,10 @@ func (s *Server) handleClipAttachmentNew(w http.ResponseWriter, r *http.Request)
 	}
 	if !validImageMime(spec.Mime) {
 		http.Error(w, "invalid mime", http.StatusBadRequest)
+		return
+	}
+	if !validClipTitle(spec.Caption) {
+		http.Error(w, "invalid caption", http.StatusBadRequest)
 		return
 	}
 
@@ -84,7 +89,7 @@ func (s *Server) handleClipAttachmentNew(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	id, err := s.db.InsertAttachment(spec.NoteID, spec.Mime, data)
+	id, err := s.db.InsertAttachment(spec.NoteID, spec.Mime, spec.Caption, data)
 	if err == errNoteNotFound {
 		http.Error(w, "note not found", http.StatusNotFound)
 		return
@@ -94,7 +99,7 @@ func (s *Server) handleClipAttachmentNew(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	s.encodeParamsResponse(w, wasEncrypted, http.StatusOK,
-		AttachmentMeta{ID: id, Mime: spec.Mime, Size: int64(len(data))})
+		AttachmentMeta{ID: id, Mime: spec.Mime, Size: int64(len(data)), Caption: spec.Caption})
 }
 
 // handleClipAttachmentDownload returns one image's bytes, transform-disguised
@@ -144,6 +149,35 @@ func (s *Server) handleClipAttachmentDownload(w http.ResponseWriter, r *http.Req
 	if _, err := io.Copy(w, reader); err != nil {
 		return
 	}
+}
+
+func (s *Server) handleClipAttachmentEdit(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var req struct {
+		ID      int64  `json:"id"`
+		Caption string `json:"caption"`
+	}
+	if _, err := s.decodeParams(r.Body, &req); err != nil {
+		http.Error(w, "invalid request body", http.StatusUnauthorized)
+		return
+	}
+	if !validClipTitle(req.Caption) {
+		http.Error(w, "invalid caption", http.StatusBadRequest)
+		return
+	}
+	found, err := s.db.UpdateAttachmentCaption(req.ID, req.Caption)
+	if err != nil {
+		http.Error(w, "internal server error", http.StatusInternalServerError)
+		return
+	}
+	if !found {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (s *Server) handleClipAttachmentDelete(w http.ResponseWriter, r *http.Request) {

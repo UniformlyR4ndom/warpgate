@@ -70,8 +70,9 @@ The Go module (`warpgate`, Go 1.25.0) lives at the repo root. The frontend is em
 | POST     | `/api/clip/new`         | Yes           | Create a clipboard note; body: `{"title":"...","data":"<base64>","source":"outbox"}` (`title`, `source` optional) |
 | POST     | `/api/clip/edit`        | Yes           | Update a note's content and timestamp; body: `{"id":<id>,"title":"...","data":"<base64>"}` (`title` omitted = keep) |
 | DELETE   | `/api/clip/delete`      | Yes           | Delete a note by ID; body: `{"id":<id>}` |
-| POST     | `/api/clip/attachment`  | Yes           | Attach an image to a note; multipart (`transform` part `{transform,args,note_id,mime}` + `file`), ≤20 MiB |
+| POST     | `/api/clip/attachment`  | Yes           | Attach an image to a note; multipart (`transform` part `{transform,args,note_id,mime,caption}` + `file`), ≤20 MiB |
 | POST     | `/api/clip/attachment/download` | Yes   | Fetch an image's bytes, transform-disguised; body: `{id,transform,args,contentType?}` |
+| POST     | `/api/clip/attachment/edit`     | Yes   | Set one image's caption; body: `{"id":<id>,"caption":"..."}` |
 | DELETE   | `/api/clip/attachment/delete`   | Yes   | Delete one image by ID; body: `{"id":<id>}` |
 | GET      | `/static/...`           | No            | Embedded frontend (HTML, JS, CSS) |
 
@@ -492,6 +493,7 @@ mismatch regardless.
 
 **Scope**: every client→server JSON request body (`/api/files/list`, `/api/files/download`,
 `/api/clip/new`, `/api/clip/edit`, `/api/clip/delete`, `/api/clip/attachment/download`,
+`/api/clip/attachment/edit`,
 `/api/sim/download`); only the JSON `transform`
 part of the multipart upload endpoints (`/api/files/upload`, `/api/sim/upload`) — the binary `file`
 part is untouched, since it's already independently protected by the transform system; and every
@@ -542,7 +544,7 @@ whatever the request already was.
 - In scope: the JSON response bodies of `/api/files/list`, `/api/files/upload`, `/api/clip/new`,
   `/api/clip/attachment`, `/api/sim/upload` (each has both a request body to key off of and a JSON
   response worth protecting), and `/api/files/ul-list`/`/api/clip/state` via the `?e` query parameter
-  below. Out of scope: `/api/clip/edit`/`/api/clip/delete`/`/api/clip/attachment/delete` (204, no body
+  below. Out of scope: `/api/clip/edit`/`/api/clip/delete`/`/api/clip/attachment/edit`/`/api/clip/attachment/delete` (204, no body
   to encrypt), and `/api/files/download`/`/api/sim/download`/`/api/clip/attachment/download` (raw
   bytes, not JSON — already covered by the transform system).
 - **`GET /api/files/ul-list` and `GET /api/clip/state` have no request body to mirror**, so they use a
@@ -702,7 +704,7 @@ Args: `{"key": "<hex>"}` — exactly 16 bytes. The key is generated randomly per
 ## Clipboard (`db.go`, `clip.go`, `clip_attachment.go`)
 
 Notes are stored in a SQLite database (default `warpgate.sqlite`, configurable with `-db`). A note is
-text (optionally titled) plus zero or more attached images.
+text (optionally titled) plus zero or more attached images, each with an optional caption.
 
 ### Schema
 
@@ -721,11 +723,12 @@ CREATE TABLE clip_attachment (
     note_id INTEGER NOT NULL REFERENCES clipboard(id),  -- deletes are explicit, not via cascade
     mime    TEXT    NOT NULL,
     size    INTEGER NOT NULL,
-    data    BLOB    NOT NULL
+    data    BLOB    NOT NULL,
+    caption TEXT    NOT NULL DEFAULT ''
 )
 ```
 
-`migrate` (in `OpenDB`) is idempotent: `addColumnIfMissing` adds `title`/`rev`/`source`, pre-existing rows get
+`migrate` (in `OpenDB`) is idempotent: `addColumnIfMissing` adds `title`/`rev`/`source` and `caption`, pre-existing rows get
 `rev = id` backfilled (monotonic, distinct, positive), and `meta` is seeded (`clip_rev` to
 `MAX(rev)`, `last_del_rev` to 0) via `INSERT OR IGNORE`. `''` is the only representation of an
 untitled note. `OpenDB` sets `SetMaxOpenConns(1)`: it keeps a `:memory:` test DB single-shared (each
@@ -739,7 +742,8 @@ The clipboard is polled incrementally rather than re-fetched in full. `meta.clip
 monotonic counter bumped — in the same transaction as the data change — on **every** write (create,
 edit, delete). Each note's `rev` records the `clip_rev` value at its last create/edit;
 `meta.last_del_rev` records the `clip_rev` value at the most recent delete. Adding/removing an
-attachment is an edit of its note (bumps the note's `rev`, not its display timestamp).
+attachment, or changing its caption, is an edit of its note (bumps the note's `rev`, not its display
+timestamp).
 
 `DB.ClipState(since)` (one read transaction) returns `(rev, changed, ids, reset)`:
 - **`changed`**: notes with `rev > since` (new or edited) as `NoteMeta` — text inline, images as
@@ -761,23 +765,24 @@ note are last-writer-wins (no per-note optimistic concurrency).
 
 - `OpenDB(path string) (*DB, error)` — opens/creates the SQLite file and initialises/migrates the schema.
 - `DB.InsertClipboard(title, source string, data []byte) (id, ts int64, err error)` / `UpdateClipboard(id, *title, data)` / `DeleteClipboard(id)` — each bumps `clip_rev` in its own transaction; delete also sets `last_del_rev` and removes the note's attachments.
-- `DB.InsertAttachment(noteID, mime, data) (id, error)` — stores a BLOB and bumps the note's `rev`; returns `errNoteNotFound` if the note is gone. `DeleteAttachment(id)` / `GetAttachment(id)` round it out.
+- `DB.InsertAttachment(noteID, mime, caption, data) (id, error)` — stores a BLOB and bumps the note's `rev`; returns `errNoteNotFound` if the note is gone. `UpdateAttachmentCaption(id, caption)` / `DeleteAttachment(id)` / `GetAttachment(id)` round it out.
 - `DB.ClipState(since)` — the sync query above.
 - `DB.ListClipboard()` — retained for tests only (not exposed via the API since `/api/clip/list` was replaced by `/api/clip/state`).
 
 `NoteMeta` = `{ID, TS, Title, Source (omitted when empty), Data(base64 text), Attachments []AttachmentMeta}`; `AttachmentMeta` =
-`{ID, Mime, Size}`.
+`{ID, Mime, Size, Caption (omitted when empty)}`.
 
 ### `clip.go` / `clip_attachment.go`
 
 Handlers `handleClipState`, `handleClipNew`, `handleClipEdit`, `handleClipDelete` (`clip.go`) and
-`handleClipAttachmentNew`, `handleClipAttachmentDownload`, `handleClipAttachmentDelete`
-(`clip_attachment.go`) — all registered via `withAuth`. Base64 decoding of the incoming `data` field
+`handleClipAttachmentNew`, `handleClipAttachmentDownload`, `handleClipAttachmentEdit`,
+`handleClipAttachmentDelete` (`clip_attachment.go`) — all registered via `withAuth`. Base64 decoding of the incoming `data` field
 is done in the handler before passing raw bytes to the DB layer. `title` is a plain JSON string (not
 base64), validated by `validClipTitle`: valid UTF-8, at most `clipTitleMaxLen` (200) characters, no
 control characters (so single-line); invalid → `400`. `handleClipEdit` decodes it into a `*string` so
 an omitted title (e.g. from an older client) keeps the stored one. `source` (`handleClipNew` only)
-must be `''` or `clipSourceOutbox` (`"outbox"`), else `400`; edits never change it.
+must be `''` or `clipSourceOutbox` (`"outbox"`), else `400`; edits never change it. An image
+`caption` (on upload and via `handleClipAttachmentEdit`) follows the same rules as `title`.
 
 Image bytes reuse the file transform system: upload sends transform-encoded bytes in the multipart
 `file` part (server `Untransform`s, stores raw, 20 MiB cap, `image/...` mime only); download applies
@@ -909,11 +914,11 @@ label text.
 ### Clipboard tab
 
 - Optional single-line title input (`clipTitle`) above a large textarea for composing a note; Submit button creates a new note via `/api/clip/new`. Control characters in the title are replaced by spaces client-side before sending. Submit is enabled (`canSubmitClip()`) when there's any text, title, or pending image.
-- **Pasting an image** (`onPaste` → `handleClipPaste`) into the title or textarea captures `image/*` entries from `clipboardData.items` into `pendingAttachments` (shown as thumbnails with a ✕). On Submit the note is created/edited first, then each pending image is uploaded to it via `uploadAttachment` (`encodeBytesForUpload` + the multipart `/api/clip/attachment`). Pending images are *new* only; existing images are managed on the note card. To add images to an existing note: edit it, paste, Submit. (Capture uses the `paste` event, which works over plain HTTP; copying an image back out would need a secure context, so it's not in the core path.)
+- **Pasting an image** (`onPaste` → `handleClipPaste`) into the title or textarea captures `image/*` entries from `clipboardData.items` into `pendingAttachments` (shown as thumbnails with a ✕ and a caption input). On Submit the note is created/edited first, then each pending image is uploaded to it via `uploadAttachment` (`encodeBytesForUpload` + the multipart `/api/clip/attachment`). Pending images are *new* only; existing images are managed on the note card. To add images to an existing note: edit it, paste, Submit. (Capture uses the `paste` event, which works over plain HTTP; copying an image back out would need a secure context, so it's not in the core path.)
 - Clicking ✏ on a note pre-fills title and textarea for editing; the button becomes "Update" / "Cancel". Pressing Escape (in either field) or clicking "Cancel" discards the edit.
-- Each note shows its title (bold, only if non-empty — no placeholder for untitled notes), timestamp and decoded text, then a thumbnail per attachment (lazy-fetched once via `ensureAttachment` → `/api/clip/attachment/download`, from a `useEffect` in the `Thumb` component, decoded with the current transform, cached in `state.clipImages` by attachment id as an object URL; the `<img>` renders only once a `blob:` URL exists, so a `loading`/`error` placeholder never triggers a spurious image request). Click a thumbnail to open it in the lightbox (Esc closes). While editing a note, ✕ on its thumbnail marks the image for removal (`toggleRemoveAttachment`, ↺ undoes); removals are applied on Update. Footer buttons: ⬇ (download as `.txt`, named after the title), 📋 (copy text to system clipboard), ✏ (edit).
+- Each note shows its title (bold, only if non-empty — no placeholder for untitled notes), timestamp and decoded text, then a thumbnail per attachment (lazy-fetched once via `ensureAttachment` → `/api/clip/attachment/download`, from a `useEffect` in the `Thumb` component, decoded with the current transform, cached in `state.clipImages` by attachment id as an object URL; the `<img>` renders only once a `blob:` URL exists, so a `loading`/`error` placeholder never triggers a spurious image request). Click a thumbnail to open it in the lightbox (Esc closes). The caption, if any, is shown under the thumbnail (one line, cut off, full text as tooltip) and in the lightbox. ⬇ (shown on hovering a thumbnail, and in the lightbox) saves the cached decoded image without a new request, named by `attachmentFileName`: caption, else note title (`-<n>` appended when the note has several images), else `note-<id>-<n>`, plus an extension from the mime type unless the caption already ends with it; `safeFileName` turns whitespace runs into `-` and characters invalid in file names into `_` (also for the note `.txt` download). While editing a note, ✕ on its thumbnail marks the image for removal (`toggleRemoveAttachment`, ↺ undoes) and a caption input replaces the caption (`state.clipCaptionEdits`); removals and changed captions (`/api/clip/attachment/edit`) are applied on Update. Footer buttons: ⬇ (download as `.txt`, named after the title), 📋 (copy text to system clipboard), ✏ (edit).
 - **Sync** (`pollClipboard` → `applyClipState`): the list is maintained incrementally against `/api/clip/state?since=<clipCursor>` (see "Clipboard sync" above) — upsert `changed`, drop ids absent from `ids`, honor `reset`; `pruneClipImages` revokes object URLs for attachments no longer referenced. Auto-refresh, `setTab`, and post-write refreshes all call `pollClipboard`; an auth-key change calls `resetClipSync` (cursor 0, clear items/images) then re-polls.
-- Search box + scope selector (Title + content / Title / Content, `settings.clipSearchScope`, persisted) above the list; the query (`clipSearch`) is not persisted. Purely client-side over the already-synced notes. `visibleClipItems()` sorts, filters (case-insensitive substring, over title/text only — images aren't searched), and splits title/content into `{t, m}` segments via `highlightSegments`; matches render as `<span class="clip-hl">` text children, never `dangerouslySetInnerHTML`, since note content comes from untrusted machines.
+- Search box + scope selector (Title + content / Title / Content, `settings.clipSearchScope`, persisted) above the list; the query (`clipSearch`) is not persisted. Purely client-side over the already-synced notes. `visibleClipItems()` sorts, filters (case-insensitive substring, over title, text and image captions; captions count as content), and splits title/content into `{t, m}` segments via `highlightSegments`; matches render as `<span class="clip-hl">` text children, never `dangerouslySetInnerHTML`, since note content comes from untrusted machines.
 - ✕ delete button in the note header; optionally prompts for confirmation (controlled by "Confirm note delete" in the General panel section).
 
 ### Outbox (push to clipboard from local scripts)
