@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"log"
 	"net/http"
 
 	"warpgate/internal/paramcrypt"
@@ -51,23 +52,26 @@ func (s *Server) decodeParams(r io.Reader, v any) (bool, error) {
 // encodeParamsResponse writes v as the HTTP response body: as an encrypted
 // paramcrypt blob when encrypted is true (only ever set from a request that
 // itself arrived encrypted — see decodeParams), or as plain JSON otherwise.
-func (s *Server) encodeParamsResponse(w http.ResponseWriter, encrypted bool, status int, v any) error {
+// If the body can't be produced it answers 500 instead. A failed write means
+// the client is gone, so it is not reported.
+func (s *Server) encodeParamsResponse(w http.ResponseWriter, encrypted bool, status int, v any) {
 	body, err := json.Marshal(v)
 	if err != nil {
-		return err
+		log.Printf("encoding response: %v", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
 	}
+	contentType := "application/json"
 	if encrypted {
 		blob, err := paramcrypt.Encrypt(s.paramKeys, body)
 		if err != nil {
-			return err
+			log.Printf("encrypting response: %v", err)
+			http.Error(w, "internal error", http.StatusInternalServerError)
+			return
 		}
-		w.Header().Set("Content-Type", "text/plain")
-		w.WriteHeader(status)
-		_, err = io.WriteString(w, blob)
-		return err
+		body, contentType = []byte(blob), "text/plain"
 	}
-	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Content-Type", contentType)
 	w.WriteHeader(status)
-	_, err = w.Write(body)
-	return err
+	_, _ = w.Write(body)
 }

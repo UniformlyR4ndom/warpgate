@@ -100,6 +100,10 @@ func downloadHTTP(g *globalFlags, prefix, remotePath, out string, transformName 
 		transferred += reqSize
 	}
 
+	// A write error can surface only at Close.
+	if err := f.Close(); err != nil {
+		return err
+	}
 	printDownloadResult(g, remotePath, out, size, time.Since(start))
 	return nil
 }
@@ -181,6 +185,9 @@ func downloadWS(g *globalFlags, prefix, remotePath, out string, transformName st
 	}
 
 	_ = writeWSJSON(conn, g, wsChunkRequest{Done: true})
+	if err := f.Close(); err != nil {
+		return err
+	}
 	printDownloadResult(g, remotePath, out, size, time.Since(start))
 	return nil
 }

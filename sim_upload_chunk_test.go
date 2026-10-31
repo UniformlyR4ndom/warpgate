@@ -25,7 +25,7 @@ func postSimChunk(t *testing.T, url, name string, content []byte, continuationKe
 			t.Fatalf("decoding response: %v", err)
 		}
 	} else {
-		io.Copy(io.Discard, resp.Body)
+		_, _ = io.Copy(io.Discard, resp.Body)
 	}
 	return resp, got
 }

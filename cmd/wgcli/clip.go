@@ -314,7 +314,7 @@ func runClipGet(args []string) error {
 		return err
 	}
 	if fs.NArg() < 1 {
-		return fmt.Errorf("usage: wgcli clip get [flags] <id>...")
+		return fmt.Errorf("usage: wgcli clip get [flags] <id> [<id>...]")
 	}
 	state, err := fetchClipState(g, 0)
 	if err != nil {

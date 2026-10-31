@@ -16,7 +16,8 @@ type settingsResponse struct {
 // reject anyway.
 func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(settingsResponse{
+	// A failed write means the client is gone; there is nothing to report.
+	_ = json.NewEncoder(w).Encode(settingsResponse{
 		WSFrameMin: wsFrameSizeMin,
 		WSFrameMax: s.cfg.WSFrameMax,
 		UlFlat:     s.cfg.UlFlat,

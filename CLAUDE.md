@@ -1068,6 +1068,13 @@ gets through a given proxy, independent of any transform.
 
 ## Development
 
+**Error checking**: `.golangci.yml` encodes the policy. Unchecked errors are allowed only where
+they carry nothing actionable (the `std-error-handling` preset: `Close` on read-only handles,
+printing, `os.Remove`; plus a deferred `tx.Rollback` and `FlagSet.Parse` with `ExitOnError`).
+`Close` on a file that was written to must be checked, since a write error can surface only
+there. Writes to an `http.ResponseWriter` are discarded explicitly (`_, _ =`): a failed write means
+the client is gone.
+
 ```bash
 # Run (cmd/wgcli is a second main package, so ./... is ambiguous for `go run`)
 go run .
@@ -1078,7 +1085,7 @@ go build ./...
 # Test
 go test ./...
 
-# Lint (install golangci-lint if needed)
+# Lint (golangci-lint v2, configured by .golangci.yml; must report 0 issues)
 golangci-lint run
 
 # End-to-end verification (builds warpgate + wgcli, exercises every transform/backend

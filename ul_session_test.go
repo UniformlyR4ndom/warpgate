@@ -77,7 +77,7 @@ func postChunkWithTransform(t *testing.T, url, transformName, filename string, c
 			t.Fatalf("decoding response: %v", err)
 		}
 	} else {
-		io.Copy(io.Discard, resp.Body)
+		_, _ = io.Copy(io.Discard, resp.Body)
 	}
 	return resp, got
 }

@@ -1,0 +1,16 @@
+version: "2"
+
+linters:
+  exclusions:
+    # Unchecked errors that carry nothing actionable: Close on read-only
+    # handles, printing, os.Remove. Close on a file that was written to must
+    # still be checked by hand (a write error can surface only there).
+    presets:
+      - std-error-handling
+  settings:
+    errcheck:
+      exclude-functions:
+        # Deferred after Commit, where it only reports sql.ErrTxDone.
+        - (*database/sql.Tx).Rollback
+        # Flag sets use flag.ExitOnError, so Parse never returns an error.
+        - (*flag.FlagSet).Parse

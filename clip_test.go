@@ -343,8 +343,14 @@ func TestMigrateSeedsRevAboveLegacyRows(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	old.Exec(`CREATE TABLE clipboard (id INTEGER PRIMARY KEY AUTOINCREMENT, timestamp INTEGER NOT NULL, data TEXT NOT NULL)`)
-	old.Exec(`INSERT INTO clipboard (timestamp, data) VALUES (1,'a'),(2,'b'),(3,'c')`)
+	for _, q := range []string{
+		`CREATE TABLE clipboard (id INTEGER PRIMARY KEY AUTOINCREMENT, timestamp INTEGER NOT NULL, data TEXT NOT NULL)`,
+		`INSERT INTO clipboard (timestamp, data) VALUES (1,'a'),(2,'b'),(3,'c')`,
+	} {
+		if _, err := old.Exec(q); err != nil {
+			t.Fatal(err)
+		}
+	}
 	old.Close()
 
 	db, err := OpenDB(path)
@@ -413,10 +419,18 @@ func TestHandleClipAttachmentCaption(t *testing.T) {
 		var body bytes.Buffer
 		mw := multipart.NewWriter(&body)
 		spec, _ := json.Marshal(map[string]any{"transform": "id", "note_id": noteID, "mime": "image/png", "caption": caption})
-		tw, _ := mw.CreateFormFile("transform", "transform.json")
-		tw.Write(spec)
-		fw, _ := mw.CreateFormFile("file", "image")
-		fw.Write([]byte("png"))
+		for _, part := range []struct{ field, name, data string }{
+			{"transform", "transform.json", string(spec)},
+			{"file", "image", "png"},
+		} {
+			pw, err := mw.CreateFormFile(part.field, part.name)
+			if err == nil {
+				_, err = pw.Write([]byte(part.data))
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
 		mw.Close()
 		r := httptest.NewRequest(http.MethodPost, "/api/clip/attachment", &body)
 		r.Header.Set("Content-Type", mw.FormDataContentType())

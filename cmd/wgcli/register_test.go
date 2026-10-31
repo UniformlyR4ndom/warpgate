@@ -17,7 +17,7 @@ func fakeFirewall(t *testing.T) *httptest.Server {
 			registered = true
 			http.Redirect(w, r, "/static/", http.StatusSeeOther)
 		case registered:
-			w.Write([]byte("[]"))
+			_, _ = w.Write([]byte("[]"))
 		default:
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
 			w.WriteHeader(http.StatusOK)

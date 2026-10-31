@@ -133,7 +133,8 @@ func getClipAttachment(g *globalFlags, id int64, out, transformName string, args
 	if _, err := io.Copy(f, reader); err != nil {
 		return err
 	}
-	return nil
+	// A write error can surface only at Close.
+	return f.Close()
 }
 
 func runClipAttach(args []string) error {
@@ -214,7 +215,7 @@ func runClipDeleteAttachment(args []string) error {
 		return err
 	}
 	if fs.NArg() < 1 {
-		return fmt.Errorf("usage: wgcli clip delete-attachment [flags] <attachment-id>...")
+		return fmt.Errorf("usage: wgcli clip delete-attachment [flags] <attachment-id> [<attachment-id>...]")
 	}
 	ids := make([]int64, 0, fs.NArg())
 	for _, arg := range fs.Args() {

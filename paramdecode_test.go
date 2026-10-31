@@ -127,11 +127,9 @@ func TestDecodeParamsNoAuthRejectsEncryptedBlob(t *testing.T) {
 func TestEncodeParamsResponsePlain(t *testing.T) {
 	s := newParamDecodeTestServer(t, Config{Key: "test-key"})
 	rec := httptest.NewRecorder()
-	if err := s.encodeParamsResponse(rec, false, http.StatusOK, struct {
+	s.encodeParamsResponse(rec, false, http.StatusOK, struct {
 		Path string `json:"path"`
-	}{"a.txt"}); err != nil {
-		t.Fatal(err)
-	}
+	}{"a.txt"})
 	if ct := rec.Header().Get("Content-Type"); ct != "application/json" {
 		t.Fatalf("Content-Type = %q, want application/json", ct)
 	}
@@ -149,11 +147,9 @@ func TestEncodeParamsResponsePlain(t *testing.T) {
 func TestEncodeParamsResponseEncrypted(t *testing.T) {
 	s := newParamDecodeTestServer(t, Config{Key: "test-key"})
 	rec := httptest.NewRecorder()
-	if err := s.encodeParamsResponse(rec, true, http.StatusCreated, struct {
+	s.encodeParamsResponse(rec, true, http.StatusCreated, struct {
 		Path string `json:"path"`
-	}{"a.txt"}); err != nil {
-		t.Fatal(err)
-	}
+	}{"a.txt"})
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("status = %d, want %d", rec.Code, http.StatusCreated)
 	}
@@ -240,5 +236,16 @@ func TestHandleClipStateQueryParamIgnoredUnderNoAuth(t *testing.T) {
 	var got clipStateResponse
 	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
 		t.Fatalf("expected -no-auth to ignore ?e and return plain JSON, got %q: %v", rec.Body.String(), err)
+	}
+}
+
+// TestEncodeParamsResponseFailure: a body that can't be encoded is a 500, not
+// an empty response with the intended status.
+func TestEncodeParamsResponseFailure(t *testing.T) {
+	s := newParamDecodeTestServer(t, Config{Key: "test-key"})
+	rec := httptest.NewRecorder()
+	s.encodeParamsResponse(rec, false, http.StatusCreated, make(chan int))
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusInternalServerError)
 	}
 }
