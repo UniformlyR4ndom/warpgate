@@ -133,7 +133,7 @@ func (g *globalFlags) authToken() string {
 }
 
 func (g *globalFlags) httpClient() *http.Client {
-	return &http.Client{Transport: &http.Transport{TLSClientConfig: g.tlsConfig}}
+	return &http.Client{Transport: blankPageTransport{&http.Transport{TLSClientConfig: g.tlsConfig}}}
 }
 
 func (g *globalFlags) newRequest(method, path string, body io.Reader) (*http.Request, error) {

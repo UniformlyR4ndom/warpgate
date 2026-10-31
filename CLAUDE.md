@@ -48,7 +48,7 @@ The Go module (`warpgate`, Go 1.25.0) lives at the repo root. The frontend is em
 `cmd/wgcli` is a same-module Go CLI client that exercises the HTTP/WS API from the command line
 (for testing and scripted/agent use: global flags fall back to `WGCLI_*` environment variables,
 flags may follow positional arguments, transform keys default to random, `-cert`/`-cert-key` for
-TLS client auth); see the `wgcli` skill for usage details.
+TLS client auth, `wgcli register` for the IP firewall); see the `wgcli` skill for usage details.
 
 ## Architecture
 
@@ -130,6 +130,9 @@ logs.
   scanners/proxies that just GET the URL from consuming slots. Admitted IPs bypass registration handling
   entirely (so `/static/` serves the UI), except on a dedicated `-ip-reg-path`, which 303s them to the
   UI.
+- `wgcli register [registration-url]` (default: `-url`) sends the same empty form POST, without
+  running any script, and reports success when the response redirects to `.../static/`. Every other
+  wgcli request reports the blank page as an explanatory error instead of failing to decode it.
 - `-ip-reg-max`/`-ip-reg-window` 0 mean unlimited; the window counts from `NewServer`. Existing
   registrations outlive the window. State is an in-memory map — lost on restart.
 - **Client IP** (`clientIP`, also used by `handleCheckin`'s log line): the TCP peer, normalized

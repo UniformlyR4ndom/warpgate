@@ -50,8 +50,11 @@ func (g *globalFlags) dialWS(path string) (*websocket.Conn, error) {
 		return nil, err
 	}
 	dialer := websocket.Dialer{TLSClientConfig: g.tlsConfig}
-	conn, _, err := dialer.Dial(target, nil)
+	conn, resp, err := dialer.Dial(target, nil)
 	if err != nil {
+		if resp != nil && isBlankPage(resp) {
+			return nil, fmt.Errorf("dialing %s: %s", target, blankPageHint)
+		}
 		return nil, fmt.Errorf("dialing %s: %w", target, err)
 	}
 	return conn, nil

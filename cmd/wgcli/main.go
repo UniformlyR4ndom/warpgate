@@ -30,6 +30,8 @@ func main() {
 		err = runClip(args)
 	case "sim":
 		err = runSim(args)
+	case "register":
+		err = runRegister(args)
 	case "-h", "--help", "help":
 		usage()
 		return
@@ -66,6 +68,7 @@ Commands:
   upload    [flags] <local-file>                upload, applying the transform
   clip      list|new|edit|delete|attach|get-attachment  manage clipboard notes/images
   sim       download|upload [flags]             probe transport via a synthetic file/buffer (no filesystem I/O, no transform)
+  register  [flags] [registration-url]          register this client's IP with the IP firewall (default URL: -url)
 
 Run "wgcli <command> -h" for command-specific flags.
 `)
