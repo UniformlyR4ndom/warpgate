@@ -83,3 +83,28 @@ func TestMkdirDeepExisting(t *testing.T) {
 		t.Fatalf("upload into deep existing dir: status %d, name %q", resp.StatusCode, got.Name)
 	}
 }
+
+func TestUlFlat(t *testing.T) {
+	ulRoot := t.TempDir()
+	if err := os.Mkdir(filepath.Join(ulRoot, "sub"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	ts := newSimTestServer(t, Config{Root: t.TempDir(), UlRoot: ulRoot, UlFlat: true, NoAuth: true})
+
+	for _, p := range []string{"/api/ul/list", "/api/ul/download", "/api/ul/mkdir"} {
+		res, err := http.Post(ts.URL+p, "application/json", strings.NewReader(`{"path":"sub"}`))
+		if err != nil {
+			t.Fatalf("POST: %v", err)
+		}
+		res.Body.Close()
+		if res.StatusCode != http.StatusNotFound {
+			t.Errorf("%s with -ul-flat: status %d, want 404", p, res.StatusCode)
+		}
+	}
+	if resp, _ := postChunk(t, ts.URL, "sub/f.bin", []byte("x"), "", true); resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("upload with dir under -ul-flat: status %d, want 400", resp.StatusCode)
+	}
+	if resp, got := postChunk(t, ts.URL, "f.bin", []byte("x"), "", true); resp.StatusCode != http.StatusCreated || got.Name != "f.bin" {
+		t.Fatalf("flat upload: status %d, name %q", resp.StatusCode, got.Name)
+	}
+}

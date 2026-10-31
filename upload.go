@@ -139,6 +139,9 @@ func (s *Server) ulTarget(dir, clientName string) (string, int, error) {
 	if err != nil {
 		return "", http.StatusBadRequest, err
 	}
+	if s.cfg.UlFlat && dir != "" {
+		return "", http.StatusBadRequest, errors.New("subdirectories are disabled (-ul-flat)")
+	}
 	rel, err := rootRelPath(dir)
 	if err != nil {
 		return "", http.StatusBadRequest, err

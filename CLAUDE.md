@@ -58,7 +58,7 @@ TLS client auth, `wgcli register` for the IP firewall, `-json` output, filtered/
 | Method   | Path                    | Auth required | Description |
 |----------|-------------------------|---------------|-------------|
 | GET      | `/api/public/checkin`   | No            | Logs client IP (see `clientIP`); called once on page load |
-| GET      | `/api/public/settings`  | No            | Returns `{"wsFrameMin":...,"wsFrameMax":...}`, the server's configured WS frame size bounds, for UI clamping |
+| GET      | `/api/public/settings`  | No            | Returns `{"wsFrameMin":...,"wsFrameMax":...,"ulFlat":...}`: the WS frame size bounds (for UI clamping) and whether `-ul-flat` is set |
 | POST     | `/api/files/list`       | Yes           | List files in the download root; body: `{"path":"subdir"}` |
 | POST     | `/api/files/download`   | Yes           | Download a (chunk of a) file with a transform applied |
 | POST     | `/api/files/upload`     | Yes           | Upload a (chunk of a) file (requires `-ul-root`); multipart form |
@@ -105,7 +105,8 @@ already use relative URLs. `wgcli` just takes the prefix as part of `-url`.
 
 Which root a request uses is fixed by its route, never by a request field: `registerBrowse`
 (`server.go`) registers the same list/download handlers under `/api/files/` with `Server.root` and
-under `/api/ul/` with `Server.ulRoot`.
+under `/api/ul/` with `Server.ulRoot`. `-ul-flat` restores the older flat upload directory: no
+`/api/ul/*` routes (including mkdir) and a non-empty upload `dir` is a `400`.
 
 All file access goes through `os.Root` handles opened once in `NewServer` (`Server.root`,
 `Server.ulRoot`); a missing `-root`/`-ul-root` is a startup error. Client paths become root-relative
@@ -1076,6 +1077,7 @@ python3 test/e2e_suite.py           # full run, up to 1G files; see test/README.
 |------|---------|-------------|
 | `-root` | `./files` | Directory to serve for downloads |
 | `-ul-root` | — | Upload directory (upload endpoints disabled if omitted) |
+| `-ul-flat` | false | Keep the upload directory flat: `/api/ul/*` not served, uploads reject `dir`; requires `-ul-root` |
 | `-db` | `warpgate.sqlite` | Path to the SQLite database file |
 | `-listen` | `0.0.0.0:8080` | Listen address (`host:port`) |
 | `-auth-key` | — | `X-Auth` key (auto-generated and logged if omitted) |

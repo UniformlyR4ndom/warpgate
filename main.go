@@ -20,6 +20,7 @@ const (
 type Config struct {
 	Root       string
 	UlRoot     string
+	UlFlat     bool
 	DBPath     string
 	Addr       string
 	Cert       string
@@ -44,6 +45,8 @@ func main() {
 
 	flag.StringVar(&cfg.Root, "root", "./files", "root directory to serve files from")
 	flag.StringVar(&cfg.UlRoot, "ul-root", "", "directory to accept file uploads into (uploads disabled if not set)")
+	flag.BoolVar(&cfg.UlFlat, "ul-flat", false,
+		"keep the upload directory flat: no browsing, downloading or creating subdirectories through the upload endpoints")
 	flag.StringVar(&cfg.DBPath, "db", "warpgate.sqlite", "path to the SQLite database file")
 	flag.StringVar(&cfg.Addr, "listen", "0.0.0.0:8080", "address to listen on (host:port)")
 	flag.StringVar(&cfg.Cert, "cert", "", "TLS certificate (chain) file; requires -cert-key")
@@ -97,6 +100,10 @@ func main() {
 
 	if cfg.ClientFP != "" && cfg.Cert == "" {
 		log.Fatalf("-client-fp requires -cert and -cert-key")
+	}
+
+	if cfg.UlFlat && cfg.UlRoot == "" {
+		log.Fatalf("-ul-flat requires -ul-root")
 	}
 
 	checkNotServed(cfg)

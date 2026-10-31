@@ -265,7 +265,7 @@ paths:
             application/json:
               schema:
                 type: object
-                required: [wsFrameMin, wsFrameMax]
+                required: [wsFrameMin, wsFrameMax, ulFlat]
                 properties:
                   wsFrameMin:
                     type: integer
@@ -275,9 +275,15 @@ paths:
                     type: integer
                     description: Maximum WebSocket frame size the server accepts, in bytes (the `-ws-frame-max` ceiling).
                     example: 16777216
+                  ulFlat:
+                    type: boolean
+                    description: |
+                      `-ul-flat` is set: `/api/ul/*` is not served and uploads take no `dir`.
+                    example: false
               example:
                 wsFrameMin: 1024
                 wsFrameMax: 16777216
+                ulFlat: false
 
   /api/files/list:
     post:
@@ -829,7 +835,7 @@ paths:
           description: Internal server error.
 
   # Same operations as /api/files/list and /api/files/download, served from the upload directory
-  # (-ul-root) instead of the download root. Registered only when -ul-root is set.
+  # (-ul-root) instead of the download root. Registered only when -ul-root is set and -ul-flat isn't.
   /api/ul/list:
     $ref: '#/paths/~1api~1files~1list'
   /api/ul/download:
@@ -841,7 +847,7 @@ paths:
         Creates exactly one directory below the upload root; its parent must already exist. The
         new directory may be at most 4 levels below the upload root (deeper pre-existing
         directories remain usable for listing, download and upload). Registered only when
-        `-ul-root` is set. The body may be an encrypted blob (see CLAUDE.md's "Parameter
+        `-ul-root` is set and `-ul-flat` isn't. The body may be an encrypted blob (see CLAUDE.md's "Parameter
         Encryption").
       operationId: mkdirUpload
       requestBody:
