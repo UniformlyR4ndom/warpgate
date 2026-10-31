@@ -168,17 +168,20 @@ async function watch(gen) {
   }
 }
 
+// folder is captured once per scan: a push still in flight when the user
+// switches folders must finish in the folder its files came from.
 async function scan(gen) {
+  var folder = dir;
   var files = {};
-  for await (var entry of dir.entries()) {
+  for await (var entry of folder.entries()) {
     if (entry[1].kind === 'file') files[entry[0]] = entry[1];
   }
   var names = Object.keys(files).sort();
   for (var i = 0; i < names.length; i++) {
     if (gen !== generation || state.outbox.status === 'auth') return;
-    if (names[i].endsWith('.sha256')) await processPush(names[i].slice(0, -'.sha256'.length), files);
+    if (names[i].endsWith('.sha256')) await processPush(folder, names[i].slice(0, -'.sha256'.length), files);
   }
-  await removeLeftovers(names, files);
+  if (gen === generation) await removeLeftovers(folder, names, files);
 }
 
 // --- one push
@@ -189,7 +192,7 @@ function parseHashFile(text) {
   return m ? { hash: m[1].toLowerCase(), title: lines[1] || '' } : null;
 }
 
-async function processPush(name, files) {
+async function processPush(folder, name, files) {
   var hashName = name + '.sha256';
   var now = Date.now();
   if (!firstSeen[hashName]) firstSeen[hashName] = now;
@@ -199,7 +202,7 @@ async function processPush(name, files) {
   var parsed = parseHashFile(new TextDecoder().decode(await (await files[hashName].getFile()).arrayBuffer()));
   if (!parsed) return retryOrFail(name, files, waited, 'invalid hash file');
   if (await kvGet('pushed:' + hashName).catch(function() { return null; }) === parsed.hash) {
-    return removePushed(name);
+    return removePushed(folder, name);
   }
   if (!files[name]) return retryOrFail(name, files, waited, 'content file missing');
   var file = await files[name].getFile();
@@ -226,7 +229,7 @@ async function processPush(name, files) {
   delete firstSeen[hashName];
   addEvent(true, 'Note #' + id + (title ? ' "' + title + '"' : '') + ' pushed from outbox');
   pollClipboard();
-  await removePushed(name);
+  await removePushed(folder, name);
 }
 
 function retryOrFail(name, files, waited, msg) {
@@ -243,11 +246,11 @@ async function fail(name, files, msg) {
   }
 }
 
-async function remove(name) {
+async function remove(folder, name) {
   for (var i = 0; i < REMOVE_RETRY_MS.length; i++) {
     await delay(REMOVE_RETRY_MS[i]);
     try {
-      await dir.removeEntry(name);
+      await folder.removeEntry(name);
       return true;
     } catch (e) {
       if (e.name === 'NotFoundError') return true;
@@ -257,15 +260,15 @@ async function remove(name) {
 }
 
 // The hash file goes first: it is what triggers a push.
-async function removePushed(name) {
-  if (await remove(name + '.sha256') && await remove(name)) {
+async function removePushed(folder, name) {
+  if (await remove(folder, name + '.sha256') && await remove(folder, name)) {
     await kvDel('pushed:' + name + '.sha256').catch(function() {});
   }
 }
 
 // Failed pushes and orphaned content from the push function (push-* names) are
 // deleted after an hour; anything else in the folder is left alone.
-async function removeLeftovers(names, files) {
+async function removeLeftovers(folder, names, files) {
   var present = {};
   names.forEach(function(n) { present[n] = true; });
   for (var i = 0; i < names.length; i++) {
@@ -274,7 +277,7 @@ async function removeLeftovers(names, files) {
     var failed = n.endsWith('.failed');
     if (!failed && (present[n + '.sha256'] || present[n + '.failed'])) continue;
     if (Date.now() - (await files[n].getFile()).lastModified < LEFTOVER_MS) continue;
-    if (await remove(n) && failed) await remove(n.slice(0, -'.failed'.length));
+    if (await remove(folder, n) && failed) await remove(folder, n.slice(0, -'.failed'.length));
   }
 }
 
