@@ -53,7 +53,7 @@ func resolveContentType(t transform.Transformer, override, fallback string) stri
 	return ct
 }
 
-func (s *Server) handleDownload(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleDownload(w http.ResponseWriter, r *http.Request, root *os.Root) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -88,12 +88,12 @@ func (s *Server) handleDownload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if s.reachesUlTmp(s.root, rel) {
+	if s.reachesUlTmp(root, rel) {
 		http.Error(w, errUlTmpPath, http.StatusForbidden)
 		return
 	}
 
-	f, err := s.root.Open(rel)
+	f, err := root.Open(rel)
 	if err != nil {
 		if os.IsNotExist(err) {
 			http.Error(w, "file not found", http.StatusNotFound)

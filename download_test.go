@@ -282,3 +282,81 @@ func TestValidContentType(t *testing.T) {
 		}
 	}
 }
+
+// TestUlRootBrowse: /api/ul/* lists and downloads within -ul-root only, with
+// the same confinement as /api/files/*.
+func TestUlRootBrowse(t *testing.T) {
+	root, ulRoot, _ := symlinkFixture(t)
+	if err := os.MkdirAll(filepath.Join(ulRoot, "sub"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(ulRoot, "sub", "u.txt"), []byte("uploaded"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ts := newSimTestServer(t, Config{Root: root, UlRoot: ulRoot, NoAuth: true})
+
+	post := func(path string, body any) *http.Response {
+		t.Helper()
+		raw, _ := json.Marshal(body)
+		res, err := http.Post(ts.URL+path, "application/json", bytes.NewReader(raw))
+		if err != nil {
+			t.Fatalf("POST: %v", err)
+		}
+		t.Cleanup(func() { res.Body.Close() })
+		return res
+	}
+
+	res := post("/api/ul/list", listRequest{Path: ""})
+	var entries []listEntry
+	if err := json.NewDecoder(res.Body).Decode(&entries); err != nil {
+		t.Fatalf("decoding list: %v", err)
+	}
+	if len(entries) != 1 || entries[0].Name != "sub" || entries[0].Type != "d" {
+		t.Fatalf("ul root listing = %+v, want only sub/ (temp dir and escaping link hidden)", entries)
+	}
+
+	res = post("/api/ul/download", downloadRequest{Path: "sub/u.txt", Size: 100, Transform: "id"})
+	if got, _ := io.ReadAll(res.Body); res.StatusCode != http.StatusOK || string(got) != "uploaded" {
+		t.Fatalf("ul download: status %d, body %q", res.StatusCode, got)
+	}
+
+	cases := []struct {
+		path string
+		want int
+	}{
+		{"a.txt", http.StatusNotFound},       // exists only in -root
+		{"victim.txt", http.StatusForbidden}, // symlink leaving -ul-root
+		{"../root/a.txt", http.StatusBadRequest},
+		{ulTmpDirName + "/x", http.StatusBadRequest},
+	}
+	for _, c := range cases {
+		if res := post("/api/ul/download", downloadRequest{Path: c.path, Size: 10, Transform: "id"}); res.StatusCode != c.want {
+			t.Errorf("ul download %q: status %d, want %d", c.path, res.StatusCode, c.want)
+		}
+	}
+
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL(ts, "/api/ul/ws/download"), nil)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer conn.Close()
+	if err := conn.WriteJSON(wsDownloadRequest{Path: "sub/u.txt", Transform: "id"}); err != nil {
+		t.Fatalf("writing request: %v", err)
+	}
+	var ack wsAck
+	if err := conn.ReadJSON(&ack); err != nil || !ack.OK || ack.Size != 8 {
+		t.Fatalf("WS ul download: ack %+v, err %v", ack, err)
+	}
+}
+
+func TestUlRootBrowseDisabledWithoutUlRoot(t *testing.T) {
+	ts := newSimTestServer(t, Config{Root: t.TempDir(), NoAuth: true})
+	res, err := http.Post(ts.URL+"/api/ul/list", "application/json", strings.NewReader(`{"path":""}`))
+	if err != nil {
+		t.Fatalf("POST: %v", err)
+	}
+	res.Body.Close()
+	if res.StatusCode == http.StatusOK {
+		t.Fatalf("/api/ul/list without -ul-root: status 200")
+	}
+}

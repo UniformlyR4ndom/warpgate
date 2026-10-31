@@ -818,6 +818,12 @@ paths:
         "500":
           description: Internal server error.
 
+  # Same operations as /api/files/list and /api/files/download, served from the upload directory
+  # (-ul-root) instead of the download root. Registered only when -ul-root is set.
+  /api/ul/list:
+    $ref: '#/paths/~1api~1files~1list'
+  /api/ul/download:
+    $ref: '#/paths/~1api~1files~1download'
   /api/clip/state:
     get:
       operationId: clipboardState

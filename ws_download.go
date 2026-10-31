@@ -33,7 +33,7 @@ type wsChunkRequest struct {
 // Auth is not checked by withAuth/header, since browsers can't set custom
 // headers on the WS handshake; instead the first control message must carry
 // the auth key, checked here after upgrade.
-func (s *Server) handleWSDownload(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleWSDownload(w http.ResponseWriter, r *http.Request, root *os.Root) {
 	conn, err := s.upgradeWS(w, r)
 	if err != nil {
 		log.Printf("ws download: upgrade failed: %v", err)
@@ -70,12 +70,12 @@ func (s *Server) handleWSDownload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if s.reachesUlTmp(s.root, rel) {
+	if s.reachesUlTmp(root, rel) {
 		s.writeWSError(conn, encrypted, websocket.CloseInternalServerErr, errUlTmpPath)
 		return
 	}
 
-	f, err := s.root.Open(rel)
+	f, err := root.Open(rel)
 	if err != nil {
 		if os.IsNotExist(err) {
 			s.writeWSError(conn, encrypted, websocket.CloseInternalServerErr, "file not found")

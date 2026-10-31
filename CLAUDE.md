@@ -63,6 +63,9 @@ TLS client auth, `wgcli register` for the IP firewall, `-json` output, filtered/
 | POST     | `/api/files/download`   | Yes           | Download a (chunk of a) file with a transform applied |
 | POST     | `/api/files/upload`     | Yes           | Upload a (chunk of a) file (requires `-ul-root`); multipart form |
 | GET      | `/api/files/ul-list`    | Yes           | List files in the upload directory |
+| POST     | `/api/ul/list`          | Yes           | Like `/api/files/list`, in the upload directory (requires `-ul-root`) |
+| POST     | `/api/ul/download`      | Yes           | Like `/api/files/download`, from the upload directory (requires `-ul-root`) |
+| GET/Upgrade | `/api/ul/ws/download` | Yes (in-band) | Like `/api/files/ws/download`, from the upload directory (requires `-ul-root`) |
 | GET/Upgrade | `/api/files/ws/download`  | Yes (in-band) | WebSocket alternative to `/api/files/download`; see below |
 | GET/Upgrade | `/api/files/ws/upload`    | Yes (in-band) | WebSocket alternative to `/api/files/upload` (requires `-ul-root`); see below |
 | POST     | `/api/sim/download`     | Yes           | Download a chunk of a synthesized file, no transform applied; see "Benchmark/Simulation Endpoints" |
@@ -98,6 +101,10 @@ The frontend needs no configuration: `API_BASE` (`web/app/store.js`) is derived 
 already use relative URLs. `wgcli` just takes the prefix as part of `-url`.
 
 ### Filesystem confinement
+
+Which root a request uses is fixed by its route, never by a request field: `registerBrowse`
+(`server.go`) registers the same list/download handlers under `/api/files/` with `Server.root` and
+under `/api/ul/` with `Server.ulRoot`.
 
 All file access goes through `os.Root` handles opened once in `NewServer` (`Server.root`,
 `Server.ulRoot`); a missing `-root`/`-ul-root` is a startup error. Client paths become root-relative
@@ -505,6 +512,7 @@ client can't reliably tell which occurred, and the frontend already denies the u
 mismatch regardless.
 
 **Scope**: every client→server JSON request body (`/api/files/list`, `/api/files/download`,
+`/api/ul/list`, `/api/ul/download`,
 `/api/clip/new`, `/api/clip/edit`, `/api/clip/delete`, `/api/clip/attachment/download`,
 `/api/clip/attachment/edit`,
 `/api/sim/download`); only the JSON `transform`
@@ -554,7 +562,7 @@ whatever the request already was.
   The sibling `Server.encodeParamsResponse(w, encrypted, status, v)` writes `v` as either an encrypted
   blob (`Content-Type: text/plain`) or plain JSON (`Content-Type: application/json`), based on that
   same bool threaded in from the request's own decode.
-- In scope: the JSON response bodies of `/api/files/list`, `/api/files/upload`, `/api/clip/new`,
+- In scope: the JSON response bodies of `/api/files/list`, `/api/ul/list`, `/api/files/upload`, `/api/clip/new`,
   `/api/clip/attachment`, `/api/sim/upload` (each has both a request body to key off of and a JSON
   response worth protecting), and `/api/files/ul-list`/`/api/clip/state` via the `?e` query parameter
   below. Out of scope: `/api/clip/edit`/`/api/clip/delete`/`/api/clip/attachment/edit`/`/api/clip/attachment/delete` (204, no body

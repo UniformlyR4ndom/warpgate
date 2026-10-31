@@ -62,7 +62,7 @@ func listDir(root *os.Root, rel string) ([]listEntry, error) {
 	return result, nil
 }
 
-func (s *Server) handleList(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleList(w http.ResponseWriter, r *http.Request, root *os.Root) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -80,12 +80,12 @@ func (s *Server) handleList(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	if s.reachesUlTmp(s.root, rel) {
+	if s.reachesUlTmp(root, rel) {
 		http.Error(w, errUlTmpPath, http.StatusForbidden)
 		return
 	}
 
-	all, err := listDir(s.root, rel)
+	all, err := listDir(root, rel)
 	if err != nil {
 		if os.IsNotExist(err) {
 			http.Error(w, "path not found", http.StatusNotFound)
@@ -97,7 +97,7 @@ func (s *Server) handleList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	entries := s.withoutUlTmp(s.root, rel, all)
+	entries := s.withoutUlTmp(root, rel, all)
 	s.encodeParamsResponse(w, wasEncrypted, http.StatusOK, entries)
 }
 

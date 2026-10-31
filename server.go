@@ -118,12 +118,10 @@ func NewServer(cfg Config, db *DB) (*Server, error) {
 	s.mux.Handle("/api/clip/attachment/download", s.withAuth(s.handleClipAttachmentDownload))
 	s.mux.Handle("/api/clip/attachment/edit", s.withAuth(s.handleClipAttachmentEdit))
 	s.mux.Handle("/api/clip/attachment/delete", s.withAuth(s.handleClipAttachmentDelete))
-	s.mux.Handle("/api/files/list", s.withAuth(s.handleList))
-	s.mux.Handle("/api/files/download", s.withAuth(s.handleDownload))
-	// Not wrapped in withAuth: browsers can't set custom headers on a
-	// WebSocket handshake, so auth is instead checked inside the handler
-	// against the first control message sent after upgrade.
-	s.mux.Handle("/api/files/ws/download", http.HandlerFunc(s.handleWSDownload))
+	// The WS routes are not wrapped in withAuth: browsers can't set custom
+	// headers on a WebSocket handshake, so auth is instead checked inside the
+	// handler against the first control message sent after upgrade.
+	s.registerBrowse("/api/files/", s.root)
 	s.mux.Handle("/api/sim/download", s.withAuth(s.handleSimDownload))
 	s.mux.Handle("/api/sim/ws/download", http.HandlerFunc(s.handleSimWSDownload))
 	if cfg.UlRoot != "" {
@@ -140,6 +138,7 @@ func NewServer(cfg Config, db *DB) (*Server, error) {
 		}
 		s.uploadSessions = newSessionStore[*ulSession]()
 		s.simUploadSessions = newSessionStore[*simUlSession]()
+		s.registerBrowse("/api/ul/", s.ulRoot)
 		s.mux.Handle("/api/files/upload", s.withAuth(s.handleUpload))
 		s.mux.Handle("/api/files/ul-list", s.withAuth(s.handleUlList))
 		s.mux.Handle("/api/files/ws/upload", http.HandlerFunc(s.handleWSUpload))
@@ -148,6 +147,13 @@ func NewServer(cfg Config, db *DB) (*Server, error) {
 		go s.ulSweepExpired()
 	}
 	return s, nil
+}
+
+// registerBrowse registers the listing and download routes for one root.
+func (s *Server) registerBrowse(prefix string, root *os.Root) {
+	s.mux.Handle(prefix+"list", s.withAuth(func(w http.ResponseWriter, r *http.Request) { s.handleList(w, r, root) }))
+	s.mux.Handle(prefix+"download", s.withAuth(func(w http.ResponseWriter, r *http.Request) { s.handleDownload(w, r, root) }))
+	s.mux.Handle(prefix+"ws/download", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { s.handleWSDownload(w, r, root) }))
 }
 
 // ulSweepExpired runs for the life of the server, purging idle
