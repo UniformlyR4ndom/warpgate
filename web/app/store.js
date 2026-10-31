@@ -21,6 +21,7 @@ export const settings = deepSignal({
   clipSearchScope: 'all',
   wsFrameSizeKB: 4096,
   contentType: { preset: 'auto', custom: '' },
+  extOverride: { ext: '', mode: 'replace' },
   transform: {
     type: 'id',
     xor:    { auto: true,  key: '' },

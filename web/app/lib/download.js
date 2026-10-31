@@ -7,7 +7,7 @@ import { jsonHeaders, authHeaders, encodeBody, decodeResponseJSON, assertOk, not
 import { wsOpen, wsNextJSON, receiveWSBinary, readBodyWithProgress } from './ws.js';
 import { decrypt, buildTransformArgs, perRequestSecrets, resolveContentTypeOverride } from './transform.js';
 import { authKeyHash } from '../store.js';
-import { padIndex, triggerDownload } from './util.js';
+import { padIndex, triggerDownload, applyExtOverride } from './util.js';
 import { addTransfer, removeTransfer, makeTransferProgress, updateIfChanged } from './transfers.js';
 
 // The server fixes each route to one root.
@@ -107,6 +107,7 @@ export async function downloadFile(root, entry) {
   var wsSession  = { ws: null, password: null, htmlB64Key: null };
   var transfer   = addTransfer('download', entry.name, root);
   var onProgress = makeTransferProgress(transfer, entry.size);
+  var saveName   = applyExtOverride(entry.name, settings.extOverride.ext, settings.extOverride.mode);
 
   if (chunking.enabled) {
     var chunkBytes = chunking.chunkSize * 1024 * 1024;
@@ -114,7 +115,7 @@ export async function downloadFile(root, entry) {
 
     if (chunking.reassemble && state.hasFileSystemAccess) {
       try {
-        var fileHandle = await window.showSaveFilePicker({ suggestedName: entry.name });
+        var fileHandle = await window.showSaveFilePicker({ suggestedName: saveName });
         var writable   = await fileHandle.createWritable();
         try {
           for (var i = 0; i < numChunks; i++) {
@@ -141,7 +142,7 @@ export async function downloadFile(root, entry) {
             var start = i * chunkBytes;
             var size  = Math.min(chunkBytes, entry.size - start);
             var data  = await fetchChunk(wsSession, prefix, path, start, size, onProgress);
-            triggerDownload(data, entry.name + '.' + padIndex(i));
+            triggerDownload(data, saveName + '.' + padIndex(i));
           }
         } catch(err) {
           b.error = 'Chunk failed: ' + (err.status ? 'HTTP ' + err.status : err);
@@ -154,7 +155,7 @@ export async function downloadFile(root, entry) {
   } else {
     try {
       var data = await fetchChunk(wsSession, prefix, path, 0, entry.size, onProgress);
-      triggerDownload(data, entry.name);
+      triggerDownload(data, saveName);
     } catch(err) {
       b.error = 'Download failed: ' + (err.status ? 'HTTP ' + err.status : err);
     } finally {

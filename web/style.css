@@ -252,6 +252,25 @@ input.readonly {
   min-width: 0;
 }
 
+.ext-override {
+  display: flex;
+  gap: 0.4rem;
+}
+
+.ext-override input {
+  flex: 1;
+  min-width: 0;
+}
+
+.ext-override select {
+  width: auto;
+  flex-shrink: 0;
+}
+
+input.input-invalid {
+  border-color: var(--error);
+}
+
 .key-masked {
   -webkit-text-security: disc;
 }

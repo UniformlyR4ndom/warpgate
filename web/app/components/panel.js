@@ -1,7 +1,7 @@
 import { html, text, num, check, sel } from './html.js';
 import { useEffect } from '../vendor/hooks.module.js';
 import { settings, state, backendTypes, transformTypes } from '../store.js';
-import { randomHex } from '../lib/util.js';
+import { randomHex, normalizeExtOverride } from '../lib/util.js';
 import { OutboxSettings } from './outbox.js';
 
 // Tooltips, shared by each setting's label and its input.
@@ -20,6 +20,8 @@ const TIP = {
   frame: "Maximum size of each WebSocket frame. Clamped to the range the server allows.",
   ctype: "Overrides the Content-Type header on the download response. WebSocket downloads have no HTTP headers, so this only applies to the HTTP POST backend.",
   ccustom: "Custom Content-Type value to send with the download request.",
+  ext: "Saves downloaded files under this extension, for browsers that block certain file types. Files without an extension are unaffected. Letters, digits, - and _ only; empty = off.",
+  extmode: "Replace: report.exe → report.txt. Append: report.exe → report.exe.txt.",
   ttype: "How file content is disguised in transit.",
   xorkey: "Hex-encoded key, XOR-ed with the file bytes on a repeating cycle. Any length. Uncheck 'auto' to enter your own.",
   xorauto: "Generate a new random key automatically.",
@@ -54,6 +56,9 @@ export function Panel() {
   var tab = state.tab;
   var t = settings.transform;
   var tabTransport = tab === 'download' || tab === 'upload' || tab === 'benchmark';
+  var extNorm = normalizeExtOverride(settings.extOverride.ext);
+  var extInvalid = extNorm === null;
+  var extActive = !!extNorm;
   useEffect(() => {
     function onKey(e) {
       if (e.key !== 'Escape' || e.defaultPrevented || state.clipLightbox || state.outbox.showScript) return;
@@ -140,6 +145,17 @@ export function Panel() {
               </select>
               ${settings.contentType.preset === 'custom' && html`
                 <input type="text" ...${text(settings.contentType, 'custom')} placeholder="e.g. application/vnd.custom-type" title=${TIP.ccustom} />`}
+            </div>`}
+            ${(tab === 'download' || tab === 'upload') && html`<div>
+              <label title=${TIP.ext}>Extension override</label>
+              <div class="ext-override">
+                <input type="text" ...${text(settings.extOverride, 'ext')} placeholder="e.g. txt" maxlength="17"
+                  class=${extInvalid ? 'input-invalid' : ''} title=${extInvalid ? 'Invalid extension, not applied. ' + TIP.ext : TIP.ext} />
+                <select ...${sel(settings.extOverride, 'mode')} disabled=${!extActive} title=${TIP.extmode}>
+                  <option value="replace">Replace</option>
+                  <option value="append">Append</option>
+                </select>
+              </div>
             </div>`}
           <//>
 

@@ -102,6 +102,21 @@ export function saveURL(url, filename) {
   a.click();
 }
 
+// Returns the override extension without leading dots, '' when empty, or null when invalid.
+export function normalizeExtOverride(ext) {
+  var e = ext.trim().replace(/^\.+/, '');
+  if (e === '') return '';
+  return /^[A-Za-z0-9_-]{1,16}$/.test(e) ? e : null;
+}
+
+// Files without an extension (including dotfiles like .bashrc) are left unchanged.
+export function applyExtOverride(name, ext, mode) {
+  var e = normalizeExtOverride(ext);
+  var dot = name.lastIndexOf('.');
+  if (!e || dot <= 0) return name;
+  return (mode === 'append' ? name : name.slice(0, dot)) + '.' + e;
+}
+
 // Replaces characters that are invalid in Windows or Unix filenames with '_'
 // and whitespace runs with '-'; may return ''.
 export function safeFileName(s) {
