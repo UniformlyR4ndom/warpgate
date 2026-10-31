@@ -25,6 +25,7 @@ type Server struct {
 	mux        *http.ServeMux
 	absRoot    string
 	absUlRoot  string
+	ulTmpDir   string // empty when uploads are disabled
 	clientCAs  *x509.CertPool
 	clientFP   []byte
 	wsUpgrader websocket.Upgrader
@@ -122,6 +123,9 @@ func NewServer(cfg Config, db *DB) (*Server, error) {
 			return nil, fmt.Errorf("resolving upload root: %w", err)
 		}
 		s.absUlRoot = absUlRoot
+		if err := s.initUlTmpDir(); err != nil {
+			return nil, err
+		}
 		s.uploadSessions = newSessionStore[*ulSession]()
 		s.simUploadSessions = newSessionStore[*simUlSession]()
 		s.mux.Handle("/api/files/upload", s.withAuth(s.handleUpload))

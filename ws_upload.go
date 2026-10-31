@@ -7,8 +7,6 @@ import (
 	"log"
 	"net/http"
 	"os"
-	"path/filepath"
-	"strings"
 
 	"github.com/gorilla/websocket"
 
@@ -29,9 +27,8 @@ type wsDoneMessage struct {
 
 // handleWSUpload receives one file over a single WebSocket connection, as a
 // sequence of binary frame messages (each up to the negotiated frameSize)
-// followed by a {"done":true} text message. All frames are reassembled into
-// one buffer before a single Untransform call — see the comment above
-// `received` below for why.
+// followed by a {"done":true} text message. The target is replaced only
+// once the whole file has been received and decoded.
 func (s *Server) handleWSUpload(w http.ResponseWriter, r *http.Request) {
 	conn, err := s.upgradeWS(w, r)
 	if err != nil {
@@ -57,10 +54,8 @@ func (s *Server) handleWSUpload(w http.ResponseWriter, r *http.Request) {
 	}
 	conn.SetReadLimit(int64(frameSize))
 
-	// Normalize separators so Windows client paths are handled correctly.
-	rawName := strings.ReplaceAll(req.Filename, "\\", "/")
-	filename := filepath.Base(rawName)
-	if filename == "" || filename == "." || filename == "/" {
+	filename, targetPath, err := s.ulTarget(req.Filename)
+	if err != nil {
 		s.writeWSError(conn, encrypted, websocket.CloseInternalServerErr, "invalid filename")
 		return
 	}
@@ -71,32 +66,38 @@ func (s *Server) handleWSUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	targetPath, err := makePath(s.absUlRoot, filename)
-	if err != nil {
-		s.writeWSError(conn, encrypted, websocket.CloseInternalServerErr, "invalid filename")
+	sess, _, ok := s.uploadSessions.tryClaim(filename, func() *ulSession { return &ulSession{} })
+	if !ok {
+		s.writeWSError(conn, encrypted, websocket.CloseInternalServerErr, "upload already in progress for this file")
 		return
 	}
+	defer s.uploadSessions.release(filename, true)
+	// Like a first HTTP chunk, this upload supersedes any session on record.
+	removeUlTemp(sess.tmpPath)
+	sess.tmpPath = ""
 
-	f, err := os.Create(targetPath)
+	// Frames are a purely transport-level split of one logical upload: XOR
+	// and AES-CTR reset their cipher state on every Untransform call, and
+	// PDF/html-b64 chunks are self-contained documents, so all frames are
+	// collected in rawPath before a single Untransform call.
+	rawPath, err := s.createUlTemp()
 	if err != nil {
-		log.Printf("ws upload: creating file %q: %v", targetPath, err)
+		log.Printf("ws upload: creating temp file: %v", err)
 		s.writeWSError(conn, encrypted, websocket.CloseInternalServerErr, "internal error")
 		return
 	}
-	defer f.Close()
+	defer removeUlTemp(rawPath)
+	raw, err := os.OpenFile(rawPath, os.O_RDWR, 0)
+	if err != nil {
+		log.Printf("ws upload: opening temp file: %v", err)
+		s.writeWSError(conn, encrypted, websocket.CloseInternalServerErr, "internal error")
+		return
+	}
+	defer raw.Close()
 
 	if err := s.writeWSOK(conn, encrypted, wsAck{OK: true}); err != nil {
 		return
 	}
-
-	// Frames are a purely transport-level split of one logical upload: XOR
-	// and AES-CTR reset their cipher state on every Untransform call, and
-	// PDF/html-b64 chunks are self-contained documents, so all frames must
-	// be reassembled into one buffer before a single Untransform call —
-	// Untransforming each received message independently (as this used to
-	// do, back when there was always exactly one message per upload) would
-	// silently corrupt anything split across more than one frame.
-	var received bytes.Buffer
 
 	for {
 		mt, p, err := conn.ReadMessage()
@@ -116,17 +117,28 @@ func (s *Server) handleWSUpload(w http.ResponseWriter, r *http.Request) {
 			break
 		}
 
-		received.Write(p)
+		if _, err := raw.Write(p); err != nil {
+			log.Printf("ws upload: writing temp file for %q: %v", filename, err)
+			s.writeWSError(conn, encrypted, websocket.CloseInternalServerErr, "internal error")
+			return
+		}
 	}
 
-	reader, err := transformer.Untransform(&received)
+	outPath, err := s.createUlTemp()
 	if err != nil {
-		log.Printf("ws upload: applying transform %q to %q: %v", req.Transform, filename, err)
+		log.Printf("ws upload: creating temp file: %v", err)
 		s.writeWSError(conn, encrypted, websocket.CloseInternalServerErr, "internal error")
 		return
 	}
-	if _, err := io.Copy(f, reader); err != nil {
-		log.Printf("ws upload: writing %q: %v", targetPath, err)
+	defer removeUlTemp(outPath)
+	if _, err := raw.Seek(0, io.SeekStart); err == nil {
+		err = appendUploadChunk(outPath, transformer, raw)
+	}
+	if err == nil {
+		err = os.Rename(outPath, targetPath)
+	}
+	if err != nil {
+		log.Printf("ws upload: processing %q (transform %q): %v", filename, req.Transform, err)
 		s.writeWSError(conn, encrypted, websocket.CloseInternalServerErr, "internal error")
 		return
 	}

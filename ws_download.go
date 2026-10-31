@@ -70,6 +70,11 @@ func (s *Server) handleWSDownload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if s.isUlTmpPath(target) {
+		s.writeWSError(conn, encrypted, websocket.CloseInternalServerErr, "file not found")
+		return
+	}
+
 	f, err := os.Open(target)
 	if err != nil {
 		if os.IsNotExist(err) {

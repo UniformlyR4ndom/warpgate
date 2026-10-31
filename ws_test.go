@@ -731,3 +731,44 @@ func TestWSUploadFrameLimit(t *testing.T) {
 		})
 	}
 }
+
+func TestWSUploadAbortKeepsOriginal(t *testing.T) {
+	ulRoot := t.TempDir()
+	target := filepath.Join(ulRoot, "keep.txt")
+	if err := os.WriteFile(target, []byte("ORIGINAL"), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	ts := newWSTestServer(t, Config{Root: t.TempDir(), UlRoot: ulRoot, NoAuth: true, WSFrameMax: 1 << 20})
+
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL(ts, "/api/files/ws/upload"), nil)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	if err := conn.WriteJSON(wsUploadRequest{Filename: "keep.txt", Transform: "id"}); err != nil {
+		t.Fatalf("writing request: %v", err)
+	}
+	var ack wsAck
+	if err := conn.ReadJSON(&ack); err != nil || !ack.OK {
+		t.Fatalf("handshake ack: %+v, %v", ack, err)
+	}
+	if err := conn.WriteMessage(websocket.BinaryMessage, []byte("NEW-PARTIAL")); err != nil {
+		t.Fatalf("writing frame: %v", err)
+	}
+	conn.Close()
+
+	tmpDir := filepath.Join(ulRoot, ulTmpDirName)
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		tmp, _ := os.ReadDir(tmpDir)
+		if len(tmp) == 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("temp files not cleaned up after abort: %d left", len(tmp))
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if got, err := os.ReadFile(target); err != nil || string(got) != "ORIGINAL" {
+		t.Fatalf("target after aborted upload = %q, %v; want ORIGINAL", got, err)
+	}
+}

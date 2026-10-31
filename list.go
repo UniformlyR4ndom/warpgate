@@ -3,6 +3,7 @@ package main
 import (
 	"net/http"
 	"os"
+	"path/filepath"
 )
 
 type listRequest struct {
@@ -60,7 +61,12 @@ func (s *Server) handleList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	entries, err := listDir(target)
+	if s.isUlTmpPath(target) {
+		http.Error(w, "path not found", http.StatusNotFound)
+		return
+	}
+
+	all, err := listDir(target)
 	if err != nil {
 		if os.IsNotExist(err) {
 			http.Error(w, "path not found", http.StatusNotFound)
@@ -68,6 +74,13 @@ func (s *Server) handleList(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "internal error", http.StatusInternalServerError)
 		}
 		return
+	}
+
+	entries := make([]listEntry, 0, len(all))
+	for _, e := range all {
+		if !s.isUlTmpPath(filepath.Join(target, e.Name)) {
+			entries = append(entries, e)
+		}
 	}
 
 	s.encodeParamsResponse(w, wasEncrypted, http.StatusOK, entries)

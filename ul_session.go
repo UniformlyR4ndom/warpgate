@@ -131,20 +131,6 @@ func (st *sessionStore[T]) release(name string, discard bool) {
 	}
 }
 
-// lockedNames returns the names with a non-completed session currently on
-// record, so in-progress uploads can be hidden from listings.
-func (st *sessionStore[T]) lockedNames() map[string]struct{} {
-	st.mu.Lock()
-	defer st.mu.Unlock()
-	hidden := make(map[string]struct{}, len(st.sessions))
-	for name, sess := range st.sessions {
-		if !sess.core().completed {
-			hidden[name] = struct{}{}
-		}
-	}
-	return hidden
-}
-
 // sweepExpired purges sessions idle longer than ulSessionIdleExpiry, never
 // touching one currently being processed. onAbort, if non-nil, is called
 // (outside the lock) for each purged non-completed session, so the caller

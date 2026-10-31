@@ -166,18 +166,19 @@ a plain `bool` can't make this distinction, since `false` and "absent" decode id
 
 **Chunked upload protocol** (HTTP POST only — no WebSocket equivalent yet; `wgcli upload`'s
 `-chunk-size` flag exercises it):
-1. First chunk: `continuation-key` omitted. Behaves like a one-shot upload — creates/overwrites the
-   target file unconditionally, discarding any prior state (even an in-progress or completed
-   session) recorded for that filename. `transform`/`args` apply to *this chunk only*: each chunk is
+1. First chunk: `continuation-key` omitted. Behaves like a one-shot upload — starts a new temp file
+   that will replace the target unconditionally, discarding any prior state (even an in-progress or
+   completed session) recorded for that filename. `transform`/`args` apply to *this chunk only*: each chunk is
    transformed independently (its own `Untransform` call), not as one transform spanning the whole
    file, so `pdf`/`html-b64` chunks are self-contained per chunk, the same way download chunks
    already are.
 2. If the resolved `ul-done` (see the defaulting rule above) is not `true`, the response includes a
    `continuation-key`: more chunks are expected.
 3. Subsequent chunks: `continuation-key` set to the value from the previous response; the decoded
-   bytes are appended to the target file. Each successful non-final chunk's response carries a
+   bytes are appended to the session's temp file. Each successful non-final chunk's response carries a
    freshly-rotated `continuation-key` for the next chunk.
-4. Final chunk: `ul-done: true`. Response omits `continuation-key`; the upload is complete.
+4. Final chunk: `ul-done: true`. The temp file is renamed over the target; the response omits
+   `continuation-key`.
 
 Implemented in `ul_session.go` (session/locking state, generic over any session payload type — see
 below) and `upload.go` (`handleUpload`, `handleUploadFirstChunk`, `handleUploadContinuation`). The
@@ -200,24 +201,24 @@ chunked benchmark upload — see "Benchmark/Simulation Endpoints" below.
   the key that was just used) rather than being deleted outright, so a late retry of that exact
   final request still gets an idempotent "already done" response instead of an error.
 - **Failure**: any real processing failure (a transform error only discoverable at decode time, a
-  write error, or the request exceeding `ulChunkProcessTimeout`) deletes both the partial file and
+  write error, or the request exceeding `ulChunkProcessTimeout`) deletes both the temp file and
   the entire session — there is no partial-failure recovery; the client must restart the upload from
   scratch.
 - **Expiry**: `ulSweepExpired` purges sessions idle longer than `ulSessionIdleExpiry` (both in
   `ul_session.go`; currently the same value as `ulChunkProcessTimeout` but an independent constant —
   one bounds a single request's own processing time, the other bounds the gap between successive
-  chunks). An active (incomplete) session's partial file is deleted on expiry; a completed marker's
-  file is left alone, since it's already finished and correct.
-- **Listing**: `GET /api/files/ul-list` hides any filename with a non-completed session on record
-  (`Server.uploadSessions.lockedNames()`), so an in-progress upload never appears as if it were a
-  finished, correctly-sized file.
-- **Download-side locking**: `handleDownload` (`download.go`) also consults `lockedNames()` via
-  `Server.downloadBlockedByUpload`, which compares *resolved absolute paths* — `filepath.Join(s.absUlRoot,
-  name)` against the download's own resolved target — rather than special-casing "`-root` equals
-  `-ul-root`". This is what actually matters: it's correct whether the two roots are identical,
-  nested, or unrelated, since a download into a subdirectory can never collide (uploads always land
-  flat under `-ul-root`). A blocked download gets `409 Conflict`, distinct from the plain `404` a
-  never-uploaded filename gets.
+  chunks). An active (incomplete) session's temp file is deleted on expiry.
+- **Temp-file publication**: every upload (HTTP one-shot, chunked, WS) is written to a temp file in
+  `<ul-root>/.warpgate-tmp/` (`ulTmpDirName`, `upload.go`) and renamed over the target only on
+  success, so the target always holds either the previous complete version or nothing — no listing
+  hiding or download blocking is needed while an upload runs, and an aborted upload never touches it.
+  `NewServer` clears and recreates the directory at startup (`initUlTmpDir`). Uploads land flat in
+  `-ul-root` (`ulTarget` keeps only the base name), so the directory's own name is the only one a
+  temp file could collide with; an upload with that name is rejected. `Server.isUlTmpPath` keeps
+  the directory out of `/api/files/list` and both download endpoints, comparing resolved absolute
+  paths, so it is hidden whether `-root` equals, contains or is unrelated to `-ul-root`.
+- **WS uploads** share the HTTP per-filename claim for the whole connection, and like a first chunk
+  supersede any session on record.
 
 ## WebSocket Transport
 
@@ -278,11 +279,9 @@ independent calls. Concretely:
   *its output* is split, by manually looping `Conn.WriteMessage` over `frameSize`-sized pieces read
   via `io.ReadFull` (instead of one `Conn.NextWriter`+`io.Copy` call left to gorilla's own,
   connection-wide auto-fragmentation).
-- **Upload** (`ws_upload.go`): the server accumulates *all* binary frames for the file into one
-  buffer, and only calls `Untransform` once, when the `{"done":true}` message arrives. (Earlier this
-  called `Untransform` per received message, which was only safe because there was always exactly one
-  message per upload; now that uploads can be split into multiple frames, that assumption no longer
-  holds and would otherwise silently corrupt anything but the `id` transform.)
+- **Upload** (`ws_upload.go`): the server spools *all* binary frames for the file into a temp file
+  (see "Temp-file publication"), and only calls `Untransform` once, when the `{"done":true}` message
+  arrives — calling it per message would corrupt anything but the `id` transform.
 
 **Download protocol:**
 1. Client → Server (text): `{"auth":"<authToken>","path":"...","transform":"xor","args":{...},"frameSize":1048576}`
@@ -312,7 +311,7 @@ input), which broke chunked WS download for those two transforms (verified: a 22
   implements `SizedTransformer` (streaming preserved), otherwise fully buffers `Transform`'s output via
   `io.ReadAll` to measure it directly (pdf only — which already buffers internally, so this adds no
   new cost there).
-- Not applicable to upload: `handleWSUpload` accumulates all frames into one buffer and calls
+- Not applicable to upload: `handleWSUpload` collects all frames first and calls
   `Untransform` once at `{"done":true}`, so there's no per-chunk length ambiguity on that path.
 - Not applicable to `/api/sim/ws/download`: no transform is applied there, so requested size always
   equals returned size.
@@ -325,8 +324,8 @@ input), which broke chunked WS download for those two transforms (verified: a 22
    independently decodable
 4. Client → Server (text, final): `{"done":true}`
 5. Server → Client (text, final): `{"ok":true,"name":"<filename>"}`, then a normal close
-6. On any error: server sends `{"ok":false,"error":"..."}` then closes; a partial output file may be
-   left behind, matching the existing HTTP upload path's behavior on a mid-copy failure
+6. On any error or disconnect: server sends `{"ok":false,"error":"..."}` (if it still can) then
+   closes; the temp files are deleted and the target is left as it was
 
 `doc/openapi.yaml` is REST/HTTP-only and does not model these two endpoints; this section is their
 source of truth.
@@ -366,7 +365,7 @@ run additionally enforces the same `simMaxTotalSize` ceiling *cumulatively* via
 `simUlSession.totalBytes` (`sim_upload.go`), checked after every chunk.
 
 Because there's no transform step requiring the full contents assembled in one place first, the WS
-upload variant hashes frames incrementally as they arrive rather than buffering them like
+upload variant hashes frames incrementally as they arrive rather than spooling them like
 `handleWSUpload` does.
 
 **Chunked sim upload** (`sim_upload.go`, HTTP only) reuses the exact same `ul_session.go` machinery

@@ -361,7 +361,10 @@ func TestUploadChunkedFailureDeletesEverything(t *testing.T) {
 	}
 
 	if _, err := os.Stat(filepath.Join(ulRoot, "f.bin")); !os.IsNotExist(err) {
-		t.Fatalf("expected file to be deleted after failure, stat err=%v", err)
+		t.Fatalf("expected no published file after failure, stat err=%v", err)
+	}
+	if tmp, _ := os.ReadDir(filepath.Join(ulRoot, ulTmpDirName)); len(tmp) != 0 {
+		t.Fatalf("expected temp dir to be empty after failure, got %d entries", len(tmp))
 	}
 
 	// The old key must no longer be recognized: the whole session was torn
@@ -384,27 +387,34 @@ func TestUlSweepExpired(t *testing.T) {
 		t.Fatalf("NewServer: %v", err)
 	}
 
-	// An active (non-completed) session past expiry: its partial file must
-	// be deleted along with the session entry.
-	if err := os.WriteFile(filepath.Join(ulRoot, "active.bin"), []byte("partial"), 0o644); err != nil {
-		t.Fatalf("seeding partial file: %v", err)
+	// An active (non-completed) session past expiry: its temp file must be
+	// deleted along with the session entry, the published file kept.
+	if err := os.WriteFile(filepath.Join(ulRoot, "active.bin"), []byte("old"), 0o644); err != nil {
+		t.Fatalf("seeding published file: %v", err)
 	}
-	srv.uploadSessions.sessions["active.bin"] = &ulSession{ulSessionCore{currentKey: "k1", expiresAt: time.Now().Add(-time.Second)}}
+	tmpPath, err := srv.createUlTemp()
+	if err != nil {
+		t.Fatalf("createUlTemp: %v", err)
+	}
+	srv.uploadSessions.sessions["active.bin"] = &ulSession{ulSessionCore{currentKey: "k1", expiresAt: time.Now().Add(-time.Second)}, tmpPath}
 
 	// A completed session past expiry: the file is done and correct, and
 	// must survive the sweep untouched.
 	if err := os.WriteFile(filepath.Join(ulRoot, "done.bin"), []byte("finished"), 0o644); err != nil {
 		t.Fatalf("seeding completed file: %v", err)
 	}
-	srv.uploadSessions.sessions["done.bin"] = &ulSession{ulSessionCore{completed: true, currentKey: "k2", expiresAt: time.Now().Add(-time.Second)}}
+	srv.uploadSessions.sessions["done.bin"] = &ulSession{ulSessionCore: ulSessionCore{completed: true, currentKey: "k2", expiresAt: time.Now().Add(-time.Second)}}
 
 	// A session not yet expired must be left alone entirely.
-	srv.uploadSessions.sessions["fresh.bin"] = &ulSession{ulSessionCore{currentKey: "k3", expiresAt: time.Now().Add(time.Hour)}}
+	srv.uploadSessions.sessions["fresh.bin"] = &ulSession{ulSessionCore: ulSessionCore{currentKey: "k3", expiresAt: time.Now().Add(time.Hour)}}
 
 	srv.uploadSessions.sweepExpired(srv.abortUploadSession)
 
-	if _, err := os.Stat(filepath.Join(ulRoot, "active.bin")); !os.IsNotExist(err) {
-		t.Fatalf("expected active.bin's partial file to be deleted, stat err=%v", err)
+	if _, err := os.Stat(tmpPath); !os.IsNotExist(err) {
+		t.Fatalf("expected active.bin's temp file to be deleted, stat err=%v", err)
+	}
+	if _, err := os.Stat(filepath.Join(ulRoot, "active.bin")); err != nil {
+		t.Fatalf("published active.bin was deleted by sweep: %v", err)
 	}
 	if _, ok := srv.uploadSessions.sessions["active.bin"]; ok {
 		t.Fatalf("expected active.bin's session entry to be purged")

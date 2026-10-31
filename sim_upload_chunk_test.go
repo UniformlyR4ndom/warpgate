@@ -76,12 +76,8 @@ func TestSimUploadChunkedRoundTrip(t *testing.T) {
 	}
 
 	// Sim upload never writes to disk, chunked or not.
-	entries, err := listDir(ulRoot)
-	if err != nil {
-		t.Fatalf("listDir: %v", err)
-	}
-	if len(entries) != 0 {
-		t.Fatalf("expected no files written to upload root, found %d", len(entries))
+	if n := countFiles(t, ulRoot); n != 0 {
+		t.Fatalf("expected no files written to upload root, found %d", n)
 	}
 }
 

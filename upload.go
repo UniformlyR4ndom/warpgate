@@ -1,7 +1,9 @@
 package main
 
 import (
+	"crypto/rand"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log"
 	"mime/multipart"
@@ -22,23 +24,99 @@ type uploadResponse struct {
 	ContinuationKey string `json:"continuation-key,omitempty"`
 }
 
-// ulSession is a chunked real-file upload's session payload — the file
-// itself, reopened via the map key (filename) on each request, is the
-// actual persisted state, so nothing beyond the shared core is needed here.
+// ulTmpDirName is the subdirectory of -ul-root holding uploads until they
+// complete. Uploads always land flat in -ul-root, so this one name is the
+// only one a temp file could ever collide with.
+const ulTmpDirName = ".warpgate-tmp"
+
+// ulSession is a chunked real-file upload's session payload: the temp file
+// the chunks are appended to until the final chunk publishes it.
 type ulSession struct {
 	ulSessionCore
+	tmpPath string
 }
 
-// abortUploadSession deletes the partial file left behind by an expired or
-// failed, incomplete chunked upload.
-func (s *Server) abortUploadSession(name string, _ *ulSession) {
-	path, err := makePath(s.absUlRoot, name)
-	if err != nil {
+// abortUploadSession deletes the temp file of an expired or failed,
+// incomplete chunked upload.
+func (s *Server) abortUploadSession(_ string, sess *ulSession) {
+	removeUlTemp(sess.tmpPath)
+}
+
+func removeUlTemp(path string) {
+	if path == "" {
 		return
 	}
 	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
-		log.Printf("ul session expiry: removing %q: %v", path, err)
+		log.Printf("removing upload temp file %q: %v", path, err)
 	}
+}
+
+// initUlTmpDir recreates the empty temp directory, discarding leftovers of
+// uploads interrupted by a restart.
+func (s *Server) initUlTmpDir() error {
+	s.ulTmpDir = filepath.Join(s.absUlRoot, ulTmpDirName)
+	if err := os.RemoveAll(s.ulTmpDir); err != nil {
+		return fmt.Errorf("clearing upload temp dir: %w", err)
+	}
+	if err := os.Mkdir(s.ulTmpDir, 0o700); err != nil {
+		return fmt.Errorf("creating upload temp dir: %w", err)
+	}
+	return nil
+}
+
+// isUlTmpPath reports whether the absolute path is inside the upload temp
+// directory, which must never be listed or downloaded.
+func (s *Server) isUlTmpPath(path string) bool {
+	return s.ulTmpDir != "" && pathIsUnder(path, s.ulTmpDir)
+}
+
+// createUlTemp creates an empty temp file. Unlike os.CreateTemp it honors
+// the umask, so the published file gets the same mode as os.Create gives.
+func (s *Server) createUlTemp() (string, error) {
+	for {
+		path := filepath.Join(s.ulTmpDir, "ul-"+rand.Text())
+		f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o666)
+		if os.IsExist(err) {
+			continue
+		}
+		if err != nil {
+			return "", err
+		}
+		return path, f.Close()
+	}
+}
+
+// ulTarget derives the stored filename and its path from a client-supplied
+// name, keeping only the base name.
+func (s *Server) ulTarget(clientName string) (filename, targetPath string, err error) {
+	// Normalize separators so Windows client paths are handled correctly.
+	filename = filepath.Base(strings.ReplaceAll(clientName, "\\", "/"))
+	if filename == "" || filename == "." || filename == "/" || filename == ulTmpDirName {
+		return "", "", fmt.Errorf("invalid filename")
+	}
+	targetPath, err = makePath(s.absUlRoot, filename)
+	if err != nil {
+		return "", "", fmt.Errorf("invalid filename")
+	}
+	return filename, targetPath, nil
+}
+
+// appendUploadChunk untransforms one chunk and appends it to path.
+func appendUploadChunk(path string, transformer transform.Transformer, src io.Reader) error {
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0)
+	if err != nil {
+		return err
+	}
+	reader, err := transformer.Untransform(src)
+	if err != nil {
+		f.Close()
+		return fmt.Errorf("applying transform: %w", err)
+	}
+	if _, err := io.Copy(f, reader); err != nil {
+		f.Close()
+		return err
+	}
+	return f.Close()
 }
 
 func (s *Server) writeUploadResponse(w http.ResponseWriter, encrypted bool, status int, filename, continuationKey string) {
@@ -114,17 +192,9 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 	}
 	defer file.Close()
 
-	// Normalize separators so Windows client paths are handled correctly.
-	rawName := strings.ReplaceAll(header.Filename, "\\", "/")
-	filename := filepath.Base(rawName)
-	if filename == "" || filename == "." || filename == "/" {
-		http.Error(w, "invalid filename", http.StatusBadRequest)
-		return
-	}
-
-	targetPath, err := makePath(s.absUlRoot, filename)
+	filename, targetPath, err := s.ulTarget(header.Filename)
 	if err != nil {
-		http.Error(w, "invalid filename", http.StatusBadRequest)
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
@@ -135,7 +205,7 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if continuationKey == "" {
-		s.handleUploadFirstChunk(w, transformer, transformName, file, filename, targetPath, sess, done, wasEncrypted)
+		s.handleUploadFirstChunk(w, transformer, file, filename, targetPath, sess, done, wasEncrypted)
 		return
 	}
 
@@ -150,7 +220,7 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 		s.uploadSessions.release(filename, false)
 		s.writeUploadResponse(w, wasEncrypted, http.StatusOK, filename, nextKey)
 	case ulKeyCurrent:
-		s.handleUploadContinuation(w, transformer, transformName, file, filename, targetPath, sess, done, wasEncrypted)
+		s.handleUploadContinuation(w, transformer, file, filename, targetPath, sess, done, wasEncrypted)
 	default: // ulKeyUnrecognized
 		// wasNew means nothing legitimate exists for this filename yet, so
 		// there's nothing worth keeping; otherwise this stale/unknown key
@@ -160,40 +230,38 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// failUpload tears down the whole session for filename after a processing
+// failure: there is no partial-failure recovery.
+func (s *Server) failUpload(w http.ResponseWriter, filename string, sess *ulSession, err error) {
+	log.Printf("upload %q failed: %v", filename, err)
+	removeUlTemp(sess.tmpPath)
+	s.uploadSessions.release(filename, true)
+	http.Error(w, "internal error", http.StatusInternalServerError)
+}
+
 // handleUploadFirstChunk handles a request with no continuation-key: it
-// always behaves like today's one-shot upload (unconditionally overwriting
-// whatever, if anything, was at targetPath — including any stale session
-// recorded for filename, which sess may represent).
-func (s *Server) handleUploadFirstChunk(w http.ResponseWriter, transformer transform.Transformer, transformName string, file multipart.File, filename, targetPath string, sess *ulSession, done, encrypted bool) {
-	f, err := os.Create(targetPath)
+// starts over, discarding any session recorded for filename. targetPath is
+// replaced only once the upload completes.
+func (s *Server) handleUploadFirstChunk(w http.ResponseWriter, transformer transform.Transformer, file multipart.File, filename, targetPath string, sess *ulSession, done, encrypted bool) {
+	removeUlTemp(sess.tmpPath)
+	tmpPath, err := s.createUlTemp()
 	if err != nil {
-		log.Printf("error creating upload file %q: %v", targetPath, err)
-		s.uploadSessions.release(filename, true)
-		http.Error(w, "internal error", http.StatusInternalServerError)
+		sess.tmpPath = ""
+		s.failUpload(w, filename, sess, err)
 		return
 	}
+	sess.tmpPath = tmpPath
 
-	reader, err := transformer.Untransform(file)
-	if err != nil {
-		f.Close()
-		os.Remove(targetPath)
-		log.Printf("error applying transform %q to upload %q: %v", transformName, filename, err)
-		s.uploadSessions.release(filename, true)
-		http.Error(w, "internal error", http.StatusInternalServerError)
+	if err := appendUploadChunk(tmpPath, transformer, file); err != nil {
+		s.failUpload(w, filename, sess, err)
 		return
 	}
-
-	if _, err := io.Copy(f, reader); err != nil {
-		f.Close()
-		os.Remove(targetPath)
-		log.Printf("error writing upload file %q: %v", targetPath, err)
-		s.uploadSessions.release(filename, true)
-		http.Error(w, "internal error", http.StatusInternalServerError)
-		return
-	}
-	f.Close()
 
 	if done {
+		if err := os.Rename(tmpPath, targetPath); err != nil {
+			s.failUpload(w, filename, sess, err)
+			return
+		}
 		log.Printf("uploaded %q to %q", filename, targetPath)
 		s.uploadSessions.release(filename, true)
 		s.writeUploadResponse(w, encrypted, http.StatusCreated, filename, "")
@@ -202,9 +270,7 @@ func (s *Server) handleUploadFirstChunk(w http.ResponseWriter, transformer trans
 
 	key, err := ulNewKey()
 	if err != nil {
-		os.Remove(targetPath)
-		s.uploadSessions.release(filename, true)
-		http.Error(w, "internal error", http.StatusInternalServerError)
+		s.failUpload(w, filename, sess, err)
 		return
 	}
 	sess.completed = false
@@ -217,38 +283,19 @@ func (s *Server) handleUploadFirstChunk(w http.ResponseWriter, transformer trans
 
 // handleUploadContinuation handles a request whose continuation-key matched
 // sess.currentKey — the expected next chunk of an already-started upload.
-func (s *Server) handleUploadContinuation(w http.ResponseWriter, transformer transform.Transformer, transformName string, file multipart.File, filename, targetPath string, sess *ulSession, done, encrypted bool) {
-	f, err := os.OpenFile(targetPath, os.O_APPEND|os.O_WRONLY, 0o644)
-	if err != nil {
-		log.Printf("error opening upload file %q for continuation: %v", targetPath, err)
-		os.Remove(targetPath)
-		s.uploadSessions.release(filename, true)
-		http.Error(w, "internal error", http.StatusInternalServerError)
+func (s *Server) handleUploadContinuation(w http.ResponseWriter, transformer transform.Transformer, file multipart.File, filename, targetPath string, sess *ulSession, done, encrypted bool) {
+	if err := appendUploadChunk(sess.tmpPath, transformer, file); err != nil {
+		s.failUpload(w, filename, sess, err)
 		return
 	}
-
-	reader, err := transformer.Untransform(file)
-	if err != nil {
-		f.Close()
-		os.Remove(targetPath)
-		log.Printf("error applying transform %q to upload %q: %v", transformName, filename, err)
-		s.uploadSessions.release(filename, true)
-		http.Error(w, "internal error", http.StatusInternalServerError)
-		return
-	}
-
-	if _, err := io.Copy(f, reader); err != nil {
-		f.Close()
-		os.Remove(targetPath)
-		log.Printf("error appending to upload file %q: %v", targetPath, err)
-		s.uploadSessions.release(filename, true)
-		http.Error(w, "internal error", http.StatusInternalServerError)
-		return
-	}
-	f.Close()
 
 	if done {
+		if err := os.Rename(sess.tmpPath, targetPath); err != nil {
+			s.failUpload(w, filename, sess, err)
+			return
+		}
 		log.Printf("uploaded %q to %q (chunked)", filename, targetPath)
+		sess.tmpPath = ""
 		sess.completed = true
 		sess.previousKey = ""
 		sess.expiresAt = time.Now().Add(ulSessionIdleExpiry)
@@ -259,9 +306,7 @@ func (s *Server) handleUploadContinuation(w http.ResponseWriter, transformer tra
 
 	key, err := ulNewKey()
 	if err != nil {
-		os.Remove(targetPath)
-		s.uploadSessions.release(filename, true)
-		http.Error(w, "internal error", http.StatusInternalServerError)
+		s.failUpload(w, filename, sess, err)
 		return
 	}
 	sess.previousKey = sess.currentKey
@@ -284,16 +329,11 @@ func (s *Server) handleUlList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	hidden := s.uploadSessions.lockedNames()
 	files := make([]listEntry, 0, len(all))
 	for _, e := range all {
-		if e.Type != "f" {
-			continue
+		if e.Type == "f" {
+			files = append(files, e)
 		}
-		if _, inProgress := hidden[e.Name]; inProgress {
-			continue
-		}
-		files = append(files, e)
 	}
 
 	encrypted := !s.cfg.NoAuth && r.URL.Query().Has("e")

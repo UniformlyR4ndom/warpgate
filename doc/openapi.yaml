@@ -500,8 +500,7 @@ paths:
 
         - **`continuation-key`**: omitted on the first chunk; set to the value from the previous
           response on every subsequent chunk. The first chunk always behaves like a one-shot
-          upload — creating/overwriting the target file and discarding any prior session recorded
-          for that filename — and, if not immediately done, the response carries a
+          upload — discarding any prior session recorded for that filename — and, if not immediately done, the response carries a
           `continuation-key` that must be echoed back on the next chunk. A request whose key
           doesn't match what the server has on record is rejected without touching whatever, if
           anything, actually exists for that filename.
@@ -519,7 +518,10 @@ paths:
         next request: the server holds a per-filename lock for the duration of one chunk's
         processing and rejects (`409`) any other request for that filename in the meantime, rather
         than queuing it. There is no partial-failure recovery — a chunk that fails deletes the
-        whole partial file and its session; the client must restart the upload from scratch.
+        upload's temp file and its session; the client must restart the upload from scratch.
+
+        The target file is replaced only when the upload completes; until then it keeps its
+        previous content (or doesn't exist). The filename `.warpgate-tmp` is reserved.
 
         A plain one-shot upload — no `transform` part at all, or one that omits `ul-done` — behaves
         exactly as before chunking existed: the whole file in one request, written immediately, no
@@ -586,8 +588,8 @@ paths:
         "409":
           description: Another request for this filename is currently being processed.
         "500":
-          description: Internal server error (transform failure or I/O error) — the partial file
-            and its chunked-upload session, if any, have been deleted.
+          description: Internal server error (transform failure or I/O error) — the upload's temp
+            file and its chunked-upload session, if any, have been deleted; the target is unchanged.
 
   /api/sim/download:
     post:

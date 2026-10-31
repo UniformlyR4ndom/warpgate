@@ -6,9 +6,11 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"io"
+	"io/fs"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strconv"
 	"testing"
 
@@ -209,12 +211,8 @@ func TestSimUploadHTTP(t *testing.T) {
 	}
 
 	// Nothing should have been written to the upload directory.
-	entries, err := listDir(ulRoot)
-	if err != nil {
-		t.Fatalf("listDir: %v", err)
-	}
-	if len(entries) != 0 {
-		t.Fatalf("expected no files written to upload root, found %d", len(entries))
+	if n := countFiles(t, ulRoot); n != 0 {
+		t.Fatalf("expected no files written to upload root, found %d", n)
 	}
 }
 
@@ -408,4 +406,20 @@ func TestSimWSUploadTooLarge(t *testing.T) {
 	if final.OK {
 		t.Fatalf("expected rejection of oversized upload, got ok ack: %+v", final)
 	}
+}
+
+// countFiles counts the non-directory entries anywhere under dir.
+func countFiles(t *testing.T, dir string) int {
+	t.Helper()
+	n := 0
+	err := filepath.WalkDir(dir, func(_ string, d fs.DirEntry, err error) error {
+		if err == nil && !d.IsDir() {
+			n++
+		}
+		return err
+	})
+	if err != nil {
+		t.Fatalf("walking %s: %v", dir, err)
+	}
+	return n
 }

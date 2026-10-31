@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/gorilla/websocket"
 )
 
 func TestDownloadContentType(t *testing.T) {
@@ -84,88 +86,131 @@ func TestDownloadContentType(t *testing.T) {
 	}
 }
 
-// TestDownloadBlockedDuringChunkedUpload covers the scenario CLAUDE.md's
-// former TODO flagged: -root and -ul-root pointed at the same directory,
-// so a file mid-chunked-upload is also a download candidate.
-func TestDownloadBlockedDuringChunkedUpload(t *testing.T) {
+// TestDownloadDuringChunkedUpload: with -root and -ul-root the same
+// directory, a file being re-uploaded keeps serving its previous version
+// until the final chunk publishes the new one.
+func TestDownloadDuringChunkedUpload(t *testing.T) {
 	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "f.txt"), []byte("old!!"), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
 	ts := newSimTestServer(t, Config{Root: dir, UlRoot: dir, NoAuth: true})
 
-	body := downloadRequest{Path: "f.txt", Size: 5, Transform: "id"}
-	raw, err := json.Marshal(body)
+	raw, err := json.Marshal(downloadRequest{Path: "f.txt", Size: 5, Transform: "id"})
 	if err != nil {
 		t.Fatalf("Marshal: %v", err)
 	}
-	download := func() *http.Response {
+	download := func() string {
+		t.Helper()
 		res, err := http.Post(ts.URL+"/api/files/download", "application/json", bytes.NewReader(raw))
 		if err != nil {
 			t.Fatalf("POST: %v", err)
 		}
-		return res
-	}
-
-	// Not uploaded yet at all: a plain miss, not a lock conflict.
-	if res := download(); res.StatusCode != http.StatusNotFound {
-		t.Fatalf("status before upload = %d, want %d", res.StatusCode, http.StatusNotFound)
+		defer res.Body.Close()
+		if res.StatusCode != http.StatusOK {
+			t.Fatalf("download status = %d", res.StatusCode)
+		}
+		data, err := io.ReadAll(res.Body)
+		if err != nil {
+			t.Fatalf("ReadAll: %v", err)
+		}
+		return string(data)
 	}
 
 	resp, got := postChunk(t, ts.URL, "f.txt", []byte("hel"), "", false)
 	if resp.StatusCode != http.StatusCreated {
 		t.Fatalf("first chunk status = %d, want %d", resp.StatusCode, http.StatusCreated)
 	}
-
-	if res := download(); res.StatusCode != http.StatusConflict {
-		t.Fatalf("status mid-upload = %d, want %d", res.StatusCode, http.StatusConflict)
+	if d := download(); d != "old!!" {
+		t.Fatalf("mid-upload download = %q, want the previous version", d)
 	}
 
 	resp, _ = postChunk(t, ts.URL, "f.txt", []byte("lo"), got.ContinuationKey, true)
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("final chunk status = %d, want %d", resp.StatusCode, http.StatusOK)
 	}
-
-	res := download()
-	defer res.Body.Close()
-	if res.StatusCode != http.StatusOK {
-		t.Fatalf("status after completion = %d, want %d", res.StatusCode, http.StatusOK)
-	}
-	data, err := io.ReadAll(res.Body)
-	if err != nil {
-		t.Fatalf("ReadAll: %v", err)
-	}
-	if string(data) != "hello" {
-		t.Fatalf("downloaded %q, want %q", data, "hello")
+	if d := download(); d != "hello" {
+		t.Fatalf("downloaded %q, want %q", d, "hello")
 	}
 }
 
-// TestDownloadNotBlockedByUnrelatedUpload confirms an in-progress upload
-// under a separate -ul-root never blocks a same-named download under -root
-// — downloadBlockedByUpload must compare resolved absolute paths, not bare
-// filenames.
-func TestDownloadNotBlockedByUnrelatedUpload(t *testing.T) {
-	root := t.TempDir()
+// TestUlTmpDirNotReachable: with -root and -ul-root the same directory, the
+// upload temp dir must be neither listed nor downloadable, and its name is
+// reserved for uploads.
+func TestUlTmpDirNotReachable(t *testing.T) {
+	dir := t.TempDir()
+	ts := newSimTestServer(t, Config{Root: dir, UlRoot: dir, NoAuth: true})
+
+	if resp, _ := postChunk(t, ts.URL, "f.txt", []byte("hel"), "", false); resp.StatusCode != http.StatusCreated {
+		t.Fatalf("first chunk status = %d", resp.StatusCode)
+	}
+	tmp, err := os.ReadDir(filepath.Join(dir, ulTmpDirName))
+	if err != nil || len(tmp) != 1 {
+		t.Fatalf("expected one temp file, got %v, %v", tmp, err)
+	}
+	tmpRel := ulTmpDirName + "/" + tmp[0].Name()
+
+	post := func(path string, body any) *http.Response {
+		t.Helper()
+		raw, err := json.Marshal(body)
+		if err != nil {
+			t.Fatalf("Marshal: %v", err)
+		}
+		res, err := http.Post(ts.URL+path, "application/json", bytes.NewReader(raw))
+		if err != nil {
+			t.Fatalf("POST: %v", err)
+		}
+		t.Cleanup(func() { res.Body.Close() })
+		return res
+	}
+
+	res := post("/api/files/list", listRequest{Path: ""})
+	var entries []listEntry
+	if err := json.NewDecoder(res.Body).Decode(&entries); err != nil {
+		t.Fatalf("decoding list: %v", err)
+	}
+	for _, e := range entries {
+		if e.Name == ulTmpDirName {
+			t.Fatalf("temp dir listed: %+v", entries)
+		}
+	}
+	if res := post("/api/files/list", listRequest{Path: ulTmpDirName}); res.StatusCode != http.StatusNotFound {
+		t.Fatalf("listing temp dir: status %d, want 404", res.StatusCode)
+	}
+	if res := post("/api/files/download", downloadRequest{Path: tmpRel, Size: 3, Transform: "id"}); res.StatusCode != http.StatusNotFound {
+		t.Fatalf("downloading temp file: status %d, want 404", res.StatusCode)
+	}
+
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL(ts, "/api/files/ws/download"), nil)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer conn.Close()
+	if err := conn.WriteJSON(wsDownloadRequest{Path: tmpRel, Transform: "id"}); err != nil {
+		t.Fatalf("writing request: %v", err)
+	}
+	var ack wsAck
+	if err := conn.ReadJSON(&ack); err != nil || ack.OK {
+		t.Fatalf("WS download of temp file: ack %+v, err %v", ack, err)
+	}
+
+	if resp, _ := postChunk(t, ts.URL, ulTmpDirName, []byte("x"), "", true); resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("upload named %q: status %d, want 400", ulTmpDirName, resp.StatusCode)
+	}
+}
+
+func TestUlTmpDirClearedAtStartup(t *testing.T) {
 	ulRoot := t.TempDir()
-	if err := os.WriteFile(filepath.Join(root, "f.txt"), []byte("hello"), 0o644); err != nil {
+	leftover := filepath.Join(ulRoot, ulTmpDirName, "ul-stale")
+	if err := os.MkdirAll(filepath.Dir(leftover), 0o700); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	if err := os.WriteFile(leftover, []byte("x"), 0o600); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
-	ts := newSimTestServer(t, Config{Root: root, UlRoot: ulRoot, NoAuth: true})
-
-	resp, _ := postChunk(t, ts.URL, "f.txt", []byte("hel"), "", false)
-	if resp.StatusCode != http.StatusCreated {
-		t.Fatalf("first chunk status = %d, want %d", resp.StatusCode, http.StatusCreated)
-	}
-
-	body := downloadRequest{Path: "f.txt", Size: 5, Transform: "id"}
-	raw, err := json.Marshal(body)
-	if err != nil {
-		t.Fatalf("Marshal: %v", err)
-	}
-	res, err := http.Post(ts.URL+"/api/files/download", "application/json", bytes.NewReader(raw))
-	if err != nil {
-		t.Fatalf("POST: %v", err)
-	}
-	defer res.Body.Close()
-	if res.StatusCode != http.StatusOK {
-		t.Fatalf("status = %d, want %d", res.StatusCode, http.StatusOK)
+	newSimTestServer(t, Config{Root: t.TempDir(), UlRoot: ulRoot, NoAuth: true})
+	if _, err := os.Stat(leftover); !os.IsNotExist(err) {
+		t.Fatalf("leftover temp file survived startup, stat err=%v", err)
 	}
 }
 
