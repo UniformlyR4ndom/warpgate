@@ -715,7 +715,7 @@ Frontend: uses `aes-js` (`web/aes.js`) — `ModeOfOperation.ctr`. Key and IV aut
 4. The per-request password (20 hex chars) is generated in the browser and passed in args; never stored server-side.
 
 **Download (decode, browser-side):**
-`pdfjsLib.getDocument` opens the PDF (with password if set), then `pdf.getAttachments()` extracts the file bytes.
+pdf.js (`getDocument`, imported from `web/pdf.min.mjs`) opens the PDF (with password if set), then `pdf.getAttachments()` extracts the file bytes.
 
 **Upload (encode, browser-side):**
 `pdf-lib` (`PDFLib.PDFDocument.create()`) builds a PDF with "Hello there!" text and the file embedded via `pdfDoc.attach()`. `pdf-lib` 1.x does not support PDF encryption, so uploaded PDFs are unencrypted.
@@ -848,7 +848,7 @@ same-origin WS), `worker-src 'self'` (pdf.js worker), `base-uri`/`form-action 'n
 works because the frontend has no inline `<script>`/`<style>`, no import map, no `eval`/`new Function`,
 no string HTML sinks (`innerHTML`, `dangerouslySetInnerHTML`), and sets styles only via the CSSOM
 (Preact's `style` prop). The one Trusted Types policy, `pdfjs-worker` (`web/app/main.js`), vouches only
-for `pdf.worker.min.js`; the worker is created there and handed to pdf.js as `workerPort`, since pdf.js
+for `pdf.worker.min.mjs`; the module worker is created there and handed to pdf.js as `workerPort`, since pdf.js
 would otherwise call `new Worker` with a plain string. Keep it that way: a CSP violation shows up only
 as a console error, not a server-side failure. The IP registration page is
 the one exception, with its own hash-based policy (see "IP firewall").
@@ -857,10 +857,10 @@ the one exception, with its own hash-based policy (see "IP firewall").
 
 Preact + htm + `@preact/signals` + `deepsignal`, as native ES modules — no build step, no import map.
 
-- `index.html` — `<div id="app">`, the classic vendored scripts that set globals (`pdf.min.js`,
-  `pdf-lib.min.js`, `aes.js`, `sha256.js`), and `<script type="module" src="app/main.js">`
+- `index.html` — `<div id="app">`, the classic vendored scripts that set globals (`pdf-lib.min.js`,
+  `aes.js`, `sha256.js`), and `<script type="module" src="app/main.js">`
 - `style.css` — dark theme
-- `pdf.worker.min.js` — loaded by pdf.js
+- `pdf.min.mjs`, `pdf.worker.min.mjs` — pdf.js 6.4.299 (`pdfjs-dist` modern build), imported as ES modules
 - `app/vendor/` — `preact`, `hooks`, `signals`, `signals-core`, `htm`, `deepsignal` ES modules; their
   internal bare import specifiers are rewritten to relative paths so no import map is needed
 - `app/main.js` — boot: `initStore`, initial listing, auto-refresh effect, `render(App)`

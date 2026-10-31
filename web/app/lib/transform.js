@@ -1,6 +1,7 @@
 // Client-side transform decode (download path), encode (upload path), and
 // per-request arg building.
 import { settings } from '../store.js';
+import { getDocument } from '../../pdf.min.mjs';
 import { hexToBytes, applyXOR, binaryStringToBytes, bytesToBinaryString, randomHex } from './util.js';
 
 function decryptAESCTR(buffer) {
@@ -26,16 +27,17 @@ function decryptHTMLB64(buffer, keyHex) {
 }
 
 function decryptPDF(buffer, password) {
-  var opts = { data: new Uint8Array(buffer), isEvalSupported: false };
+  var opts = { data: new Uint8Array(buffer) };
   if (password) { opts.password = password; }
-  return pdfjsLib.getDocument(opts).promise.then(function(pdf) {
-    return pdf.getAttachments();
-  }).then(function(attachments) {
-    if (!attachments) throw new Error('PDF has no attachments');
-    var keys = Object.keys(attachments);
-    if (!keys.length) throw new Error('PDF has no attachments');
-    return new Uint8Array(attachments[keys[0]].content);
-  });
+  var task = getDocument(opts);
+  return task.promise.then(async function(pdf) {
+    var attachments = await pdf.getAttachments();
+    var id = attachments && attachments.keys().next().value;
+    if (id === undefined) throw new Error('PDF has no attachments');
+    var content = await pdf.getAttachmentContent(id);
+    if (!content) throw new Error('PDF attachment is empty');
+    return new Uint8Array(content);
+  }).finally(function() { task.destroy(); });
 }
 
 // Reverses the current transform on a downloaded chunk's ArrayBuffer.

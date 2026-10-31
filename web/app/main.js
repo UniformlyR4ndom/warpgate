@@ -7,8 +7,9 @@ import { load } from './lib/download.js';
 import { initOutbox } from './lib/outbox.js';
 import { refreshActive, onAuthKeyChange } from './nav.js';
 import { App } from './components/app.js';
+import { GlobalWorkerOptions } from '../pdf.min.mjs';
 
-var PDF_WORKER = 'pdf.worker.min.js';
+var PDF_WORKER = 'pdf.worker.min.mjs';
 var workerURL = window.trustedTypes
   ? trustedTypes.createPolicy('pdfjs-worker', {
       createScriptURL: function(url) {
@@ -18,7 +19,7 @@ var workerURL = window.trustedTypes
     }).createScriptURL(PDF_WORKER)
   : PDF_WORKER;
 // pdf.js would construct the worker from a plain string, which Trusted Types rejects.
-pdfjsLib.GlobalWorkerOptions.workerPort = new Worker(workerURL);
+GlobalWorkerOptions.workerPort = new Worker(workerURL, { type: 'module' });
 
 var refreshTimer = null;
 
