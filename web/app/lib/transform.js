@@ -26,7 +26,7 @@ function decryptHTMLB64(buffer, keyHex) {
 }
 
 function decryptPDF(buffer, password) {
-  var opts = { data: new Uint8Array(buffer) };
+  var opts = { data: new Uint8Array(buffer), isEvalSupported: false };
   if (password) { opts.password = password; }
   return pdfjsLib.getDocument(opts).promise.then(function(pdf) {
     return pdf.getAttachments();
