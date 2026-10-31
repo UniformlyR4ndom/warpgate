@@ -20,12 +20,7 @@ export function DownloadTab() {
               <tr class="entry dir" onClick=${() => navigateTo(state.pathSegments.length - 2)}>
                 <td><span class="icon">📁</span>..</td><td></td><td></td>
               </tr>`}
-            ${state.entries.map((entry) => entry.warning ? html`
-              <tr key=${entry.name} class="entry blocked" title=${entry.warning}>
-                <td><span class="icon">⚠</span><span>${entry.name}</span></td>
-                <td class="col-mtime"></td>
-                <td class="col-size"></td>
-              </tr>` : html`
+            ${state.entries.map((entry) => html`
               <tr key=${entry.name} class=${'entry ' + (entry.type === 'd' ? 'dir' : 'file')}
                   onClick=${() => (entry.type === 'd' ? enterDir(entry.name) : downloadFile(entry))}>
                 <td><span class="icon">${entry.type === 'd' ? '📁' : '📄'}</span><span>${entry.name}</span></td>

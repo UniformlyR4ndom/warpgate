@@ -319,15 +319,6 @@ th {
   background: #34424a;
 }
 
-.entry.blocked td {
-  color: var(--muted);
-  cursor: not-allowed;
-}
-
-.entry.blocked .icon {
-  color: var(--warn);
-}
-
 .error {
   color: var(--error);
   padding: 1rem 0;

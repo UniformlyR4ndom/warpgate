@@ -66,16 +66,15 @@ func TestListDirSymlinks(t *testing.T) {
 	for _, e := range entries {
 		got[e.Name] = e
 	}
-	if e := got["escape"]; e.Warning != "symlink points outside the root" {
-		t.Errorf("escape: %+v", e)
+	for _, name := range []string{"escape", "broken"} {
+		if e, ok := got[name]; ok {
+			t.Errorf("%s should be hidden: %+v", name, e)
+		}
 	}
-	if e := got["broken"]; e.Warning != "broken symlink" {
-		t.Errorf("broken: %+v", e)
-	}
-	if e := got["inside"]; e.Warning != "" || e.Type != "f" || e.Size == nil || *e.Size != 6 {
+	if e := got["inside"]; e.Type != "f" || e.Size == nil || *e.Size != 6 {
 		t.Errorf("inside: %+v", e)
 	}
-	if e := got["insidedir"]; e.Warning != "" || e.Type != "d" {
+	if e := got["insidedir"]; e.Type != "d" {
 		t.Errorf("insidedir: %+v", e)
 	}
 }

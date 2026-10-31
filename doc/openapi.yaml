@@ -64,12 +64,6 @@ components:
           format: int64
           description: Last modification time (Unix seconds). Omitted if it couldn't be read.
           example: 1761735600
-        warning:
-          type: string
-          description: |
-            Present when the entry is a symlink that can't be used — its target is outside the
-            root or missing; `type` is then `f` and `size`/`mtime` are omitted.
-          example: symlink points outside the root
 
     UploadResponse:
       type: object

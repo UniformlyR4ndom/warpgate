@@ -2,6 +2,7 @@ package main
 
 import (
 	"io/fs"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -16,12 +17,10 @@ type listEntry struct {
 	Type  string `json:"type"`
 	Size  *int64 `json:"size,omitempty"`
 	MTime *int64 `json:"mtime,omitempty"`
-	// Warning marks an entry that can't be opened (an unusable symlink).
-	Warning string `json:"warning,omitempty"`
 }
 
 // listDir lists the directory rel inside root. Symlinks are described by
-// their target; one that is unusable through root carries a Warning instead.
+// their target; one that is unusable through root is left out and logged.
 func listDir(root *os.Root, rel string) ([]listEntry, error) {
 	d, err := root.Open(rel)
 	if err != nil {
@@ -34,16 +33,19 @@ func listDir(root *os.Root, rel string) ([]listEntry, error) {
 	}
 	result := make([]listEntry, 0, len(entries))
 	for _, e := range entries {
-		entry := listEntry{Name: e.Name(), Type: "f"}
 		info, err := e.Info()
 		if e.Type()&fs.ModeSymlink != 0 {
 			info, err = root.Stat(filepath.Join(rel, e.Name()))
-			if isPathEscape(err) {
-				entry.Warning = "symlink points outside the root"
-			} else if err != nil {
-				entry.Warning = "broken symlink"
+			if err != nil {
+				reason := "broken symlink"
+				if isPathEscape(err) {
+					reason = errSymlinkEscape
+				}
+				log.Printf("list: hiding %s: %s", filepath.Join(root.Name(), rel, e.Name()), reason)
+				continue
 			}
 		}
+		entry := listEntry{Name: e.Name(), Type: "f"}
 		if err == nil {
 			if info.IsDir() {
 				entry.Type = "d"
