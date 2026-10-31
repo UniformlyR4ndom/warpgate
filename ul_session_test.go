@@ -7,6 +7,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"os"
+	"path"
 	"path/filepath"
 	"testing"
 	"time"
@@ -24,11 +25,14 @@ func multipartChunkedUpload(t *testing.T, transformName, filename string, conten
 	// for a bool, which would silently drop "ul-done" from the request
 	// whenever a caller passes done=false — indistinguishable server-side
 	// from the field being absent entirely, which now defaults to true.
+	// A "dir/name" filename is sent as the dir field plus the base name.
+	dir, filename := path.Split(filename)
 	spec, err := json.Marshal(struct {
 		Transform       string `json:"transform"`
+		Dir             string `json:"dir,omitempty"`
 		ContinuationKey string `json:"continuation-key,omitempty"`
 		Done            bool   `json:"ul-done"`
-	}{Transform: transformName, ContinuationKey: continuationKey, Done: done})
+	}{Transform: transformName, Dir: dir, ContinuationKey: continuationKey, Done: done})
 	if err != nil {
 		t.Fatalf("marshaling transform spec: %v", err)
 	}
@@ -429,5 +433,61 @@ func TestUlSweepExpired(t *testing.T) {
 
 	if _, ok := srv.uploadSessions.sessions["fresh.bin"]; !ok {
 		t.Fatalf("non-expired session was incorrectly purged")
+	}
+}
+
+// TestUploadIntoSubdir: dir selects an existing directory below -ul-root;
+// sessions are per target path, and dir gets the same confinement as reads.
+func TestUploadIntoSubdir(t *testing.T) {
+	_, ulRoot, secret := symlinkFixture(t)
+	for _, d := range []string{"a/b", "b"} {
+		if err := os.MkdirAll(filepath.Join(ulRoot, d), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Symlink("../outside", filepath.Join(ulRoot, "out")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(ulRoot, "b", "taken"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	ts := newSimTestServer(t, Config{Root: t.TempDir(), UlRoot: ulRoot, NoAuth: true})
+
+	resp1, got1 := postChunk(t, ts.URL, "a/b/f.bin", []byte("one-"), "", false)
+	resp2, got2 := postChunk(t, ts.URL, "b/f.bin", []byte("two"), "", true)
+	if resp1.StatusCode != http.StatusCreated || resp2.StatusCode != http.StatusCreated {
+		t.Fatalf("statuses %d, %d; same base name in two dirs must not conflict", resp1.StatusCode, resp2.StatusCode)
+	}
+	if got2.Name != "b/f.bin" {
+		t.Fatalf("response name %q, want b/f.bin", got2.Name)
+	}
+	if resp, got := postChunk(t, ts.URL, "a/b/f.bin", []byte("done"), got1.ContinuationKey, true); resp.StatusCode != http.StatusOK || got.Name != "a/b/f.bin" {
+		t.Fatalf("final chunk: status %d, name %q", resp.StatusCode, got.Name)
+	}
+	for rel, want := range map[string]string{"a/b/f.bin": "one-done", "b/f.bin": "two"} {
+		if data, err := os.ReadFile(filepath.Join(ulRoot, rel)); err != nil || string(data) != want {
+			t.Fatalf("%s = %q, %v; want %q", rel, data, err, want)
+		}
+	}
+
+	cases := []struct {
+		name string
+		want int
+	}{
+		{"../x/f.bin", http.StatusBadRequest},
+		{ulTmpDirName + "/f.bin", http.StatusBadRequest},
+		{"a/.WARPGATE-TMP/f.bin", http.StatusBadRequest},
+		{"missing/f.bin", http.StatusNotFound},
+		{"a/b/f.bin/g.bin", http.StatusNotFound}, // dir is a file
+		{"out/f.bin", http.StatusForbidden},      // symlink leaving -ul-root
+		{"b/taken", http.StatusConflict},
+	}
+	for _, c := range cases {
+		if resp, _ := postChunk(t, ts.URL, c.name, []byte("x"), "", true); resp.StatusCode != c.want {
+			t.Errorf("upload %q: status %d, want %d", c.name, resp.StatusCode, c.want)
+		}
+	}
+	if data, _ := os.ReadFile(secret); string(data) != "OUTSIDE" {
+		t.Fatalf("file outside -ul-root changed: %q", data)
 	}
 }

@@ -3,6 +3,7 @@ package main
 import (
 	"crypto/rand"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -118,15 +119,45 @@ func (s *Server) createUlTemp() (string, error) {
 	}
 }
 
-// ulTarget derives the stored filename, relative to the upload root, from a
-// client-supplied name, keeping only the base name.
-func ulTarget(clientName string) (string, error) {
+// ulBaseName validates a client-supplied file name, keeping only its base
+// name.
+func ulBaseName(clientName string) (string, error) {
 	// Normalize separators so Windows client paths are handled correctly.
 	filename := filepath.Base(strings.ReplaceAll(clientName, "\\", "/"))
 	if filename == "" || filename == "." || filename == ".." || filename == "/" || isReservedName(filename) {
 		return "", fmt.Errorf("invalid filename")
 	}
 	return filename, nil
+}
+
+// ulTarget resolves an upload's target, relative to the upload root, from
+// the client's directory (an existing directory below the upload root, ""
+// for the root itself) and file name. On failure it also returns the HTTP
+// status to report.
+func (s *Server) ulTarget(dir, clientName string) (string, int, error) {
+	name, err := ulBaseName(clientName)
+	if err != nil {
+		return "", http.StatusBadRequest, err
+	}
+	rel, err := rootRelPath(dir)
+	if err != nil {
+		return "", http.StatusBadRequest, err
+	}
+	if s.reachesUlTmp(s.ulRoot, rel) {
+		return "", http.StatusForbidden, errors.New(errUlTmpPath)
+	}
+	fi, err := s.ulRoot.Stat(rel)
+	switch {
+	case isPathEscape(err):
+		return "", http.StatusForbidden, errors.New(errSymlinkEscape)
+	case err != nil || !fi.IsDir():
+		return "", http.StatusNotFound, errors.New("directory not found")
+	}
+	target := filepath.Join(rel, name)
+	if fi, err := s.ulRoot.Lstat(target); err == nil && fi.IsDir() {
+		return "", http.StatusConflict, errors.New("a directory with this name exists")
+	}
+	return target, 0, nil
 }
 
 // publishUpload replaces filename with the finished temp file. Renaming
@@ -158,7 +189,7 @@ func appendUploadChunk(root *os.Root, path string, transformer transform.Transfo
 }
 
 func (s *Server) writeUploadResponse(w http.ResponseWriter, encrypted bool, status int, filename, continuationKey string) {
-	s.encodeParamsResponse(w, encrypted, status, uploadResponse{Name: filename, ContinuationKey: continuationKey})
+	s.encodeParamsResponse(w, encrypted, status, uploadResponse{Name: filepath.ToSlash(filename), ContinuationKey: continuationKey})
 }
 
 // handleUpload serves both a plain one-shot upload (no continuation-key,
@@ -187,6 +218,7 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 	// "transform" file part.
 	transformName := "id"
 	var transformArgs json.RawMessage
+	var dir string
 	var continuationKey string
 	// done defaults to true (one-shot) when ul-done is absent entirely, not
 	// just falsy: Done is a *bool specifically so a legacy client that omits
@@ -201,6 +233,7 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 		var spec struct {
 			Transform       string          `json:"transform"`
 			Args            json.RawMessage `json:"args"`
+			Dir             string          `json:"dir"`
 			ContinuationKey string          `json:"continuation-key"`
 			Done            *bool           `json:"ul-done"`
 		}
@@ -211,6 +244,7 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 		}
 		transformName = spec.Transform
 		transformArgs = spec.Args
+		dir = spec.Dir
 		continuationKey = spec.ContinuationKey
 		if spec.Done != nil {
 			done = *spec.Done
@@ -230,9 +264,9 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 	}
 	defer file.Close()
 
-	filename, err := ulTarget(header.Filename)
+	filename, status, err := s.ulTarget(dir, header.Filename)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		http.Error(w, err.Error(), status)
 		return
 	}
 

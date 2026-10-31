@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"path/filepath"
 
 	"github.com/gorilla/websocket"
 
@@ -16,6 +17,7 @@ import (
 type wsUploadRequest struct {
 	Auth      string          `json:"auth"`
 	Filename  string          `json:"filename"`
+	Dir       string          `json:"dir"`
 	Transform string          `json:"transform"`
 	Args      json.RawMessage `json:"args"`
 	FrameSize int64           `json:"frameSize"`
@@ -54,9 +56,9 @@ func (s *Server) handleWSUpload(w http.ResponseWriter, r *http.Request) {
 	}
 	conn.SetReadLimit(int64(frameSize))
 
-	filename, err := ulTarget(req.Filename)
+	filename, _, err := s.ulTarget(req.Dir, req.Filename)
 	if err != nil {
-		s.writeWSError(conn, encrypted, websocket.CloseInternalServerErr, "invalid filename")
+		s.writeWSError(conn, encrypted, websocket.CloseInternalServerErr, "%v", err)
 		return
 	}
 
@@ -143,7 +145,7 @@ func (s *Server) handleWSUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := s.writeWSOK(conn, encrypted, wsAck{OK: true, Name: filename}); err != nil {
+	if err := s.writeWSOK(conn, encrypted, wsAck{OK: true, Name: filepath.ToSlash(filename)}); err != nil {
 		return
 	}
 	writeWSClose(conn, websocket.CloseNormalClosure, "")

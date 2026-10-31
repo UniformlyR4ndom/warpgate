@@ -180,10 +180,12 @@ This body may optionally be an encrypted blob instead of plain JSON — see "Par
 ### `/api/files/upload` multipart form
 
 Two parts:
-- `transform` (optional file part, JSON): `{"transform":"pdf","args":{"filename":"myfile.txt"},"continuation-key":"<hex>","ul-done":true}`.
+- `transform` (optional file part, JSON): `{"transform":"pdf","args":{"filename":"myfile.txt"},"dir":"sub","continuation-key":"<hex>","ul-done":true}`.
+  `dir` (optional) is an existing directory below `-ul-root` to store the file in; see "Upload
+  targets" below.
   May optionally be an encrypted blob instead of plain JSON — see "Parameter Encryption" below. Only
   this part is ever encrypted; the `file` part below never is.
-- `file`: this request's file data (already encoded by the frontend; for a chunked upload, this
+- `file`: this request's file data, whose part filename (base name only) names the target (already encoded by the frontend; for a chunked upload, this
   chunk's independently-transformed bytes, not the whole file)
 
 `continuation-key` and `ul-done` are optional and enable chunked upload — splitting one file across
@@ -216,7 +218,12 @@ below) and `upload.go` (`handleUpload`, `handleUploadFirstChunk`, `handleUploadC
 identical protocol, sharing this same `ul_session.go` machinery, also powers `/api/sim/upload`'s
 chunked benchmark upload — see "Benchmark/Simulation Endpoints" below.
 
-- **Locking**: a per-filename claim (`sessionStore.tryClaim`/`release`, called via
+- **Upload targets** (`Server.ulTarget`, `upload.go`): `dir` goes through `rootRelPath` and the
+  temp-dir guard and must be an existing directory inside `ulRoot` (`404` otherwise, `403` through
+  an escaping symlink); the file name is reduced to its base name (`ulBaseName`). The resulting
+  relative path keys the upload session and is returned as `name` (slash-separated). A directory
+  at the target is a `409`.
+- **Locking**: a per-target-path claim (`sessionStore.tryClaim`/`release`, called via
   `Server.uploadSessions`, a `*sessionStore[*ulSession]`) rejects a request outright (`409`) rather
   than queuing it if another request for the same filename is already being processed —
   deliberately simple given chunks are expected to be sent strictly one at a time, each awaited
@@ -243,8 +250,7 @@ chunked benchmark upload — see "Benchmark/Simulation Endpoints" below.
   `<ul-root>/.warpgate-tmp/` (`ulTmpDirName`, `upload.go`) and renamed over the target only on
   success, so the target always holds either the previous complete version or nothing — no listing
   hiding or download blocking is needed while an upload runs, and an aborted upload never touches it.
-  `NewServer` clears and recreates the directory at startup (`initUlTmpDir`). Uploads land flat in
-  `-ul-root` (`ulTarget` keeps only the base name). The name is reserved at any depth:
+  `NewServer` clears and recreates the directory at startup (`initUlTmpDir`). The name is reserved at any depth:
   `rootRelPath` and `ulTarget` reject any segment equal to it ignoring case and trailing dots/spaces
   (`isReservedName`, `400`). As the actual guarantee, `Server.reachesUlTmp` compares every prefix of
   a path against the directory's identity (`os.SameFile` with `Server.ulTmpInfo`) and refuses a
@@ -351,13 +357,13 @@ input), which broke chunked WS download for those two transforms (verified: a 22
   equals returned size.
 
 **Upload protocol:**
-1. Client → Server (text): `{"auth":"<authToken>","filename":"...","transform":"xor","args":{...},"frameSize":1048576}`
+1. Client → Server (text): `{"auth":"<authToken>","filename":"...","dir":"...","transform":"xor","args":{...},"frameSize":1048576}` (`dir` optional, as for HTTP)
 2. Server → Client (text): `{"ok":true}` or `{"ok":false,"error":"..."}`
 3. Client → Server (binary, one or more messages, each ≤ `frameSize`): the transformed file's bytes,
    split purely for transport — unlike before, an individual message is *not* required to be
    independently decodable
 4. Client → Server (text, final): `{"done":true}`
-5. Server → Client (text, final): `{"ok":true,"name":"<filename>"}`, then a normal close
+5. Server → Client (text, final): `{"ok":true,"name":"<dir/filename>"}`, then a normal close
 6. On any error or disconnect: server sends `{"ok":false,"error":"..."}` (if it still can) then
    closes; the temp files are deleted and the target is left as it was
 

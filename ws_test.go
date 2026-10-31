@@ -772,3 +772,49 @@ func TestWSUploadAbortKeepsOriginal(t *testing.T) {
 		t.Fatalf("target after aborted upload = %q, %v; want ORIGINAL", got, err)
 	}
 }
+
+func TestWSUploadIntoSubdir(t *testing.T) {
+	ulRoot := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(ulRoot, "a", "b"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	ts := newWSTestServer(t, Config{Root: t.TempDir(), UlRoot: ulRoot, NoAuth: true, WSFrameMax: 1 << 20})
+
+	upload := func(dir string) wsAck {
+		t.Helper()
+		conn, _, err := websocket.DefaultDialer.Dial(wsURL(ts, "/api/files/ws/upload"), nil)
+		if err != nil {
+			t.Fatalf("dial: %v", err)
+		}
+		defer conn.Close()
+		if err := conn.WriteJSON(wsUploadRequest{Filename: "up.bin", Dir: dir, Transform: "id"}); err != nil {
+			t.Fatalf("writing request: %v", err)
+		}
+		var ack wsAck
+		if err := conn.ReadJSON(&ack); err != nil || !ack.OK {
+			return ack
+		}
+		if err := conn.WriteMessage(websocket.BinaryMessage, []byte("data")); err != nil {
+			t.Fatalf("writing frame: %v", err)
+		}
+		if err := conn.WriteJSON(wsDoneMessage{Done: true}); err != nil {
+			t.Fatalf("writing done: %v", err)
+		}
+		if err := conn.ReadJSON(&ack); err != nil {
+			t.Fatalf("reading final ack: %v", err)
+		}
+		return ack
+	}
+
+	if ack := upload("a/b"); !ack.OK || ack.Name != "a/b/up.bin" {
+		t.Fatalf("upload into a/b: %+v", ack)
+	}
+	if data, err := os.ReadFile(filepath.Join(ulRoot, "a", "b", "up.bin")); err != nil || string(data) != "data" {
+		t.Fatalf("a/b/up.bin = %q, %v", data, err)
+	}
+	for _, dir := range []string{"../x", "missing", ulTmpDirName} {
+		if ack := upload(dir); ack.OK {
+			t.Errorf("upload into %q accepted", dir)
+		}
+	}
+}
