@@ -2,7 +2,11 @@ package main
 
 import (
 	"flag"
+	"net/http"
+	"net/http/httptest"
 	"slices"
+	"strings"
+	"sync/atomic"
 	"testing"
 )
 
@@ -101,5 +105,31 @@ func TestAttachCaptionFlags(t *testing.T) {
 	want := []clipImage{{"a.png", "first"}, {"b.png", ""}, {"c.png", "third"}}
 	if !slices.Equal(images, want) || !slices.Equal(fs.Args(), []string{"text"}) {
 		t.Errorf("images = %+v, args = %q", images, fs.Args())
+	}
+}
+
+func TestHTTPClientRefusesRedirect(t *testing.T) {
+	var leaked atomic.Bool
+	other := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		leaked.Store(true)
+	}))
+	defer other.Close()
+	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, other.URL+"/capture", http.StatusTemporaryRedirect)
+	}))
+	defer origin.Close()
+
+	g := &globalFlags{url: origin.URL, authKey: "k"}
+	req, err := g.newRequest(http.MethodPost, "/api/files/list", strings.NewReader("{}"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := g.httpClient().Do(req)
+	if err == nil {
+		resp.Body.Close()
+		t.Fatal("redirect followed, want error")
+	}
+	if leaked.Load() {
+		t.Error("request reached the redirect target")
 	}
 }

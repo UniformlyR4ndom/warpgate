@@ -151,8 +151,15 @@ func (g *globalFlags) authToken() string {
 	return authhash.Hash(g.authKey)
 }
 
+// httpClient refuses to follow redirects: Go would resend X-Auth to any host,
+// and the server never redirects API requests.
 func (g *globalFlags) httpClient() *http.Client {
-	return &http.Client{Transport: blankPageTransport{&http.Transport{TLSClientConfig: g.tlsConfig}}}
+	return &http.Client{
+		Transport: blankPageTransport{&http.Transport{TLSClientConfig: g.tlsConfig}},
+		CheckRedirect: func(req *http.Request, _ []*http.Request) error {
+			return fmt.Errorf("refusing to follow redirect to %s", req.URL.Redacted())
+		},
+	}
 }
 
 func (g *globalFlags) newRequest(method, path string, body io.Reader) (*http.Request, error) {
