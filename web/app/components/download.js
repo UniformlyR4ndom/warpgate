@@ -4,12 +4,22 @@ import { enterDir, navigateTo, downloadFile } from '../lib/download.js';
 import { TransferList } from './transfers.js';
 import { formatSize, formatTSAt, utcOffsetLabel, currentUTCOffset } from '../lib/util.js';
 
+function Breadcrumb() {
+  return html`
+    <nav class="breadcrumb">
+      <span class="crumb" onClick=${() => navigateTo(-1)}>root</span>
+      ${state.pathSegments.map((seg, i) => html`
+        <span key=${i}><span class="separator">/</span><span class="crumb" onClick=${() => navigateTo(i)}>${seg}</span></span>`)}
+    </nav>`;
+}
+
 export function DownloadTab() {
   var off = currentUTCOffset();
   return html`
     <div>
       ${state.error && html`<div class="error">${state.error}</div>`}
       <${TransferList} direction="download" />
+      <${Breadcrumb} />
       ${!state.error && html`
         <table>
           <thead>

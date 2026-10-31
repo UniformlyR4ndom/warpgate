@@ -1,7 +1,6 @@
 import { html, Fragment } from './html.js';
 import { settings, state } from '../store.js';
 import { setTab, refreshActive } from '../nav.js';
-import { navigateTo } from '../lib/download.js';
 import { Panel } from './panel.js';
 import { DownloadTab } from './download.js';
 import { UploadTab } from './upload.js';
@@ -23,15 +22,6 @@ const TABS = [
   { id: 'clipboard', label: 'Clipboard' },
   { id: 'benchmark', label: 'Benchmark' },
 ];
-
-function Breadcrumb() {
-  return html`
-    <nav class="breadcrumb">
-      <span class="crumb" onClick=${() => navigateTo(-1)}>root</span>
-      ${state.pathSegments.map((seg, i) => html`
-        <span key=${i}><span class="separator">/</span><span class="crumb" onClick=${() => navigateTo(i)}>${seg}</span></span>`)}
-    </nav>`;
-}
 
 export function App() {
   return html`
@@ -58,7 +48,6 @@ export function App() {
           </button>
           </div>
         </div>
-        ${state.tab === 'download' && html`<${Breadcrumb} />`}
       </header>
 
       <div class="layout">

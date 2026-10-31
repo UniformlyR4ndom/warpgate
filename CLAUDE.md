@@ -821,7 +821,7 @@ Preact + htm + `@preact/signals` + `deepsignal`, as native ES modules — no bui
   `util.js`, `outbox.js` (see "Outbox"), and one module per tab: `download.js`, `upload.js`,
   `clipboard.js`, `benchmark.js`
 - `app/components/` — `html.js` (bound `html` tag + `text`/`num`/`check`/`sel` two-way-binding prop
-  spreads), `app.js` (header, breadcrumb, tabs), `panel.js`, `transfers.js`, `outbox.js` (panel section, notices, PowerShell dialog), one component file per tab
+  spreads), `app.js` (header, tabs), `panel.js`, `transfers.js`, `outbox.js` (panel section, notices, PowerShell dialog), one component file per tab
 - `push-to-wgclip.ps1` — the PowerShell push function shown by the Outbox dialog (see "Outbox")
 
 All JS libraries are served locally (embedded in the binary); no CDN requests at runtime.
