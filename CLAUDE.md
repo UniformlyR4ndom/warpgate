@@ -984,7 +984,7 @@ label text.
 
 Lets a local script push text into the clipboard when only the browser can reach the server (the
 proxy is configured only there): the script writes into a folder, the open warpgate tab picks it
-up and creates the note. Design notes and measurements: `push-to-clip.md`. Chromium only
+up and creates the note. Design notes and measurements (local only, git-ignored): `push-to-wgclip/push-to-clip.md`. Chromium only
 (`showDirectoryPicker`); elsewhere the panel section is hidden.
 
 - **Protocol**: the script writes `<name>` (UTF-8 text, ≤ 512 KiB), closes it, then writes
