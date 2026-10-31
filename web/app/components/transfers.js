@@ -16,7 +16,7 @@ function TransferRow(props) {
 }
 
 export function TransferList(props) {
-  var transfers = state.transfers.filter((t) => t.direction === props.direction);
+  var transfers = state.transfers.filter((t) => t.root === props.root);
   return transfers.length > 0 && html`
     <div class="transfer-list">
       ${transfers.map((t) => html`<${TransferRow} key=${t.id} t=${t} />`)}

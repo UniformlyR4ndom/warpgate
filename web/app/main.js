@@ -24,7 +24,7 @@ var refreshTimer = null;
 
 async function boot() {
   await initStore(onAuthKeyChange);
-  load(); // initial download listing
+  load('dl'); // initial download listing
 
   // Auto-refresh: poll the active tab every second while enabled.
   effect(function() {

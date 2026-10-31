@@ -100,10 +100,36 @@ h1 {
   height: 0.9rem;
 }
 
+.browser-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+  margin-bottom: 0.5rem;
+  min-height: 1.8rem;
+}
+
 .breadcrumb {
   font-size: 0.9rem;
   color: var(--muted);
-  margin-bottom: 0.5rem;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.new-dir {
+  display: flex;
+  gap: 0.4rem;
+}
+
+.new-dir input[type="text"] {
+  width: 14rem;
+}
+
+.choose-btn:disabled,
+.choose-btn:disabled:hover {
+  border-color: var(--border);
+  color: var(--faint);
+  cursor: default;
 }
 
 .crumb {

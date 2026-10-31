@@ -865,7 +865,7 @@ Preact + htm + `@preact/signals` + `deepsignal`, as native ES modules — no bui
   `util.js`, `outbox.js` (see "Outbox"), and one module per tab: `download.js`, `upload.js`,
   `clipboard.js`, `benchmark.js`
 - `app/components/` — `html.js` (bound `html` tag + `text`/`num`/`check`/`sel` two-way-binding prop
-  spreads), `app.js` (header, tabs), `panel.js`, `transfers.js`, `outbox.js` (panel section, notices, PowerShell dialog), one component file per tab
+  spreads), `app.js` (header, tabs), `panel.js`, `transfers.js`, `outbox.js` (panel section, notices, PowerShell dialog), `browser.js` (`FileBrowser`, shared by the Download and Upload tabs), one component file per tab
 - `push-to-wgclip.ps1` — the PowerShell push function shown by the Outbox dialog (see "Outbox")
 
 All JS libraries are served locally (embedded in the binary); no CDN requests at runtime.
@@ -887,10 +887,18 @@ those fields change (signals auto-tracking). Mutate through the proxies (`state.
   and per-chunk upload paths (and clipboard images), resolving to `{data: Blob, args: {}}`.
 - `encodeForUpload(file)` — async; reads the whole file and delegates to `encodeBytesForUpload`.
 - `decrypt(buffer, password, htmlB64Key)` — reverses the transform on a downloaded chunk's `ArrayBuffer`.
-- `fetchChunk(wsSession, path, start, size)` — dispatches to `fetchChunkHTTP` (POSTs to `/api/files/download`) or `fetchChunkWS` based on the `settings.backend` setting, calling `decrypt` on the (re)assembled response either way. `wsSession` is a plain `{ws, password, htmlB64Key}` object owned by the caller (`downloadFile`), threaded through repeated calls for the same file so the WS backend reuses one connection per file instead of opening one per chunk; `closeWSSession` ends it. Ignored for the HTTP backend.
+- **File browser** (`components/browser.js`, `lib/download.js`): one per root, keyed `dl`/`ul` in
+  `state.browse` (`segments`, `entries`, `error`). `load(root)`, `enterDir`, `navigateTo` and
+  `downloadFile(root, entry)` take the root; `API_PREFIX` maps it to `/api/files/` or `/api/ul/`.
+  Transfers carry the root too, so each tab's `TransferList` shows only its own. The Upload tab is
+  this browser on `ul` plus the drop zone, which uploads into the current directory (`dir`, fixed
+  when the upload starts), and a "New folder" form (`createDir` → `/api/ul/mkdir`, disabled at
+  `MKDIR_MAX_DEPTH`). With `state.ulFlat` (from `/api/public/settings`) it falls back to the flat
+  `loadUploadDir` table with no download, navigation or mkdir; `refreshUpload` picks the right loader.
+- `fetchChunk(wsSession, prefix, path, start, size)` — dispatches to `fetchChunkHTTP` (POSTs to `<prefix>download`) or `fetchChunkWS` based on the `settings.backend` setting, calling `decrypt` on the (re)assembled response either way. `wsSession` is a plain `{ws, password, htmlB64Key}` object owned by the caller (`downloadFile`), threaded through repeated calls for the same file so the WS backend reuses one connection per file instead of opening one per chunk; `closeWSSession` ends it. Ignored for the HTTP backend.
 - Chunked downloads with optional reassembly via the File System Access API (`showSaveFilePicker`). Requires a secure context (HTTPS or localhost); the checkbox is disabled otherwise.
 - `uploadFiles(files)` — dispatches each file to `uploadFileHTTP` or `uploadFileWS` based on `settings.backend`, in parallel, then refreshes the upload listing. `uploadFileHTTP` further dispatches to `uploadFileHTTPChunked` when `settings.uploadChunking.enabled` — HTTP backend only, see "`/api/files/upload` multipart form" above for the protocol.
-- `load()` / `loadUploadDir()` — each compares the fetched data against the current state with `JSON.stringify` (`updateIfChanged`) and only updates the reactive array on a change, preserving scroll position during auto-refresh. The clipboard instead syncs incrementally via `pollClipboard`/`applyClipState` (see "Clipboard tab").
+- `load(root)` / `loadUploadDir()` — each compares the fetched data against the current state with `JSON.stringify` (`updateIfChanged`) and only updates the reactive array on a change, preserving scroll position during auto-refresh. The clipboard instead syncs incrementally via `pollClipboard`/`applyClipState` (see "Clipboard tab").
 - `onAuthKeyChange()` — after a key change: `resetClipSync()`, reload the download listing (kept across tab switches), and refresh the active tab.
 - `textToBase64` / `base64ToText` — UTF-8–safe helpers used by the clipboard tab.
 - `sha256Hex(buffer)` — wraps `crypto.subtle.digest('SHA-256', ...)`, hex-encoding via the shared `bytesToHex` helper (also used by `randomHex`). Used by the benchmark tab (see below); requires a secure context (HTTPS or localhost).
@@ -902,7 +910,7 @@ Everything under `store.js`'s `settings` object (backend choice, auto-refresh, c
 size, transform config, chunking config, benchmark size/chunk-size config, clipboard sort/search scope,
 and side-panel open/section-collapsed state) is persisted as one JSON blob in
 `localStorage["warpgate-settings"]`, restored on the next page load. Everything else lives in the
-separate, never-persisted `state` object: navigation (`tab`/`pathSegments` — a stale restored path
+separate, never-persisted `state` object: navigation (`tab`/`browse` — a stale restored path
 could point at a since-deleted directory), `wsFrameMinKB`/`wsFrameMaxKB` (fetched fresh from
 `/api/public/settings` every load), `authShowKey` (the auth key always starts masked), and
 `benchmarkResults` (a run history, not configuration).

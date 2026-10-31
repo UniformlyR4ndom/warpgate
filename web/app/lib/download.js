@@ -1,5 +1,6 @@
-// Download tab logic: directory listing, navigation, and chunked/whole-file
-// downloads over HTTP or WS.
+// File browser logic for both roots (dl = download root, ul = upload
+// directory): listing, navigation, and chunked/whole-file downloads over HTTP
+// or WS.
 import { API_BASE, state, settings } from '../store.js';
 import { jsonHeaders, authHeaders, encodeBody, decodeResponseJSON, assertOk, noteAuthStatus,
          paramEncryptEnabled, wsBaseURL, sendWSControl, wsDecryptFor, closeWSSession } from './api.js';
@@ -9,44 +10,50 @@ import { authKeyHash } from '../store.js';
 import { padIndex, triggerDownload } from './util.js';
 import { addTransfer, removeTransfer, makeTransferProgress, updateIfChanged } from './transfers.js';
 
-export function currentPath() {
-  return state.pathSegments.join('/');
-}
+// The server fixes each route to one root.
+const API_PREFIX = { dl: '/api/files/', ul: '/api/ul/' };
 
-export async function load() {
-  state.error = null;
+export async function load(root) {
+  var b = state.browse[root];
+  b.error = null;
   try {
     var encrypted = paramEncryptEnabled();
-    var res = await fetch(API_BASE + '/api/files/list', {
+    var res = await fetch(API_BASE + API_PREFIX[root] + 'list', {
       method:  'POST',
       headers: jsonHeaders(),
-      body:    encodeBody({ path: currentPath() }),
+      body:    encodeBody({ path: b.segments.join('/') }),
     });
     noteAuthStatus(res);
+    if (res.status === 404 && root === 'ul' && b.segments.length === 0) {
+      b.entries = [];
+      b.error = 'Uploads are not enabled on this server.';
+      return;
+    }
     if (!res.ok) throw new Error('HTTP ' + res.status);
     var data = await decodeResponseJSON(res, encrypted);
-    updateIfChanged('entries', data);
+    updateIfChanged(b, 'entries', data);
   } catch(err) {
-    state.error = 'Failed to load directory (' + err.message + ')';
+    b.error = 'Failed to load directory (' + err.message + ')';
   }
 }
 
-export function enterDir(name) {
-  state.pathSegments.push(name);
-  load();
+export function enterDir(root, name) {
+  state.browse[root].segments.push(name);
+  load(root);
 }
 
-export function navigateTo(index) {
-  state.pathSegments = state.pathSegments.slice(0, index + 1);
-  load();
+export function navigateTo(root, index) {
+  var b = state.browse[root];
+  b.segments = b.segments.slice(0, index + 1);
+  load(root);
 }
 
-async function fetchChunk(wsSession, path, start, size, onProgress) {
-  if (settings.backend === 'ws') { return fetchChunkWS(wsSession, path, start, size, onProgress); }
-  return fetchChunkHTTP(path, start, size, onProgress);
+async function fetchChunk(wsSession, prefix, path, start, size, onProgress) {
+  if (settings.backend === 'ws') { return fetchChunkWS(wsSession, prefix, path, start, size, onProgress); }
+  return fetchChunkHTTP(prefix, path, start, size, onProgress);
 }
 
-async function fetchChunkHTTP(path, start, size, onProgress) {
+async function fetchChunkHTTP(prefix, path, start, size, onProgress) {
   var t = settings.transform;
   var s = perRequestSecrets();
   var contentType = resolveContentTypeOverride();
@@ -55,7 +62,7 @@ async function fetchChunkHTTP(path, start, size, onProgress) {
     transform: t.type, args: buildTransformArgs(s.password, s.htmlB64Key),
   };
   if (contentType) body.contentType = contentType;
-  var res = await fetch(API_BASE + '/api/files/download', {
+  var res = await fetch(API_BASE + prefix + 'download', {
     method:  'POST',
     headers: jsonHeaders(),
     body:    encodeBody(body),
@@ -65,11 +72,11 @@ async function fetchChunkHTTP(path, start, size, onProgress) {
   return decrypt(buffer, s.password, s.htmlB64Key);
 }
 
-async function fetchChunkWS(wsSession, path, start, size, onProgress) {
+async function fetchChunkWS(wsSession, prefix, path, start, size, onProgress) {
   if (!wsSession.ws) {
     var t = settings.transform;
     var s = perRequestSecrets();
-    var ws = await wsOpen(wsBaseURL() + '/api/files/ws/download');
+    var ws = await wsOpen(wsBaseURL() + prefix + 'ws/download');
     var encrypted = paramEncryptEnabled();
     sendWSControl(ws, {
       auth: authKeyHash.value, path: path, transform: t.type,
@@ -91,12 +98,14 @@ async function fetchChunkWS(wsSession, path, start, size, onProgress) {
   return decrypt(received.buffer, wsSession.password, wsSession.htmlB64Key);
 }
 
-export async function downloadFile(entry) {
-  state.error = null;
-  var path       = state.pathSegments.concat([entry.name]).join('/');
+export async function downloadFile(root, entry) {
+  var b = state.browse[root];
+  b.error = null;
+  var prefix     = API_PREFIX[root];
+  var path       = b.segments.concat([entry.name]).join('/');
   var chunking   = settings.chunking;
   var wsSession  = { ws: null, password: null, htmlB64Key: null };
-  var transfer   = addTransfer('download', entry.name);
+  var transfer   = addTransfer('download', entry.name, root);
   var onProgress = makeTransferProgress(transfer, entry.size);
 
   if (chunking.enabled) {
@@ -111,7 +120,7 @@ export async function downloadFile(entry) {
           for (var i = 0; i < numChunks; i++) {
             var start = i * chunkBytes;
             var size  = Math.min(chunkBytes, entry.size - start);
-            var data  = await fetchChunk(wsSession, path, start, size, onProgress);
+            var data  = await fetchChunk(wsSession, prefix, path, start, size, onProgress);
             await writable.write(data);
           }
           await writable.close();
@@ -120,7 +129,7 @@ export async function downloadFile(entry) {
           throw err;
         }
       } catch(err) {
-        if (err && err.name !== 'AbortError') { state.error = 'Download failed: ' + err; }
+        if (err && err.name !== 'AbortError') { b.error = 'Download failed: ' + err; }
       } finally {
         closeWSSession(wsSession);
         removeTransfer(transfer);
@@ -131,11 +140,11 @@ export async function downloadFile(entry) {
           for (var i = 0; i < numChunks; i++) {
             var start = i * chunkBytes;
             var size  = Math.min(chunkBytes, entry.size - start);
-            var data  = await fetchChunk(wsSession, path, start, size, onProgress);
+            var data  = await fetchChunk(wsSession, prefix, path, start, size, onProgress);
             triggerDownload(data, entry.name + '.' + padIndex(i));
           }
         } catch(err) {
-          state.error = 'Chunk failed: ' + (err.status ? 'HTTP ' + err.status : err);
+          b.error = 'Chunk failed: ' + (err.status ? 'HTTP ' + err.status : err);
         } finally {
           closeWSSession(wsSession);
           removeTransfer(transfer);
@@ -144,10 +153,10 @@ export async function downloadFile(entry) {
     }
   } else {
     try {
-      var data = await fetchChunk(wsSession, path, 0, entry.size, onProgress);
+      var data = await fetchChunk(wsSession, prefix, path, 0, entry.size, onProgress);
       triggerDownload(data, entry.name);
     } catch(err) {
-      state.error = 'Download failed: ' + (err.status ? 'HTTP ' + err.status : err);
+      b.error = 'Download failed: ' + (err.status ? 'HTTP ' + err.status : err);
     } finally {
       closeWSSession(wsSession);
       removeTransfer(transfer);

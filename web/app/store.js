@@ -39,10 +39,14 @@ export const settings = deepSignal({
 // Transient UI state (never persisted).
 export const state = deepSignal({
   tab: 'download',
-  pathSegments: [],
-  entries: [],
-  error: null,
+  // One file browser per root: dl = download root, ul = upload directory.
+  browse: {
+    dl: { segments: [], entries: [], error: null },
+    ul: { segments: [], entries: [], error: null },
+  },
+  newDirName: null, // null = the upload tab's "New folder" form is closed
   authFailed: false,
+  ulFlat: false,
   uploadEntries: [],
   uploadError: null,
   transfers: [],
@@ -195,6 +199,7 @@ export async function initStore(onAuthKeyChange) {
     .then(function(res) { return res.ok ? res.json() : null; })
     .then(function(data) {
       if (!data) return;
+      state.ulFlat = !!data.ulFlat;
       state.wsFrameMinKB = Math.ceil(data.wsFrameMin / 1024);
       state.wsFrameMaxKB = Math.floor(data.wsFrameMax / 1024);
       if (settings.wsFrameSizeKB > state.wsFrameMaxKB) settings.wsFrameSizeKB = state.wsFrameMaxKB;
