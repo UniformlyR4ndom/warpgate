@@ -12,9 +12,28 @@ import (
 // listEntry mirrors the server's listEntry (list.go); it can't be imported
 // directly since the server is package main.
 type listEntry struct {
-	Name string `json:"name"`
-	Type string `json:"type"`
-	Size *int64 `json:"size,omitempty"`
+	Name  string `json:"name"`
+	Type  string `json:"type"`
+	Size  *int64 `json:"size,omitempty"`
+	MTime *int64 `json:"mtime,omitempty"`
+}
+
+func printEntries(g *globalFlags, entries []listEntry) {
+	if g.json {
+		printJSON(entries)
+		return
+	}
+	for _, e := range entries {
+		if e.Type == "d" {
+			fmt.Printf("%-40s <dir>\n", e.Name+"/")
+			continue
+		}
+		size := int64(0)
+		if e.Size != nil {
+			size = *e.Size
+		}
+		fmt.Printf("%-40s %d\n", e.Name, size)
+	}
 }
 
 func fetchList(g *globalFlags, dirPath string) ([]listEntry, error) {
@@ -67,16 +86,6 @@ func runList(args []string) error {
 		return err
 	}
 
-	for _, e := range entries {
-		if e.Type == "d" {
-			fmt.Printf("%-40s <dir>\n", e.Name+"/")
-			continue
-		}
-		size := int64(0)
-		if e.Size != nil {
-			size = *e.Size
-		}
-		fmt.Printf("%-40s %d\n", e.Name, size)
-	}
+	printEntries(g, entries)
 	return nil
 }

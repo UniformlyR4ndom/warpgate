@@ -67,3 +67,23 @@ func TestBuildTransformArgsRandomKeys(t *testing.T) {
 		t.Errorf("explicit key: %s", fixed)
 	}
 }
+
+func TestClipMatches(t *testing.T) {
+	n := clipNoteMeta{Title: "Login Findings", Attachments: []clipAttachmentMeta{{Caption: "Reset Page"}}}
+	cases := []struct {
+		q, scope string
+		want     bool
+	}{
+		{"login", "all", true},
+		{"login", "content", false},
+		{"reset page", "content", true},
+		{"reset page", "title", false},
+		{"TOKEN", "all", true},
+		{"missing", "all", false},
+	}
+	for _, c := range cases {
+		if got := clipMatches(n, "session token here", c.q, c.scope); got != c.want {
+			t.Errorf("clipMatches(%q, %s) = %v, want %v", c.q, c.scope, got, c.want)
+		}
+	}
+}

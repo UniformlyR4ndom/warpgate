@@ -66,7 +66,7 @@ Commands:
   ul-list   [flags]                            list the upload directory
   download  [flags] <remote-path>              download, reversing the transform
   upload    [flags] <local-file>                upload, applying the transform
-  clip      list|new|edit|delete|attach|get-attachment  manage clipboard notes/images
+  clip      list|get|new|edit|delete|attach|get-attachment  manage clipboard notes/images (newest first)
   sim       download|upload [flags]             probe transport via a synthetic file/buffer (no filesystem I/O, no transform)
   register  [flags] [registration-url]          register this client's IP with the IP firewall (default URL: -url)
 

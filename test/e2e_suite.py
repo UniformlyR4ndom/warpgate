@@ -644,7 +644,7 @@ def run_clipboard_tests(wgcli_bin: Path, base_url: str, auth_key: str, param_cry
     if len(ids) < 2:
         results.append(TestResult("clip id parsing", False, f"expected >=2 ids, got: {p.stdout}"))
         return results
-    id1, id2 = ids[0], ids[1]
+    id2, id1 = ids[0], ids[1]  # newest first
 
     p = run_cli(wgcli_bin, ["clip", "edit", *common, id1, "Updated content for note 1"])
     check(f"edit {id1}", p)

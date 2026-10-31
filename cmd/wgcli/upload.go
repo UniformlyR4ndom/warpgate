@@ -110,7 +110,7 @@ func uploadHTTP(g *globalFlags, localPath, name string, transformName string, tr
 	if err != nil {
 		return err
 	}
-	fmt.Printf("uploaded %s as %q in %s\n", localPath, respName, time.Since(start).Round(time.Millisecond))
+	printUploadResult(g, localPath, respName, time.Since(start))
 	return nil
 }
 
@@ -159,7 +159,7 @@ func uploadHTTPChunked(g *globalFlags, localPath, name, transformName string, tr
 		}
 	}
 
-	fmt.Printf("uploaded %s as %q in %s (%d bytes, chunked)\n", localPath, respName, time.Since(start).Round(time.Millisecond), size)
+	printUploadResult(g, localPath, respName, time.Since(start))
 	return nil
 }
 
@@ -210,8 +210,17 @@ func uploadWS(g *globalFlags, localPath, name string, transformName string, tran
 	if err != nil {
 		return err
 	}
-	fmt.Printf("uploaded %s as %q in %s\n", localPath, ack.Name, time.Since(start).Round(time.Millisecond))
+	printUploadResult(g, localPath, ack.Name, time.Since(start))
 	return nil
+}
+
+func printUploadResult(g *globalFlags, localPath, name string, elapsed time.Duration) {
+	var size int64
+	if fi, err := os.Stat(localPath); err == nil {
+		size = fi.Size()
+	}
+	g.report(map[string]any{"path": localPath, "name": name, "bytes": size, "seconds": elapsed.Seconds()},
+		"uploaded %s as %q (%d bytes) in %s", localPath, name, size, elapsed.Round(time.Millisecond))
 }
 
 func runUpload(args []string) error {

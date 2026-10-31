@@ -100,7 +100,7 @@ func downloadHTTP(g *globalFlags, remotePath, out string, transformName string, 
 		transferred += reqSize
 	}
 
-	printDownloadResult(size, out, time.Since(start))
+	printDownloadResult(g, remotePath, out, size, time.Since(start))
 	return nil
 }
 
@@ -181,13 +181,14 @@ func downloadWS(g *globalFlags, remotePath, out string, transformName string, tr
 	}
 
 	_ = writeWSJSON(conn, g, wsChunkRequest{Done: true})
-	printDownloadResult(size, out, time.Since(start))
+	printDownloadResult(g, remotePath, out, size, time.Since(start))
 	return nil
 }
 
-func printDownloadResult(size int64, out string, elapsed time.Duration) {
+func printDownloadResult(g *globalFlags, remotePath, out string, size int64, elapsed time.Duration) {
 	throughput := float64(size) / 1e6 / elapsed.Seconds()
-	fmt.Printf("downloaded %d bytes to %s in %s (%.2f MB/s)\n", size, out, elapsed.Round(time.Millisecond), throughput)
+	g.report(map[string]any{"path": remotePath, "out": out, "bytes": size, "seconds": elapsed.Seconds()},
+		"downloaded %d bytes to %s in %s (%.2f MB/s)", size, out, elapsed.Round(time.Millisecond), throughput)
 }
 
 func runDownload(args []string) error {

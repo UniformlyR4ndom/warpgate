@@ -50,16 +50,6 @@ func runUlList(args []string) error {
 		return err
 	}
 
-	for _, e := range entries {
-		if e.Type == "d" {
-			fmt.Printf("%-40s <dir>\n", e.Name+"/")
-			continue
-		}
-		size := int64(0)
-		if e.Size != nil {
-			size = *e.Size
-		}
-		fmt.Printf("%-40s %d\n", e.Name, size)
-	}
+	printEntries(g, entries)
 	return nil
 }

@@ -2,15 +2,18 @@ package main
 
 import (
 	"bytes"
+	"cmp"
 	"encoding/base64"
 	"flag"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 // clipAttachmentMeta mirrors the server's AttachmentMeta (db.go).
@@ -18,7 +21,7 @@ type clipAttachmentMeta struct {
 	ID      int64  `json:"id"`
 	Mime    string `json:"mime"`
 	Size    int64  `json:"size"`
-	Caption string `json:"caption"`
+	Caption string `json:"caption,omitempty"`
 }
 
 // clipNoteMeta mirrors the server's NoteMeta (db.go).
@@ -26,6 +29,7 @@ type clipNoteMeta struct {
 	ID          int64                `json:"id"`
 	TS          int64                `json:"ts"`
 	Title       string               `json:"title"`
+	Source      string               `json:"source,omitempty"`
 	Data        string               `json:"data"`
 	Attachments []clipAttachmentMeta `json:"attachments"`
 }
@@ -37,9 +41,9 @@ type clipStateResponse struct {
 	Reset   bool           `json:"reset"`
 }
 
-// fetchClipList pulls the full note set via a since=0 sync snapshot.
-func fetchClipList(g *globalFlags) ([]clipNoteMeta, error) {
-	path := "/api/clip/state?since=0"
+// fetchClipState pulls the notes changed after revision since (0: all).
+func fetchClipState(g *globalFlags, since int64) (*clipStateResponse, error) {
+	path := "/api/clip/state?since=" + strconv.FormatInt(since, 10)
 	if _, enabled := g.paramKeys(); enabled {
 		path += "&e=1"
 	}
@@ -64,7 +68,7 @@ func fetchClipList(g *globalFlags) ([]clipNoteMeta, error) {
 	if err := g.decodeJSON(body, &state); err != nil {
 		return nil, err
 	}
-	return state.Changed, nil
+	return &state, nil
 }
 
 func postClipNew(g *globalFlags, title string, data []byte) (id, ts int64, err error) {
@@ -174,30 +178,86 @@ func clipTextArg(fs *flag.FlagSet, file string, argIndex int) ([]byte, error) {
 	return []byte(fs.Arg(argIndex)), nil
 }
 
-func runClipList(args []string) error {
-	fs := flag.NewFlagSet("clip list", flag.ExitOnError)
-	g := addGlobalFlags(fs)
-	if err := parseFlags(fs, g, args); err != nil {
-		return err
-	}
+// clipNoteOut is a note as printed by clip list/get: text decoded, newest
+// first.
+type clipNoteOut struct {
+	ID          int64                `json:"id"`
+	TS          int64                `json:"ts"`
+	Title       string               `json:"title"`
+	Source      string               `json:"source,omitempty"`
+	Text        *string              `json:"text,omitempty"`
+	Chars       *int                 `json:"chars,omitempty"`
+	Attachments []clipAttachmentMeta `json:"attachments"`
+}
 
-	items, err := fetchClipList(g)
-	if err != nil {
-		return err
+type clipListOut struct {
+	Rev   int64         `json:"rev"`
+	Reset bool          `json:"reset,omitempty"`
+	IDs   *[]int64      `json:"ids,omitempty"`
+	Notes []clipNoteOut `json:"notes"`
+}
+
+// clipMatches reports whether q occurs case-insensitively in the note's
+// title (scope all/title) or text and image captions (scope all/content).
+func clipMatches(n clipNoteMeta, text, q, scope string) bool {
+	q = strings.ToLower(q)
+	has := func(s string) bool { return strings.Contains(strings.ToLower(s), q) }
+	if scope != "content" && has(n.Title) {
+		return true
 	}
-	for _, it := range items {
-		data, err := base64.StdEncoding.DecodeString(it.Data)
+	if scope == "title" {
+		return false
+	}
+	if has(text) {
+		return true
+	}
+	for _, a := range n.Attachments {
+		if has(a.Caption) {
+			return true
+		}
+	}
+	return false
+}
+
+func printClipNotes(g *globalFlags, state *clipStateResponse, notes []clipNoteMeta, brief bool) error {
+	out := clipListOut{Rev: state.Rev, Reset: state.Reset, Notes: []clipNoteOut{}}
+	if state.Ids != nil {
+		out.IDs = &state.Ids
+	}
+	for _, n := range notes {
+		data, err := base64.StdEncoding.DecodeString(n.Data)
 		if err != nil {
-			return fmt.Errorf("decoding note %d: %w", it.ID, err)
+			return fmt.Errorf("decoding note %d: %w", n.ID, err)
 		}
-		ts := time.Unix(it.TS, 0).Format(time.RFC3339)
-		head := fmt.Sprintf("[%d] %s", it.ID, ts)
-		if it.Title != "" {
-			head += " " + it.Title
+		text := string(data)
+		o := clipNoteOut{ID: n.ID, TS: n.TS, Title: n.Title, Source: n.Source, Attachments: n.Attachments}
+		if brief {
+			chars := utf8.RuneCountInString(text)
+			o.Chars = &chars
+		} else {
+			o.Text = &text
 		}
-		if n := len(it.Attachments); n > 0 {
-			head += fmt.Sprintf(" (%d image(s): ", n)
-			for i, a := range it.Attachments {
+		out.Notes = append(out.Notes, o)
+	}
+	if g.json {
+		printJSON(out)
+		return nil
+	}
+	for _, n := range out.Notes {
+		head := fmt.Sprintf("[%d] %s", n.ID, time.Unix(n.TS, 0).Format(time.RFC3339))
+		if n.Source != "" {
+			head += " [" + n.Source + "]"
+		}
+		if n.Title != "" {
+			head += " " + n.Title
+		}
+		if brief {
+			fmt.Printf("%s (%d chars, %d image(s))\n", head, *n.Chars, len(n.Attachments))
+			continue
+		}
+		if len(n.Attachments) > 0 {
+			head += fmt.Sprintf(" (%d image(s): ", len(n.Attachments))
+			for i, a := range n.Attachments {
 				if i > 0 {
 					head += ", "
 				}
@@ -208,9 +268,88 @@ func runClipList(args []string) error {
 			}
 			head += ")"
 		}
-		fmt.Printf("%s\n%s\n\n", head, data)
+		fmt.Printf("%s\n%s\n\n", head, *n.Text)
 	}
+	if state.Reset {
+		fmt.Fprintln(os.Stderr, "reset: -since was ahead of the server (new database?); showing all notes")
+	}
+	fmt.Fprintf(os.Stderr, "rev %d\n", state.Rev)
 	return nil
+}
+
+func runClipList(args []string) error {
+	fs := flag.NewFlagSet("clip list", flag.ExitOnError)
+	g := addGlobalFlags(fs)
+	since := fs.Int64("since", 0, "only notes created or edited after this revision (as printed by a previous list)")
+	limit := fs.Int("limit", 0, "only the newest n notes (0 = all)")
+	search := fs.String("search", "", "case-insensitive substring to match")
+	scope := fs.String("scope", "all", "where -search looks: all|title|content (content includes image captions)")
+	brief := fs.Bool("brief", false, "one line per note, without the text")
+	if err := parseFlags(fs, g, args); err != nil {
+		return err
+	}
+	if *scope != "all" && *scope != "title" && *scope != "content" {
+		return fmt.Errorf("-scope must be all, title or content")
+	}
+
+	state, err := fetchClipState(g, *since)
+	if err != nil {
+		return err
+	}
+	notes := make([]clipNoteMeta, 0, len(state.Changed))
+	for _, n := range state.Changed {
+		if *search != "" {
+			data, err := base64.StdEncoding.DecodeString(n.Data)
+			if err != nil {
+				return fmt.Errorf("decoding note %d: %w", n.ID, err)
+			}
+			if !clipMatches(n, string(data), *search, *scope) {
+				continue
+			}
+		}
+		notes = append(notes, n)
+	}
+	slices.SortFunc(notes, func(a, b clipNoteMeta) int {
+		return cmp.Or(cmp.Compare(b.TS, a.TS), cmp.Compare(b.ID, a.ID))
+	})
+	if *limit > 0 && len(notes) > *limit {
+		notes = notes[:*limit]
+	}
+	return printClipNotes(g, state, notes, *brief)
+}
+
+func runClipGet(args []string) error {
+	fs := flag.NewFlagSet("clip get", flag.ExitOnError)
+	g := addGlobalFlags(fs)
+	brief := fs.Bool("brief", false, "one line per note, without the text")
+	if err := parseFlags(fs, g, args); err != nil {
+		return err
+	}
+	if fs.NArg() < 1 {
+		return fmt.Errorf("usage: wgcli clip get [flags] <id>...")
+	}
+	state, err := fetchClipState(g, 0)
+	if err != nil {
+		return err
+	}
+	byID := map[int64]clipNoteMeta{}
+	for _, n := range state.Changed {
+		byID[n.ID] = n
+	}
+	var notes []clipNoteMeta
+	for _, arg := range fs.Args() {
+		id, err := strconv.ParseInt(arg, 10, 64)
+		if err != nil {
+			return fmt.Errorf("invalid note id %q: %w", arg, err)
+		}
+		n, ok := byID[id]
+		if !ok {
+			return fmt.Errorf("note %d not found", id)
+		}
+		notes = append(notes, n)
+	}
+	state.Ids = nil
+	return printClipNotes(g, state, notes, *brief)
 }
 
 func runClipNew(args []string) error {
@@ -231,7 +370,7 @@ func runClipNew(args []string) error {
 	if err != nil {
 		return err
 	}
-	fmt.Printf("created note %d at %s\n", id, time.Unix(ts, 0).Format(time.RFC3339))
+	g.report(map[string]any{"id": id, "ts": ts}, "created note %d at %s", id, time.Unix(ts, 0).Format(time.RFC3339))
 	return nil
 }
 
@@ -266,7 +405,7 @@ func runClipEdit(args []string) error {
 	if err := postClipEdit(g, id, title, data); err != nil {
 		return err
 	}
-	fmt.Printf("updated note %d\n", id)
+	g.report(map[string]any{"id": id}, "updated note %d", id)
 	return nil
 }
 
@@ -288,18 +427,20 @@ func runClipDelete(args []string) error {
 	if err := deleteClip(g, id); err != nil {
 		return err
 	}
-	fmt.Printf("deleted note %d\n", id)
+	g.report(map[string]any{"id": id}, "deleted note %d", id)
 	return nil
 }
 
 func runClip(args []string) error {
 	if len(args) < 1 {
-		return fmt.Errorf("usage: wgcli clip <list|new|edit|delete|attach|get-attachment> [flags] [args...]")
+		return fmt.Errorf("usage: wgcli clip <list|get|new|edit|delete|attach|get-attachment> [flags] [args...]")
 	}
 	sub, rest := args[0], args[1:]
 	switch sub {
 	case "list":
 		return runClipList(rest)
+	case "get":
+		return runClipGet(rest)
 	case "new":
 		return runClipNew(rest)
 	case "edit":

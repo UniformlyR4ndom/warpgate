@@ -2,6 +2,7 @@ package main
 
 import (
 	"crypto/tls"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
@@ -22,6 +23,7 @@ type globalFlags struct {
 	paramCrypt bool
 	certFile   string
 	certKey    string
+	json       bool
 	tlsConfig  *tls.Config
 }
 
@@ -34,6 +36,7 @@ var globalEnv = map[string]string{
 	"param-crypt": "WGCLI_PARAM_CRYPT",
 	"cert":        "WGCLI_CERT",
 	"cert-key":    "WGCLI_CERT_KEY",
+	"json":        "WGCLI_JSON",
 }
 
 func addGlobalFlags(fs *flag.FlagSet) *globalFlags {
@@ -44,7 +47,23 @@ func addGlobalFlags(fs *flag.FlagSet) *globalFlags {
 	fs.BoolVar(&g.paramCrypt, "param-crypt", false, "encrypt request control-parameter JSON (and decrypt matching responses) using a key derived from -auth-key; see CLAUDE.md's Parameter Encryption section (env WGCLI_PARAM_CRYPT)")
 	fs.StringVar(&g.certFile, "cert", "", "PEM client certificate (chain) for servers requiring TLS client auth; needs -cert-key (env WGCLI_CERT)")
 	fs.StringVar(&g.certKey, "cert-key", "", "PEM private key for -cert (env WGCLI_CERT_KEY)")
+	fs.BoolVar(&g.json, "json", false, "print the result as one JSON document on stdout (env WGCLI_JSON)")
 	return g
+}
+
+// report prints v as one line of JSON with -json, otherwise the text line.
+func (g *globalFlags) report(v any, format string, args ...any) {
+	if g.json {
+		printJSON(v)
+		return
+	}
+	fmt.Printf(format+"\n", args...)
+}
+
+func printJSON(v any) {
+	if err := json.NewEncoder(os.Stdout).Encode(v); err != nil {
+		fmt.Fprintln(os.Stderr, "wgcli: encoding JSON output:", err)
+	}
 }
 
 // parseFlags parses args, allowing flags after positional arguments ("--"

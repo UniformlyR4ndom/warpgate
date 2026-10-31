@@ -58,7 +58,7 @@ func runRegister(args []string) error {
 	}
 	resp.Body.Close()
 	if resp.StatusCode/100 == 3 && strings.HasSuffix(resp.Header.Get("Location"), "/static/") {
-		fmt.Printf("registered (or already admitted) at %s\n", target)
+		g.report(map[string]any{"url": target}, "registered (or already admitted) at %s", target)
 		return nil
 	}
 	if isBlankPage(resp) {

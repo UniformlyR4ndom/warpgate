@@ -35,21 +35,21 @@ func mimeForExt(name string) string {
 	}
 }
 
-func postClipAttachment(g *globalFlags, noteID int64, localPath, caption, transformName string, args json.RawMessage, t transform.Transformer) (int64, error) {
+func postClipAttachment(g *globalFlags, noteID int64, localPath, caption, transformName string, args json.RawMessage, t transform.Transformer) (clipAttachmentMeta, error) {
 	raw, err := os.ReadFile(localPath)
 	if err != nil {
-		return 0, err
+		return clipAttachmentMeta{}, err
 	}
 	encoded, err := t.Transform(bytes.NewReader(raw))
 	if err != nil {
-		return 0, fmt.Errorf("encoding attachment: %w", err)
+		return clipAttachmentMeta{}, fmt.Errorf("encoding attachment: %w", err)
 	}
 
 	var body bytes.Buffer
 	mw := multipart.NewWriter(&body)
 	specPart, err := mw.CreateFormFile("transform", "transform.json")
 	if err != nil {
-		return 0, err
+		return clipAttachmentMeta{}, err
 	}
 	spec, err := g.encodeBody(struct {
 		Transform string          `json:"transform"`
@@ -59,39 +59,39 @@ func postClipAttachment(g *globalFlags, noteID int64, localPath, caption, transf
 		Caption   string          `json:"caption,omitempty"`
 	}{transformName, args, noteID, mimeForExt(localPath), caption})
 	if err != nil {
-		return 0, err
+		return clipAttachmentMeta{}, err
 	}
 	if _, err := specPart.Write(spec); err != nil {
-		return 0, err
+		return clipAttachmentMeta{}, err
 	}
 	filePart, err := mw.CreateFormFile("file", filepath.Base(localPath))
 	if err != nil {
-		return 0, err
+		return clipAttachmentMeta{}, err
 	}
 	if _, err := io.Copy(filePart, encoded); err != nil {
-		return 0, err
+		return clipAttachmentMeta{}, err
 	}
 	mw.Close()
 
 	req, err := g.newRequest(http.MethodPost, "/api/clip/attachment", &body)
 	if err != nil {
-		return 0, err
+		return clipAttachmentMeta{}, err
 	}
 	req.Header.Set("Content-Type", mw.FormDataContentType())
 	resp, err := g.httpClient().Do(req)
 	if err != nil {
-		return 0, err
+		return clipAttachmentMeta{}, err
 	}
 	defer resp.Body.Close()
 	respBody, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusOK {
-		return 0, fmt.Errorf("%s: %s", resp.Status, strings.TrimSpace(string(respBody)))
+		return clipAttachmentMeta{}, fmt.Errorf("%s: %s", resp.Status, strings.TrimSpace(string(respBody)))
 	}
 	var meta clipAttachmentMeta
 	if err := g.decodeJSON(respBody, &meta); err != nil {
-		return 0, err
+		return clipAttachmentMeta{}, err
 	}
-	return meta.ID, nil
+	return meta, nil
 }
 
 func getClipAttachment(g *globalFlags, id int64, out, transformName string, args json.RawMessage, t transform.Transformer) error {
@@ -162,11 +162,11 @@ func runClipAttach(args []string) error {
 	if err != nil {
 		return err
 	}
-	id, err := postClipAttachment(g, noteID, fs.Arg(1), *caption, *transformName, targs, t)
+	meta, err := postClipAttachment(g, noteID, fs.Arg(1), *caption, *transformName, targs, t)
 	if err != nil {
 		return err
 	}
-	fmt.Printf("attached image %d to note %d\n", id, noteID)
+	g.report(meta, "attached image %d to note %d", meta.ID, noteID)
 	return nil
 }
 
@@ -199,6 +199,10 @@ func runClipGetAttachment(args []string) error {
 	if err := getClipAttachment(g, id, *out, *transformName, targs, t); err != nil {
 		return err
 	}
-	fmt.Printf("wrote attachment %d to %s\n", id, *out)
+	var size int64
+	if fi, err := os.Stat(*out); err == nil {
+		size = fi.Size()
+	}
+	g.report(map[string]any{"id": id, "out": *out, "bytes": size}, "wrote attachment %d (%d bytes) to %s", id, size, *out)
 	return nil
 }
