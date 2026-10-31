@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -11,7 +12,14 @@ import (
 	"warpgate/internal/paramcrypt"
 )
 
-const wsWriteWait = 10 * time.Second
+const (
+	wsWriteWait  = 10 * time.Second
+	wsBufferSize = 64 << 10
+)
+
+// wsAuthTimeout bounds how long a fresh connection may take to send its
+// authenticating first control message. A var so tests can shorten it.
+var wsAuthTimeout = 10 * time.Second
 
 // wsAck is the JSON envelope sent in response to control messages
 // (the initial request and, for uploads, the final "done" message).
@@ -30,6 +38,30 @@ type wsAck struct {
 
 func (s *Server) checkWSAuth(key string) bool {
 	return s.cfg.NoAuth || key == s.authHash
+}
+
+// upgradeWS upgrades the request and applies the pre-auth limits: control
+// messages are capped at maxParamBodySize and the first one must arrive
+// within wsAuthTimeout.
+func (s *Server) upgradeWS(w http.ResponseWriter, r *http.Request) (*websocket.Conn, error) {
+	conn, err := s.wsUpgrader.Upgrade(w, r, nil)
+	if err != nil {
+		return nil, err
+	}
+	conn.SetReadLimit(maxParamBodySize)
+	_ = conn.SetReadDeadline(time.Now().Add(wsAuthTimeout))
+	return conn, nil
+}
+
+// authorizeWS checks the handshake's auth token. On failure it sends the
+// error and returns false; on success it lifts the pre-auth read deadline.
+func (s *Server) authorizeWS(conn *websocket.Conn, encrypted bool, key string) bool {
+	if !s.checkWSAuth(key) {
+		s.writeWSError(conn, encrypted, websocket.ClosePolicyViolation, "unauthorized")
+		return false
+	}
+	_ = conn.SetReadDeadline(time.Time{})
+	return true
 }
 
 // resolveFrameSize validates a client-requested per-transfer WS frame size

@@ -235,6 +235,13 @@ token (see "Authentication" below), not the raw key. An invalid token gets a
 `{"ok":false,"error":"unauthorized"}` message followed by a close frame with code 1008 (policy
 violation).
 
+Pre-auth limits (`Server.upgradeWS`, `ws.go`): right after upgrade the read limit is
+`maxParamBodySize` and the first message must arrive within `wsAuthTimeout` (10 s);
+`Server.authorizeWS` lifts the deadline once the token checks out. The upload endpoints then raise
+the read limit to the negotiated `frameSize`, so a larger message closes the connection with 1009.
+The upgrader's buffers are a fixed `wsBufferSize` (64 KiB), independent of the frame size —
+Gorilla's `WriteMessage` sends a payload of any size as one frame.
+
 Control messages are JSON text frames; file data is sent as binary frames. Because the transform
 functions are stateless per call (a fresh cipher/reader is constructed each time), a single
 `Transformer` is built once per connection from the first message's `transform`/`args` and reused
@@ -253,9 +260,7 @@ setting in the General panel section, default 4 MB, used for both Download and U
 server constant.
 
 `-ws-frame-max` (`main.go`, default `16M`, range 1 KiB-256 MiB via `parseByteSize` in
-`bytesize.go`) is the server-operator-controlled *ceiling* on that per-request value; it also sizes
-`Server.wsUpgrader`'s `ReadBufferSize`/`WriteBufferSize` (`server.go`), which just needs to be large
-enough to hold the biggest frame any request is allowed to produce — `NewServer` clamps a
+`bytesize.go`) is the server-operator-controlled *ceiling* on that per-request value. `NewServer` clamps a
 misconfigured/zero `Config.WSFrameMax` up to `wsFrameSizeMin` (1 KiB) so a zero-size frame buffer can
 never occur (that would make the frame-writing loop in `ws_download.go` spin forever: `io.ReadFull` on an
 empty buffer returns `(0, nil)` without ever blocking). `GET /api/public/settings` reports the

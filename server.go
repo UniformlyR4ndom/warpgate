@@ -38,6 +38,8 @@ type Server struct {
 	simUploadSessions *sessionStore[*simUlSession]
 }
 
+const httpReadHeaderTimeout = 30 * time.Second
+
 func NewServer(cfg Config, db *DB) (*Server, error) {
 	absRoot, err := filepath.Abs(cfg.Root)
 	if err != nil {
@@ -59,8 +61,8 @@ func NewServer(cfg Config, db *DB) (*Server, error) {
 		mux:     http.NewServeMux(),
 		absRoot: absRoot,
 		wsUpgrader: websocket.Upgrader{
-			ReadBufferSize:  cfg.WSFrameMax,
-			WriteBufferSize: cfg.WSFrameMax,
+			ReadBufferSize:  wsBufferSize,
+			WriteBufferSize: wsBufferSize,
 		},
 		authHash: authhash.Hash(cfg.Key),
 	}
@@ -178,7 +180,7 @@ func (s *Server) handler() http.Handler {
 
 func (s *Server) ListenAndServe() error {
 	h := s.handler()
-	httpSrv := &http.Server{Addr: s.cfg.Addr, Handler: h}
+	httpSrv := &http.Server{Addr: s.cfg.Addr, Handler: h, ReadHeaderTimeout: httpReadHeaderTimeout}
 	if s.cfg.Cert != "" {
 		if s.clientCAs != nil || s.clientFP != nil {
 			tlsCfg := &tls.Config{}

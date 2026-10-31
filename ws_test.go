@@ -4,12 +4,15 @@ import (
 	"bytes"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"io"
+	"net"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gorilla/websocket"
 
@@ -640,5 +643,91 @@ func TestWSUploadEncryptedHandshakeEncryptsAcks(t *testing.T) {
 	}
 	if string(got) != string(content) {
 		t.Fatalf("uploaded content mismatch: got %q, want %q", got, content)
+	}
+}
+
+func expectWSClose(t *testing.T, conn *websocket.Conn, code int) {
+	t.Helper()
+	_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+	for {
+		_, _, err := conn.ReadMessage()
+		if err == nil {
+			continue
+		}
+		if !websocket.IsCloseError(err, code) {
+			t.Fatalf("expected close code %d, got %v", code, err)
+		}
+		return
+	}
+}
+
+func TestWSAuthTimeout(t *testing.T) {
+	old := wsAuthTimeout
+	wsAuthTimeout = 100 * time.Millisecond
+	t.Cleanup(func() { wsAuthTimeout = old })
+
+	ts := newWSTestServer(t, Config{Root: t.TempDir(), Key: "k", WSFrameMax: 1 << 20})
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL(ts, "/api/files/ws/download"), nil)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer conn.Close()
+
+	_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+	_, _, err = conn.ReadMessage()
+	if err == nil {
+		t.Fatal("expected the idle connection to be closed")
+	}
+	var ne net.Error
+	if errors.As(err, &ne) && ne.Timeout() {
+		t.Fatalf("server did not close the idle connection: %v", err)
+	}
+}
+
+func TestWSPreAuthMessageLimit(t *testing.T) {
+	ts := newWSTestServer(t, Config{Root: t.TempDir(), UlRoot: t.TempDir(), Key: "k", WSFrameMax: 16 << 20})
+	for _, path := range []string{"/api/files/ws/download", "/api/files/ws/upload", "/api/sim/ws/download", "/api/sim/ws/upload"} {
+		t.Run(path, func(t *testing.T) {
+			conn, _, err := websocket.DefaultDialer.Dial(wsURL(ts, path), nil)
+			if err != nil {
+				t.Fatalf("dial: %v", err)
+			}
+			defer conn.Close()
+			_ = conn.WriteMessage(websocket.TextMessage, bytes.Repeat([]byte("x"), maxParamBodySize+1))
+			expectWSClose(t, conn, websocket.CloseMessageTooBig)
+		})
+	}
+}
+
+func TestWSUploadFrameLimit(t *testing.T) {
+	ulRoot := t.TempDir()
+	ts := newWSTestServer(t, Config{Root: t.TempDir(), UlRoot: ulRoot, NoAuth: true, WSFrameMax: 16 << 20})
+	cases := []struct {
+		path      string
+		handshake any
+	}{
+		{"/api/files/ws/upload", wsUploadRequest{Filename: "big.bin", Transform: "id", FrameSize: 1024}},
+		{"/api/sim/ws/upload", wsSimUploadRequest{FrameSize: 1024}},
+	}
+	for _, c := range cases {
+		t.Run(c.path, func(t *testing.T) {
+			conn, _, err := websocket.DefaultDialer.Dial(wsURL(ts, c.path), nil)
+			if err != nil {
+				t.Fatalf("dial: %v", err)
+			}
+			defer conn.Close()
+			if err := conn.WriteJSON(c.handshake); err != nil {
+				t.Fatalf("writing handshake: %v", err)
+			}
+			var ack wsAck
+			if err := conn.ReadJSON(&ack); err != nil || !ack.OK {
+				t.Fatalf("handshake ack: %+v, %v", ack, err)
+			}
+			if err := conn.WriteMessage(websocket.BinaryMessage, make([]byte, 1024)); err != nil {
+				t.Fatalf("writing frame: %v", err)
+			}
+			_ = conn.WriteMessage(websocket.BinaryMessage, make([]byte, 1025))
+			expectWSClose(t, conn, websocket.CloseMessageTooBig)
+		})
 	}
 }

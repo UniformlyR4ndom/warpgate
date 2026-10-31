@@ -34,7 +34,7 @@ type wsChunkRequest struct {
 // headers on the WS handshake; instead the first control message must carry
 // the auth key, checked here after upgrade.
 func (s *Server) handleWSDownload(w http.ResponseWriter, r *http.Request) {
-	conn, err := s.wsUpgrader.Upgrade(w, r, nil)
+	conn, err := s.upgradeWS(w, r)
 	if err != nil {
 		log.Printf("ws download: upgrade failed: %v", err)
 		return
@@ -47,8 +47,7 @@ func (s *Server) handleWSDownload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !s.checkWSAuth(req.Auth) {
-		s.writeWSError(conn, encrypted, websocket.ClosePolicyViolation, "unauthorized")
+	if !s.authorizeWS(conn, encrypted, req.Auth) {
 		return
 	}
 

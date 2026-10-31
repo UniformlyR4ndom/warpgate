@@ -20,7 +20,7 @@ type wsSimUploadRequest struct {
 // Unlike handleWSUpload there is no transform step requiring the full
 // contents in one place, so frames are hashed incrementally as they arrive.
 func (s *Server) handleSimWSUpload(w http.ResponseWriter, r *http.Request) {
-	conn, err := s.wsUpgrader.Upgrade(w, r, nil)
+	conn, err := s.upgradeWS(w, r)
 	if err != nil {
 		log.Printf("sim ws upload: upgrade failed: %v", err)
 		return
@@ -33,15 +33,16 @@ func (s *Server) handleSimWSUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !s.checkWSAuth(req.Auth) {
-		s.writeWSError(conn, encrypted, websocket.ClosePolicyViolation, "unauthorized")
+	if !s.authorizeWS(conn, encrypted, req.Auth) {
 		return
 	}
 
-	if _, err := s.resolveFrameSize(req.FrameSize); err != nil {
+	frameSize, err := s.resolveFrameSize(req.FrameSize)
+	if err != nil {
 		s.writeWSError(conn, encrypted, websocket.ClosePolicyViolation, "%v", err)
 		return
 	}
+	conn.SetReadLimit(int64(frameSize))
 
 	if err := s.writeWSOK(conn, encrypted, wsAck{OK: true}); err != nil {
 		return
