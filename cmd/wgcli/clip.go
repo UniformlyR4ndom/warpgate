@@ -76,9 +76,10 @@ func fetchClipState(g *globalFlags, since int64) (*clipStateResponse, error) {
 
 func postClipNew(g *globalFlags, title string, data []byte) (id, ts int64, err error) {
 	body, err := g.encodeBody(struct {
-		Title string `json:"title,omitempty"`
-		Data  string `json:"data"`
-	}{title, base64.StdEncoding.EncodeToString(data)})
+		Title  string `json:"title,omitempty"`
+		Data   string `json:"data"`
+		Source string `json:"source"`
+	}{title, base64.StdEncoding.EncodeToString(data), "cli"})
 	if err != nil {
 		return 0, 0, err
 	}
@@ -415,8 +416,11 @@ func runClipNew(args []string) error {
 		}
 		atts = append(atts, meta)
 	}
-	g.report(map[string]any{"id": id, "ts": ts, "attachments": atts},
-		"created note %d at %s with %d image(s)", id, time.Unix(ts, 0).Format(time.RFC3339), len(atts))
+	msg := fmt.Sprintf("created note %d at %s", id, time.Unix(ts, 0).Format(time.RFC3339))
+	if len(atts) > 0 {
+		msg += fmt.Sprintf(" with %d image(s)", len(atts))
+	}
+	g.report(map[string]any{"id": id, "ts": ts, "attachments": atts}, "%s", msg)
 	return nil
 }
 

@@ -222,6 +222,9 @@ func TestHandleClipNewSource(t *testing.T) {
 	if rec := post(`{"data":"Yg=="}`); rec.Code != http.StatusOK {
 		t.Fatalf("no source: status %d", rec.Code)
 	}
+	if rec := post(`{"data":"ZA==","source":"cli"}`); rec.Code != http.StatusOK {
+		t.Fatalf("cli source: status %d", rec.Code)
+	}
 	if rec := post(`{"data":"Yw==","source":"other"}`); rec.Code != http.StatusBadRequest {
 		t.Fatalf("invalid source: status %d, want 400", rec.Code)
 	}
@@ -230,8 +233,8 @@ func TestHandleClipNewSource(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(notes) != 2 || notes[0].Source != clipSourceOutbox || notes[1].Source != "" {
-		t.Fatalf("got %+v, want sources [outbox, \"\"]", notes)
+	if len(notes) != 3 || notes[0].Source != clipSourceOutbox || notes[1].Source != "" || notes[2].Source != clipSourceCLI {
+		t.Fatalf("got %+v, want sources [outbox, \"\", cli]", notes)
 	}
 	if _, err := s.db.UpdateClipboard(notes[0].ID, nil, []byte("edited")); err != nil {
 		t.Fatal(err)
@@ -243,8 +246,8 @@ func TestHandleClipNewSource(t *testing.T) {
 
 	rec := httptest.NewRecorder()
 	s.handleClipState(rec, httptest.NewRequest(http.MethodGet, "/api/clip/state?since=0", nil))
-	if got := strings.Count(rec.Body.String(), `"source":`); got != 1 {
-		t.Fatalf("source should only be sent for the outbox note, got %d in %s", got, rec.Body.String())
+	if got := strings.Count(rec.Body.String(), `"source":`); got != 2 {
+		t.Fatalf("source should only be sent for the outbox and cli notes, got %d in %s", got, rec.Body.String())
 	}
 }
 

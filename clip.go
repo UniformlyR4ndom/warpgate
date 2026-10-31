@@ -10,8 +10,12 @@ import (
 
 const clipTitleMaxLen = 200
 
-// clipSourceOutbox marks notes pushed from a local outbox folder; "" means created in the UI.
-const clipSourceOutbox = "outbox"
+// Note sources: "" means created in the UI. They are hints, not an
+// authenticated property.
+const (
+	clipSourceOutbox = "outbox" // pushed from a local outbox folder
+	clipSourceCLI    = "cli"    // created by wgcli
+)
 
 // validClipTitle accepts a single line of at most clipTitleMaxLen characters
 // (note titles and image captions).
@@ -46,7 +50,7 @@ func (s *Server) handleClipNew(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid title", http.StatusBadRequest)
 		return
 	}
-	if req.Source != "" && req.Source != clipSourceOutbox {
+	if req.Source != "" && req.Source != clipSourceOutbox && req.Source != clipSourceCLI {
 		http.Error(w, "invalid source", http.StatusBadRequest)
 		return
 	}

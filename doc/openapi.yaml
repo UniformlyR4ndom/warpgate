@@ -195,8 +195,10 @@ components:
           example: DC01 – nmap internal
         source:
           type: string
-          enum: [outbox]
-          description: Present only for notes pushed through the outbox.
+          enum: [outbox, cli]
+          description: |
+            Present only for notes pushed through the outbox (`outbox`) or created by wgcli (`cli`).
+            A hint from the creating client, not an authenticated property.
         data:
           type: string
           format: byte
@@ -896,10 +898,11 @@ paths:
                   example: DC01 – nmap internal
                 source:
                   type: string
-                  enum: ['', outbox]
+                  enum: ['', outbox, cli]
                   description: |
                     Where the note came from: omitted or empty for notes typed in the UI,
-                    `outbox` for text pushed by a local script through the outbox folder.
+                    `outbox` for text pushed by a local script through the outbox folder,
+                    `cli` for notes created by wgcli.
                     Kept on edit. Any other value is rejected with 400.
                 data:
                   type: string

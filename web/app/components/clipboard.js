@@ -8,6 +8,8 @@ import { visibleClipItems, submitClip, canSubmitClip, cancelEdit, editClip, dele
 
 const DOWNLOAD_ICON = html`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>`;
 
+const ROBOT_ICON = html`<svg class="clip-source-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="6" width="16" height="14" rx="2"></rect><path d="M8 6V3M16 6V3"></path><rect x="7.5" y="10" width="3" height="3" fill="currentColor" stroke="none"></rect><rect x="13.5" y="10" width="3" height="3" fill="currentColor" stroke="none"></rect><path d="M9 16.5h6"></path></svg>`;
+
 function captionKey(e) {
   if (e.key === 'Enter') e.preventDefault();
 }
@@ -107,6 +109,7 @@ function Note(props) {
       <div class="clip-meta">
         <span class="clip-head">
           ${item.source === 'outbox' && html`<span class="clip-source" title="Pushed via outbox by a local script">⇪</span>`}
+          ${item.source === 'cli' && html`<span class="clip-source" title="Created via wgcli (e.g. by an agent)">${ROBOT_ICON}</span>`}
           ${item.title && html`<span class="clip-title"><${Segments} segs=${v.title} /></span>`}
           <span class="clip-ts">${formatTS(item.ts)}</span>
         </span>

@@ -721,7 +721,7 @@ CREATE TABLE clipboard (
     data      TEXT    NOT NULL,
     title     TEXT    NOT NULL DEFAULT '',
     rev       INTEGER NOT NULL DEFAULT 0,     -- global clip_rev value at last create/edit
-    source    TEXT    NOT NULL DEFAULT ''     -- '' = typed in the UI, 'outbox' = pushed by a local script
+    source    TEXT    NOT NULL DEFAULT ''     -- '' = typed in the UI, 'outbox' = pushed by a local script, 'cli' = wgcli
 )
 CREATE TABLE meta (key TEXT PRIMARY KEY, value INTEGER NOT NULL)  -- 'clip_rev', 'last_del_rev'
 CREATE TABLE clip_attachment (
@@ -787,7 +787,10 @@ is done in the handler before passing raw bytes to the DB layer. `title` is a pl
 base64), validated by `validClipTitle`: valid UTF-8, at most `clipTitleMaxLen` (200) characters, no
 control characters (so single-line); invalid → `400`. `handleClipEdit` decodes it into a `*string` so
 an omitted title (e.g. from an older client) keeps the stored one. `source` (`handleClipNew` only)
-must be `''` or `clipSourceOutbox` (`"outbox"`), else `400`; edits never change it. An image
+must be `''`, `clipSourceOutbox` (`"outbox"`) or `clipSourceCLI` (`"cli"`, sent by every
+`wgcli clip new`), else `400`; edits never change it. The UI marks outbox notes with ⇪ and cli
+notes with a robot icon, both in the accent color; like the outbox marker, `cli` is a hint for
+cooperative clients, not a security property. An image
 `caption` (on upload and via `handleClipAttachmentEdit`) follows the same rules as `title`.
 
 Image bytes reuse the file transform system: upload sends transform-encoded bytes in the multipart

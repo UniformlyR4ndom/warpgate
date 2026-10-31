@@ -891,6 +891,12 @@ input[type="text"].clip-caption-input:focus {
   cursor: help;
 }
 
+.clip-source-icon {
+  width: 1em;
+  height: 1em;
+  vertical-align: -0.15em;
+}
+
 .notices {
   position: fixed;
   right: 1rem;
