@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"path/filepath"
 
 	"github.com/gorilla/websocket"
 
@@ -57,7 +58,7 @@ func (s *Server) handleWSDownload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	target, err := makePath(s.absRoot, req.Path)
+	rel, err := rootRelPath(req.Path)
 	if err != nil {
 		log.Printf("ws download: invalid path %q requested", req.Path)
 		s.writeWSError(conn, encrypted, websocket.CloseInternalServerErr, "invalid path")
@@ -70,15 +71,17 @@ func (s *Server) handleWSDownload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if s.isUlTmpPath(target) {
+	if s.isUlTmpPath(filepath.Join(s.absRoot, rel)) {
 		s.writeWSError(conn, encrypted, websocket.CloseInternalServerErr, "file not found")
 		return
 	}
 
-	f, err := os.Open(target)
+	f, err := s.root.Open(rel)
 	if err != nil {
 		if os.IsNotExist(err) {
 			s.writeWSError(conn, encrypted, websocket.CloseInternalServerErr, "file not found")
+		} else if isPathEscape(err) {
+			s.writeWSError(conn, encrypted, websocket.CloseInternalServerErr, errSymlinkEscape)
 		} else {
 			s.writeWSError(conn, encrypted, websocket.CloseInternalServerErr, "internal error")
 		}

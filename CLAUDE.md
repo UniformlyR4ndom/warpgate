@@ -93,6 +93,17 @@ The frontend needs no configuration: `API_BASE` (`web/app/store.js`) is derived 
 (everything before `/static/`) and prepended to every `fetch` URL and to `wsBaseURL()`. Static assets
 already use relative URLs. `wgcli` just takes the prefix as part of `-url`.
 
+### Filesystem confinement
+
+All file access goes through `os.Root` handles opened once in `NewServer` (`Server.root`,
+`Server.ulRoot`); a missing `-root`/`-ul-root` is a startup error. Client paths become root-relative
+via `rootRelPath` (`path.go`). Symlinks that stay inside their root work (listed by their target's
+type and size); one leaving the root — including any absolute link and, on Windows, any junction —
+is refused (`isPathEscape`, `403` / WS error `errSymlinkEscape`), and `listDir` marks it and
+broken links with a `warning` field, which the frontend shows as a non-clickable ⚠ row. Uploads
+are published by renaming within `ulRoot`, which replaces a symlink at the target instead of
+writing through it. Hard links and bind mounts are not detected.
+
 ### IP firewall
 
 `ipfilter.go`, enabled (`Server.ipFilter != nil`) when any of `-ip-allow`, `-ip-reg-path`,

@@ -21,7 +21,12 @@ func TestListDirMTime(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	entries, err := listDir(root)
+	r, err := os.OpenRoot(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Close()
+	entries, err := listDir(r, ".")
 	if err != nil {
 		t.Fatal(err)
 	}

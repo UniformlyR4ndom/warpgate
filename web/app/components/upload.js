@@ -44,10 +44,10 @@ export function UploadTab() {
           </thead>
           <tbody>
             ${state.uploadEntries.map((entry) => html`
-              <tr key=${entry.name} class="entry file">
-                <td><span class="icon">📄</span><span>${entry.name}</span></td>
+              <tr key=${entry.name} class=${entry.warning ? 'entry blocked' : 'entry file'} title=${entry.warning}>
+                <td><span class="icon">${entry.warning ? '⚠' : '📄'}</span><span>${entry.name}</span></td>
                 <td class="col-mtime">${entry.mtime ? formatTSAt(entry.mtime, off) : ''}</td>
-                <td class="col-size">${formatSize(entry.size)}</td>
+                <td class="col-size">${entry.size != null ? formatSize(entry.size) : ''}</td>
               </tr>`)}
           </tbody>
         </table>`}

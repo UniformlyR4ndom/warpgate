@@ -25,7 +25,9 @@ type Server struct {
 	mux        *http.ServeMux
 	absRoot    string
 	absUlRoot  string
-	ulTmpDir   string // empty when uploads are disabled
+	root       *os.Root
+	ulRoot     *os.Root // nil when uploads are disabled
+	ulTmpDir   string   // empty when uploads are disabled
 	clientCAs  *x509.CertPool
 	clientFP   []byte
 	wsUpgrader websocket.Upgrader
@@ -47,6 +49,11 @@ func NewServer(cfg Config, db *DB) (*Server, error) {
 		return nil, fmt.Errorf("resolving root: %w", err)
 	}
 
+	root, err := os.OpenRoot(absRoot)
+	if err != nil {
+		return nil, fmt.Errorf("opening root: %w", err)
+	}
+
 	// main.go always validates -ws-frame-max to >= wsFrameSizeMin before
 	// this point, but a zero-value Config (e.g. constructed directly by a
 	// test) must not silently produce a zero-size frame buffer: that turns
@@ -61,6 +68,7 @@ func NewServer(cfg Config, db *DB) (*Server, error) {
 		db:      db,
 		mux:     http.NewServeMux(),
 		absRoot: absRoot,
+		root:    root,
 		wsUpgrader: websocket.Upgrader{
 			ReadBufferSize:  wsBufferSize,
 			WriteBufferSize: wsBufferSize,
@@ -123,6 +131,9 @@ func NewServer(cfg Config, db *DB) (*Server, error) {
 			return nil, fmt.Errorf("resolving upload root: %w", err)
 		}
 		s.absUlRoot = absUlRoot
+		if s.ulRoot, err = os.OpenRoot(absUlRoot); err != nil {
+			return nil, fmt.Errorf("opening upload root: %w", err)
+		}
 		if err := s.initUlTmpDir(); err != nil {
 			return nil, err
 		}

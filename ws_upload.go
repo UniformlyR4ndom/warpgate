@@ -54,7 +54,7 @@ func (s *Server) handleWSUpload(w http.ResponseWriter, r *http.Request) {
 	}
 	conn.SetReadLimit(int64(frameSize))
 
-	filename, targetPath, err := s.ulTarget(req.Filename)
+	filename, err := ulTarget(req.Filename)
 	if err != nil {
 		s.writeWSError(conn, encrypted, websocket.CloseInternalServerErr, "invalid filename")
 		return
@@ -73,7 +73,7 @@ func (s *Server) handleWSUpload(w http.ResponseWriter, r *http.Request) {
 	}
 	defer s.uploadSessions.release(filename, true)
 	// Like a first HTTP chunk, this upload supersedes any session on record.
-	removeUlTemp(sess.tmpPath)
+	s.removeUlTemp(sess.tmpPath)
 	sess.tmpPath = ""
 
 	// Frames are a purely transport-level split of one logical upload: XOR
@@ -86,8 +86,8 @@ func (s *Server) handleWSUpload(w http.ResponseWriter, r *http.Request) {
 		s.writeWSError(conn, encrypted, websocket.CloseInternalServerErr, "internal error")
 		return
 	}
-	defer removeUlTemp(rawPath)
-	raw, err := os.OpenFile(rawPath, os.O_RDWR, 0)
+	defer s.removeUlTemp(rawPath)
+	raw, err := s.ulRoot.OpenFile(rawPath, os.O_RDWR, 0)
 	if err != nil {
 		log.Printf("ws upload: opening temp file: %v", err)
 		s.writeWSError(conn, encrypted, websocket.CloseInternalServerErr, "internal error")
@@ -130,12 +130,12 @@ func (s *Server) handleWSUpload(w http.ResponseWriter, r *http.Request) {
 		s.writeWSError(conn, encrypted, websocket.CloseInternalServerErr, "internal error")
 		return
 	}
-	defer removeUlTemp(outPath)
-	if _, err := raw.Seek(0, io.SeekStart); err == nil {
-		err = appendUploadChunk(outPath, transformer, raw)
+	defer s.removeUlTemp(outPath)
+	if _, err = raw.Seek(0, io.SeekStart); err == nil {
+		err = appendUploadChunk(s.ulRoot, outPath, transformer, raw)
 	}
 	if err == nil {
-		err = os.Rename(outPath, targetPath)
+		err = s.publishUpload(outPath, filename)
 	}
 	if err != nil {
 		log.Printf("ws upload: processing %q (transform %q): %v", filename, req.Transform, err)
@@ -143,7 +143,6 @@ func (s *Server) handleWSUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	log.Printf("uploaded %q to %q", filename, targetPath)
 	if err := s.writeWSOK(conn, encrypted, wsAck{OK: true, Name: filename}); err != nil {
 		return
 	}

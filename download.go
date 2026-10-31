@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"path/filepath"
 	"unicode"
 
 	"warpgate/internal/transform"
@@ -70,7 +71,7 @@ func (s *Server) handleDownload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	target, err := makePath(s.absRoot, req.Path)
+	rel, err := rootRelPath(req.Path)
 	if err != nil {
 		log.Printf("invalid path %q requested", req.Path)
 		http.Error(w, "invalid path", http.StatusBadRequest)
@@ -88,15 +89,17 @@ func (s *Server) handleDownload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if s.isUlTmpPath(target) {
+	if s.isUlTmpPath(filepath.Join(s.absRoot, rel)) {
 		http.Error(w, "file not found", http.StatusNotFound)
 		return
 	}
 
-	f, err := os.Open(target)
+	f, err := s.root.Open(rel)
 	if err != nil {
 		if os.IsNotExist(err) {
 			http.Error(w, "file not found", http.StatusNotFound)
+		} else if isPathEscape(err) {
+			http.Error(w, errSymlinkEscape, http.StatusForbidden)
 		} else {
 			http.Error(w, "internal error", http.StatusInternalServerError)
 		}

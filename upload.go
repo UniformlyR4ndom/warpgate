@@ -30,7 +30,8 @@ type uploadResponse struct {
 const ulTmpDirName = ".warpgate-tmp"
 
 // ulSession is a chunked real-file upload's session payload: the temp file
-// the chunks are appended to until the final chunk publishes it.
+// (relative to the upload root) the chunks are appended to until the final
+// chunk publishes it.
 type ulSession struct {
 	ulSessionCore
 	tmpPath string
@@ -39,14 +40,14 @@ type ulSession struct {
 // abortUploadSession deletes the temp file of an expired or failed,
 // incomplete chunked upload.
 func (s *Server) abortUploadSession(_ string, sess *ulSession) {
-	removeUlTemp(sess.tmpPath)
+	s.removeUlTemp(sess.tmpPath)
 }
 
-func removeUlTemp(path string) {
+func (s *Server) removeUlTemp(path string) {
 	if path == "" {
 		return
 	}
-	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+	if err := s.ulRoot.Remove(path); err != nil && !os.IsNotExist(err) {
 		log.Printf("removing upload temp file %q: %v", path, err)
 	}
 }
@@ -55,10 +56,10 @@ func removeUlTemp(path string) {
 // uploads interrupted by a restart.
 func (s *Server) initUlTmpDir() error {
 	s.ulTmpDir = filepath.Join(s.absUlRoot, ulTmpDirName)
-	if err := os.RemoveAll(s.ulTmpDir); err != nil {
+	if err := s.ulRoot.RemoveAll(ulTmpDirName); err != nil {
 		return fmt.Errorf("clearing upload temp dir: %w", err)
 	}
-	if err := os.Mkdir(s.ulTmpDir, 0o700); err != nil {
+	if err := s.ulRoot.Mkdir(ulTmpDirName, 0o700); err != nil {
 		return fmt.Errorf("creating upload temp dir: %w", err)
 	}
 	return nil
@@ -70,12 +71,13 @@ func (s *Server) isUlTmpPath(path string) bool {
 	return s.ulTmpDir != "" && pathIsUnder(path, s.ulTmpDir)
 }
 
-// createUlTemp creates an empty temp file. Unlike os.CreateTemp it honors
-// the umask, so the published file gets the same mode as os.Create gives.
+// createUlTemp creates an empty temp file and returns its path relative to
+// the upload root. It honors the umask, so the published file gets the same
+// mode as os.Create gives.
 func (s *Server) createUlTemp() (string, error) {
 	for {
-		path := filepath.Join(s.ulTmpDir, "ul-"+rand.Text())
-		f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o666)
+		path := filepath.Join(ulTmpDirName, "ul-"+rand.Text())
+		f, err := s.ulRoot.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o666)
 		if os.IsExist(err) {
 			continue
 		}
@@ -86,24 +88,30 @@ func (s *Server) createUlTemp() (string, error) {
 	}
 }
 
-// ulTarget derives the stored filename and its path from a client-supplied
-// name, keeping only the base name.
-func (s *Server) ulTarget(clientName string) (filename, targetPath string, err error) {
+// ulTarget derives the stored filename, relative to the upload root, from a
+// client-supplied name, keeping only the base name.
+func ulTarget(clientName string) (string, error) {
 	// Normalize separators so Windows client paths are handled correctly.
-	filename = filepath.Base(strings.ReplaceAll(clientName, "\\", "/"))
-	if filename == "" || filename == "." || filename == "/" || filename == ulTmpDirName {
-		return "", "", fmt.Errorf("invalid filename")
+	filename := filepath.Base(strings.ReplaceAll(clientName, "\\", "/"))
+	if filename == "" || filename == "." || filename == ".." || filename == "/" || filename == ulTmpDirName {
+		return "", fmt.Errorf("invalid filename")
 	}
-	targetPath, err = makePath(s.absUlRoot, filename)
-	if err != nil {
-		return "", "", fmt.Errorf("invalid filename")
-	}
-	return filename, targetPath, nil
+	return filename, nil
 }
 
-// appendUploadChunk untransforms one chunk and appends it to path.
-func appendUploadChunk(path string, transformer transform.Transformer, src io.Reader) error {
-	f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0)
+// publishUpload replaces filename with the finished temp file. Renaming
+// replaces a symlink at filename rather than writing through it.
+func (s *Server) publishUpload(tmpPath, filename string) error {
+	if err := s.ulRoot.Rename(tmpPath, filename); err != nil {
+		return err
+	}
+	log.Printf("uploaded %q to %q", filename, filepath.Join(s.absUlRoot, filename))
+	return nil
+}
+
+// appendUploadChunk untransforms one chunk and appends it to path inside root.
+func appendUploadChunk(root *os.Root, path string, transformer transform.Transformer, src io.Reader) error {
+	f, err := root.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0)
 	if err != nil {
 		return err
 	}
@@ -192,7 +200,7 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 	}
 	defer file.Close()
 
-	filename, targetPath, err := s.ulTarget(header.Filename)
+	filename, err := ulTarget(header.Filename)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -205,7 +213,7 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if continuationKey == "" {
-		s.handleUploadFirstChunk(w, transformer, file, filename, targetPath, sess, done, wasEncrypted)
+		s.handleUploadFirstChunk(w, transformer, file, filename, sess, done, wasEncrypted)
 		return
 	}
 
@@ -220,7 +228,7 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 		s.uploadSessions.release(filename, false)
 		s.writeUploadResponse(w, wasEncrypted, http.StatusOK, filename, nextKey)
 	case ulKeyCurrent:
-		s.handleUploadContinuation(w, transformer, file, filename, targetPath, sess, done, wasEncrypted)
+		s.handleUploadContinuation(w, transformer, file, filename, sess, done, wasEncrypted)
 	default: // ulKeyUnrecognized
 		// wasNew means nothing legitimate exists for this filename yet, so
 		// there's nothing worth keeping; otherwise this stale/unknown key
@@ -234,16 +242,16 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 // failure: there is no partial-failure recovery.
 func (s *Server) failUpload(w http.ResponseWriter, filename string, sess *ulSession, err error) {
 	log.Printf("upload %q failed: %v", filename, err)
-	removeUlTemp(sess.tmpPath)
+	s.removeUlTemp(sess.tmpPath)
 	s.uploadSessions.release(filename, true)
 	http.Error(w, "internal error", http.StatusInternalServerError)
 }
 
 // handleUploadFirstChunk handles a request with no continuation-key: it
-// starts over, discarding any session recorded for filename. targetPath is
+// starts over, discarding any session recorded for filename. The file is
 // replaced only once the upload completes.
-func (s *Server) handleUploadFirstChunk(w http.ResponseWriter, transformer transform.Transformer, file multipart.File, filename, targetPath string, sess *ulSession, done, encrypted bool) {
-	removeUlTemp(sess.tmpPath)
+func (s *Server) handleUploadFirstChunk(w http.ResponseWriter, transformer transform.Transformer, file multipart.File, filename string, sess *ulSession, done, encrypted bool) {
+	s.removeUlTemp(sess.tmpPath)
 	tmpPath, err := s.createUlTemp()
 	if err != nil {
 		sess.tmpPath = ""
@@ -252,17 +260,16 @@ func (s *Server) handleUploadFirstChunk(w http.ResponseWriter, transformer trans
 	}
 	sess.tmpPath = tmpPath
 
-	if err := appendUploadChunk(tmpPath, transformer, file); err != nil {
+	if err := appendUploadChunk(s.ulRoot, tmpPath, transformer, file); err != nil {
 		s.failUpload(w, filename, sess, err)
 		return
 	}
 
 	if done {
-		if err := os.Rename(tmpPath, targetPath); err != nil {
+		if err := s.publishUpload(tmpPath, filename); err != nil {
 			s.failUpload(w, filename, sess, err)
 			return
 		}
-		log.Printf("uploaded %q to %q", filename, targetPath)
 		s.uploadSessions.release(filename, true)
 		s.writeUploadResponse(w, encrypted, http.StatusCreated, filename, "")
 		return
@@ -283,18 +290,17 @@ func (s *Server) handleUploadFirstChunk(w http.ResponseWriter, transformer trans
 
 // handleUploadContinuation handles a request whose continuation-key matched
 // sess.currentKey — the expected next chunk of an already-started upload.
-func (s *Server) handleUploadContinuation(w http.ResponseWriter, transformer transform.Transformer, file multipart.File, filename, targetPath string, sess *ulSession, done, encrypted bool) {
-	if err := appendUploadChunk(sess.tmpPath, transformer, file); err != nil {
+func (s *Server) handleUploadContinuation(w http.ResponseWriter, transformer transform.Transformer, file multipart.File, filename string, sess *ulSession, done, encrypted bool) {
+	if err := appendUploadChunk(s.ulRoot, sess.tmpPath, transformer, file); err != nil {
 		s.failUpload(w, filename, sess, err)
 		return
 	}
 
 	if done {
-		if err := os.Rename(sess.tmpPath, targetPath); err != nil {
+		if err := s.publishUpload(sess.tmpPath, filename); err != nil {
 			s.failUpload(w, filename, sess, err)
 			return
 		}
-		log.Printf("uploaded %q to %q (chunked)", filename, targetPath)
 		sess.tmpPath = ""
 		sess.completed = true
 		sess.previousKey = ""
@@ -322,7 +328,7 @@ func (s *Server) handleUlList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	all, err := listDir(s.absUlRoot)
+	all, err := listDir(s.ulRoot, ".")
 	if err != nil {
 		log.Printf("error reading upload directory: %v", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
