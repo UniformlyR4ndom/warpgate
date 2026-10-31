@@ -156,7 +156,8 @@ logs.
   malformed entry or a chain of only trusted hops leaves the client unknown: the IP firewall then
   blocks the request (fail closed), and the check-in log shows the peer marked "client unknown".
 
-The full API is documented in `doc/openapi.yaml`.
+The full API is documented in `doc/openapi.yaml`. The threat model, defenses and accepted risks
+are in `doc/security.md`; update it when a security-relevant decision changes.
 
 ### `/api/files/download` request body
 
