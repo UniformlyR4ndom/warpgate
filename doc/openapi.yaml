@@ -597,7 +597,7 @@ paths:
         "400":
           description: |
             Invalid request — malformed multipart form, invalid transform args, unusable
-            filename, an invalid `dir` (path traversal, a `.warpgate-tmp` segment), or an
+            filename (same rules as `/api/ul/mkdir` names), an invalid `dir` (path traversal, a `.warpgate-tmp` segment), or an
             unrecognized `continuation-key`.
         "401":
           description: |
@@ -868,7 +868,8 @@ paths:
         "400":
           description: |
             Invalid path (traversal, empty, a `.warpgate-tmp` segment, deeper than 4 levels) or
-            an invalid name (control characters, backslash, trailing dot/space, over 255 bytes).
+            an invalid name (control characters, backslash, over 255 bytes; on Windows servers also
+            `:*?"<>|`, a trailing dot/space, or a device name such as `CON` or `NUL`).
         "401":
           description: Missing or invalid `X-Auth` header, or the body fails to decrypt.
         "403":

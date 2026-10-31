@@ -159,6 +159,14 @@ func (s *Server) registerBrowse(prefix string, root *os.Root) {
 	s.mux.Handle(prefix+"ws/download", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { s.handleWSDownload(w, r, root) }))
 }
 
+// Close releases the server's directory handles.
+func (s *Server) Close() {
+	s.root.Close()
+	if s.ulRoot != nil {
+		s.ulRoot.Close()
+	}
+}
+
 // ulSweepExpired runs for the life of the server, purging idle
 // chunked-upload sessions from both the real-upload and sim-upload stores.
 func (s *Server) ulSweepExpired() {

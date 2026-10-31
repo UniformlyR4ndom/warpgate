@@ -223,16 +223,23 @@ chunked benchmark upload — see "Benchmark/Simulation Endpoints" below.
 
 - **Upload targets** (`Server.ulTarget`, `upload.go`): `dir` goes through `rootRelPath` and the
   temp-dir guard and must be an existing directory inside `ulRoot` (`404` otherwise, `403` through
-  an escaping symlink); the file name is reduced to its base name (`ulBaseName`). The resulting
+  an escaping symlink); the file name is reduced to its base name (`ulBaseName`, splitting on both
+  `/` and `\`; HTTP reads the raw multipart filename via `rawPartFilename`, since `mime/multipart`
+  would already have applied `filepath.Base`) and must pass `validName` (see below). The resulting
   relative path keys the upload session and is returned as `name` (slash-separated). A directory
   at the target is a `409`.
 - **Directory creation** (`mkdir.go`, `POST /api/ul/mkdir`): creates exactly one directory whose
   parent must exist (`ulRoot.Mkdir`): `201`, `409` if the name exists, `404` if the parent is
   missing. The path goes through `rootRelPath` and the temp-dir guard; it may be at most
   `ulMkdirMaxDepth` (4) levels below `-ul-root` — a limit on creation only, deeper pre-existing
-  directories stay fully usable. The new name must pass `validDirName` (no control characters or
-  backslashes, no trailing dots/spaces, ≤ 255 bytes). There is deliberately no delete, rename or
-  symlink endpoint.
+  directories stay fully usable. The new name must pass `validName`.
+  There is deliberately no delete, rename or symlink endpoint.
+- **Name rules** (`validName`, `path.go`), for created directories and uploaded files: not empty,
+  `.` or `..`, no `/`, `\` or control characters, ≤ 255 bytes, not the temp-dir name. On Windows
+  only, `validWindowsName` also rejects what Windows would reinterpret: `:*?"<>|` (drive and
+  alternate-data-stream syntax), trailing dots/spaces, and device names (`CON`, `NUL`, `COM1`, …,
+  with any extension). Such names are fine on Linux and stay accepted there. Invalid names are a
+  `400` before any data is stored.
 - **Locking**: a per-target-path claim (`sessionStore.tryClaim`/`release`, called via
   `Server.uploadSessions`, a `*sessionStore[*ulSession]`) rejects a request outright (`409`) rather
   than queuing it if another request for the same filename is already being processed —

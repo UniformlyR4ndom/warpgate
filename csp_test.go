@@ -11,10 +11,7 @@ import (
 )
 
 func TestCSPHeaderOnUIAndAPI(t *testing.T) {
-	s, err := NewServer(Config{Root: t.TempDir(), NoAuth: true}, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
+	s := newTestServer(t, Config{Root: t.TempDir(), NoAuth: true}, nil)
 	h := s.handler()
 	for _, p := range []string{"/static/", "/static/app/main.js", "/api/public/settings"} {
 		rec := httptest.NewRecorder()

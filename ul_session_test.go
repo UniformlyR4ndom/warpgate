@@ -9,6 +9,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 )
@@ -233,10 +234,7 @@ func TestUploadChunkedLockRejection(t *testing.T) {
 		t.Fatalf("OpenDB: %v", err)
 	}
 	defer db.Close()
-	srv, err := NewServer(Config{Root: t.TempDir(), UlRoot: ulRoot, NoAuth: true}, db)
-	if err != nil {
-		t.Fatalf("NewServer: %v", err)
-	}
+	srv := newTestServer(t, Config{Root: t.TempDir(), UlRoot: ulRoot, NoAuth: true}, db)
 
 	newUlSession := func() *ulSession { return &ulSession{} }
 
@@ -386,10 +384,7 @@ func TestUlSweepExpired(t *testing.T) {
 		t.Fatalf("OpenDB: %v", err)
 	}
 	defer db.Close()
-	srv, err := NewServer(Config{Root: t.TempDir(), UlRoot: ulRoot, NoAuth: true}, db)
-	if err != nil {
-		t.Fatalf("NewServer: %v", err)
-	}
+	srv := newTestServer(t, Config{Root: t.TempDir(), UlRoot: ulRoot, NoAuth: true}, db)
 
 	// An active (non-completed) session past expiry: its temp file must be
 	// deleted along with the session entry, the published file kept.
@@ -439,14 +434,11 @@ func TestUlSweepExpired(t *testing.T) {
 // TestUploadIntoSubdir: dir selects an existing directory below -ul-root;
 // sessions are per target path, and dir gets the same confinement as reads.
 func TestUploadIntoSubdir(t *testing.T) {
-	_, ulRoot, secret := symlinkFixture(t)
+	_, ulRoot, secret, symlinks := ulTreeFixture(t)
 	for _, d := range []string{"a/b", "b"} {
 		if err := os.MkdirAll(filepath.Join(ulRoot, d), 0o755); err != nil {
 			t.Fatal(err)
 		}
-	}
-	if err := os.Symlink("../outside", filepath.Join(ulRoot, "out")); err != nil {
-		t.Fatal(err)
 	}
 	if err := os.Mkdir(filepath.Join(ulRoot, "b", "taken"), 0o755); err != nil {
 		t.Fatal(err)
@@ -470,17 +462,20 @@ func TestUploadIntoSubdir(t *testing.T) {
 		}
 	}
 
-	cases := []struct {
+	type tc struct {
 		name string
 		want int
-	}{
+	}
+	cases := []tc{
 		{"../x/f.bin", http.StatusBadRequest},
 		{ulTmpDirName + "/f.bin", http.StatusBadRequest},
 		{"a/.WARPGATE-TMP/f.bin", http.StatusBadRequest},
 		{"missing/f.bin", http.StatusNotFound},
 		{"a/b/f.bin/g.bin", http.StatusNotFound}, // dir is a file
-		{"out/f.bin", http.StatusForbidden},      // symlink leaving -ul-root
 		{"b/taken", http.StatusConflict},
+	}
+	if symlinks {
+		cases = append(cases, tc{"out/f.bin", http.StatusForbidden}) // symlink leaving -ul-root
 	}
 	for _, c := range cases {
 		if resp, _ := postChunk(t, ts.URL, c.name, []byte("x"), "", true); resp.StatusCode != c.want {
@@ -489,5 +484,24 @@ func TestUploadIntoSubdir(t *testing.T) {
 	}
 	if data, _ := os.ReadFile(secret); string(data) != "OUTSIDE" {
 		t.Fatalf("file outside -ul-root changed: %q", data)
+	}
+}
+
+// TestUploadNameRules: names Windows would reinterpret are rejected up front
+// there, before any data is stored; elsewhere they are ordinary names.
+func TestUploadNameRules(t *testing.T) {
+	ulRoot := t.TempDir()
+	ts := newSimTestServer(t, Config{Root: t.TempDir(), UlRoot: ulRoot, NoAuth: true})
+	for _, name := range []string{"CON", "nul.txt", "f.txt:ads", "a:b", "dot."} {
+		resp, got := postChunk(t, ts.URL, name, []byte("x"), "", true)
+		if runtime.GOOS == "windows" {
+			if resp.StatusCode != http.StatusBadRequest {
+				t.Errorf("upload %q: status %d, want 400", name, resp.StatusCode)
+			}
+			continue
+		}
+		if resp.StatusCode != http.StatusCreated || got.Name != name {
+			t.Errorf("upload %q: status %d, name %q", name, resp.StatusCode, got.Name)
+		}
 	}
 }

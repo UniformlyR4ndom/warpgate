@@ -171,10 +171,7 @@ func TestSimUploadChunkedTooLarge(t *testing.T) {
 		t.Fatalf("OpenDB: %v", err)
 	}
 	defer db.Close()
-	srv, err := NewServer(Config{Root: t.TempDir(), UlRoot: ulRoot, NoAuth: true}, db)
-	if err != nil {
-		t.Fatalf("NewServer: %v", err)
-	}
+	srv := newTestServer(t, Config{Root: t.TempDir(), UlRoot: ulRoot, NoAuth: true}, db)
 	ts := httptest.NewServer(srv.handler())
 	t.Cleanup(ts.Close)
 

@@ -286,7 +286,7 @@ func TestValidContentType(t *testing.T) {
 // TestUlRootBrowse: /api/ul/* lists and downloads within -ul-root only, with
 // the same confinement as /api/files/*.
 func TestUlRootBrowse(t *testing.T) {
-	root, ulRoot, _ := symlinkFixture(t)
+	root, ulRoot, _, symlinks := ulTreeFixture(t)
 	if err := os.MkdirAll(filepath.Join(ulRoot, "sub"), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -320,14 +320,21 @@ func TestUlRootBrowse(t *testing.T) {
 		t.Fatalf("ul download: status %d, body %q", res.StatusCode, got)
 	}
 
-	cases := []struct {
+	type tc struct {
 		path string
 		want int
-	}{
-		{"a.txt", http.StatusNotFound},       // exists only in -root
-		{"victim.txt", http.StatusForbidden}, // symlink leaving -ul-root
+	}
+	cases := []tc{
+		{"a.txt", http.StatusNotFound}, // exists only in -root
 		{"../root/a.txt", http.StatusBadRequest},
+		{`..\root\a.txt`, http.StatusBadRequest},
 		{ulTmpDirName + "/x", http.StatusBadRequest},
+	}
+	if symlinks {
+		cases = append(cases,
+			tc{"victim.txt", http.StatusForbidden},     // symlink leaving -ul-root
+			tc{"out/secret.txt", http.StatusForbidden}, // through a dir symlink leaving -ul-root
+		)
 	}
 	for _, c := range cases {
 		if res := post("/api/ul/download", downloadRequest{Path: c.path, Size: 10, Transform: "id"}); res.StatusCode != c.want {

@@ -137,13 +137,10 @@ func (c fwClient) expectServed(path, ip string) {
 }
 
 func TestIPFilterRegistration(t *testing.T) {
-	s, err := NewServer(Config{
+	s := newTestServer(t, Config{
 		Root: t.TempDir(), NoAuth: true, PathPrefix: "/pfx",
 		IPAllow: "192.0.2.0/24", IPRegPath: "reg", IPRegMax: 2, IPRegWindow: time.Minute,
 	}, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
 	now := time.Now()
 	s.ipFilter.now = func() time.Time { return now }
 	s.ipFilter.regUntil = now.Add(time.Minute)
@@ -183,10 +180,7 @@ func TestIPFilterRegistration(t *testing.T) {
 }
 
 func TestIPFilterBasePathRegistration(t *testing.T) {
-	s, err := NewServer(Config{Root: t.TempDir(), NoAuth: true, PathPrefix: "/pfx", IPRegMax: 2}, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
+	s := newTestServer(t, Config{Root: t.TempDir(), NoAuth: true, PathPrefix: "/pfx", IPRegMax: 2}, nil)
 	c := fwClient{t, s.handler()}
 	const a, b, d = "198.51.100.1", "2001:db8::1", "198.51.100.3"
 
@@ -211,10 +205,7 @@ func TestIPFilterBasePathRegistration(t *testing.T) {
 }
 
 func TestIPFilterDedicatedPathOnly(t *testing.T) {
-	s, err := NewServer(Config{Root: t.TempDir(), NoAuth: true, PathPrefix: "/pfx", IPRegPath: "reg"}, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
+	s := newTestServer(t, Config{Root: t.TempDir(), NoAuth: true, PathPrefix: "/pfx", IPRegPath: "reg"}, nil)
 	c := fwClient{t, s.handler()}
 	const a = "198.51.100.1"
 
@@ -229,10 +220,7 @@ func TestIPFilterDedicatedPathOnly(t *testing.T) {
 // TestIPFilterUnknownClientBlocked: a trusted proxy that is itself
 // allowlisted must not admit requests whose client it doesn't identify.
 func TestIPFilterUnknownClientBlocked(t *testing.T) {
-	s, err := NewServer(Config{Root: t.TempDir(), NoAuth: true, IPAllow: "10.0.0.0/8", TrustedProxies: "10.0.0.1"}, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
+	s := newTestServer(t, Config{Root: t.TempDir(), NoAuth: true, IPAllow: "10.0.0.0/8", TrustedProxies: "10.0.0.1"}, nil)
 	c := fwClient{t, s.handler()}
 	c.expectBlank(http.MethodGet, "/api/public/settings", "10.0.0.1")
 	c.expectServed("/api/public/settings", "10.0.0.2")

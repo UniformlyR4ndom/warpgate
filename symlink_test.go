@@ -130,3 +130,37 @@ func TestSymlinkEscapeBlocked(t *testing.T) {
 		t.Errorf("victim.txt should now be a regular file: %v, %v", fi, err)
 	}
 }
+
+// ulTreeFixture builds root/a.txt and an empty uploads/ next to
+// outside/secret.txt. Where symlinks can be created (not on Windows without
+// the privilege), it adds the links below and reports true:
+//
+//	uploads/out        -> ../outside
+//	uploads/victim.txt -> ../outside/secret.txt
+func ulTreeFixture(t *testing.T) (root, ulRoot, secret string, symlinks bool) {
+	t.Helper()
+	base := t.TempDir()
+	root = filepath.Join(base, "root")
+	ulRoot = filepath.Join(base, "uploads")
+	outside := filepath.Join(base, "outside")
+	for _, d := range []string{root, ulRoot, outside} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	secret = filepath.Join(outside, "secret.txt")
+	if err := os.WriteFile(secret, []byte("OUTSIDE"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "a.txt"), []byte("inside"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join("..", "outside"), filepath.Join(ulRoot, "out")); err != nil {
+		t.Logf("symlinks unavailable, skipping symlink cases: %v", err)
+		return root, ulRoot, secret, false
+	}
+	if err := os.Symlink(filepath.Join("..", "outside", "secret.txt"), filepath.Join(ulRoot, "victim.txt")); err != nil {
+		t.Fatal(err)
+	}
+	return root, ulRoot, secret, true
+}

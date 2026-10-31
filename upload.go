@@ -7,9 +7,11 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"mime"
 	"mime/multipart"
 	"net/http"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 	"time"
@@ -120,14 +122,24 @@ func (s *Server) createUlTemp() (string, error) {
 }
 
 // ulBaseName validates a client-supplied file name, keeping only its base
-// name.
+// name. Both separators are honored whatever the server's platform, and a
+// Windows drive prefix is not stripped but rejected by validName.
 func ulBaseName(clientName string) (string, error) {
-	// Normalize separators so Windows client paths are handled correctly.
-	filename := filepath.Base(strings.ReplaceAll(clientName, "\\", "/"))
-	if filename == "" || filename == "." || filename == ".." || filename == "/" || isReservedName(filename) {
+	filename := path.Base(strings.ReplaceAll(clientName, "\\", "/"))
+	if !validName(filename) {
 		return "", fmt.Errorf("invalid filename")
 	}
 	return filename, nil
+}
+
+// rawPartFilename returns the file name as the client sent it. FileHeader's
+// Filename has already been through filepath.Base, which on Windows silently
+// drops a "c:"-style prefix that ulBaseName should reject instead.
+func rawPartFilename(h *multipart.FileHeader) string {
+	if _, params, err := mime.ParseMediaType(h.Header.Get("Content-Disposition")); err == nil && params["filename"] != "" {
+		return params["filename"]
+	}
+	return h.Filename
 }
 
 // ulTarget resolves an upload's target, relative to the upload root, from
@@ -267,7 +279,7 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 	}
 	defer file.Close()
 
-	filename, status, err := s.ulTarget(dir, header.Filename)
+	filename, status, err := s.ulTarget(dir, rawPartFilename(header))
 	if err != nil {
 		http.Error(w, err.Error(), status)
 		return

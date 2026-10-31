@@ -31,10 +31,7 @@ func TestNormalizePathSegment(t *testing.T) {
 }
 
 func TestPathPrefixRouting(t *testing.T) {
-	s, err := NewServer(Config{Root: t.TempDir(), PathPrefix: "/pfx", NoAuth: true}, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
+	s := newTestServer(t, Config{Root: t.TempDir(), PathPrefix: "/pfx", NoAuth: true}, nil)
 	h := s.handler()
 
 	do := func(method, path string) *httptest.ResponseRecorder {

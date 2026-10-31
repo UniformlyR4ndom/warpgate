@@ -89,6 +89,18 @@ func TestSimReaderSmallBuffer(t *testing.T) {
 	}
 }
 
+// newTestServer builds a Server whose directory handles are released when
+// the test ends, so Windows can delete the test's temp dirs.
+func newTestServer(t *testing.T, cfg Config, db *DB) *Server {
+	t.Helper()
+	srv, err := NewServer(cfg, db)
+	if err != nil {
+		t.Fatalf("NewServer: %v", err)
+	}
+	t.Cleanup(srv.Close)
+	return srv
+}
+
 func newSimTestServer(t *testing.T, cfg Config) *httptest.Server {
 	t.Helper()
 	db, err := OpenDB(":memory:")
@@ -97,10 +109,7 @@ func newSimTestServer(t *testing.T, cfg Config) *httptest.Server {
 	}
 	t.Cleanup(func() { db.Close() })
 
-	srv, err := NewServer(cfg, db)
-	if err != nil {
-		t.Fatalf("NewServer: %v", err)
-	}
+	srv := newTestServer(t, cfg, db)
 
 	ts := httptest.NewServer(srv.handler())
 	t.Cleanup(ts.Close)
@@ -279,7 +288,7 @@ func TestSimUploadNotRegisteredWithoutUlRoot(t *testing.T) {
 }
 
 func TestSimWSDownloadRoundTrip(t *testing.T) {
-	ts := newWSTestServer(t, Config{Root: t.TempDir(), NoAuth: true, WSFrameMax: 16 * 1024 * 1024})
+	ts := newSimTestServer(t, Config{Root: t.TempDir(), NoAuth: true, WSFrameMax: 16 * 1024 * 1024})
 
 	conn, _, err := websocket.DefaultDialer.Dial(wsURL(ts, "/api/sim/ws/download"), nil)
 	if err != nil {
@@ -329,7 +338,7 @@ func TestSimWSDownloadRoundTrip(t *testing.T) {
 }
 
 func TestSimWSUploadRoundTrip(t *testing.T) {
-	ts := newWSTestServer(t, Config{Root: t.TempDir(), UlRoot: t.TempDir(), NoAuth: true, WSFrameMax: 16 * 1024 * 1024})
+	ts := newSimTestServer(t, Config{Root: t.TempDir(), UlRoot: t.TempDir(), NoAuth: true, WSFrameMax: 16 * 1024 * 1024})
 
 	conn, _, err := websocket.DefaultDialer.Dial(wsURL(ts, "/api/sim/ws/upload"), nil)
 	if err != nil {
@@ -370,7 +379,7 @@ func TestSimWSUploadRoundTrip(t *testing.T) {
 }
 
 func TestSimWSUploadTooLarge(t *testing.T) {
-	ts := newWSTestServer(t, Config{Root: t.TempDir(), UlRoot: t.TempDir(), NoAuth: true, WSFrameMax: 16 * 1024 * 1024})
+	ts := newSimTestServer(t, Config{Root: t.TempDir(), UlRoot: t.TempDir(), NoAuth: true, WSFrameMax: 16 * 1024 * 1024})
 
 	conn, _, err := websocket.DefaultDialer.Dial(wsURL(ts, "/api/sim/ws/upload"), nil)
 	if err != nil {

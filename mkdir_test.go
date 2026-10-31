@@ -4,15 +4,13 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
 
 func TestMkdir(t *testing.T) {
-	_, ulRoot, secret := symlinkFixture(t)
-	if err := os.Symlink("../outside", filepath.Join(ulRoot, "out")); err != nil {
-		t.Fatal(err)
-	}
+	_, ulRoot, secret, symlinks := ulTreeFixture(t)
 	if err := os.WriteFile(filepath.Join(ulRoot, "file"), []byte("x"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -28,10 +26,11 @@ func TestMkdir(t *testing.T) {
 		return res.StatusCode
 	}
 
-	cases := []struct {
+	type tc struct {
 		path string
 		want int
-	}{
+	}
+	cases := []tc{
 		{"a", http.StatusCreated},
 		{"a/b", http.StatusCreated},
 		{"a/b/c", http.StatusCreated},
@@ -48,12 +47,27 @@ func TestMkdir(t *testing.T) {
 		{ulTmpDirName, http.StatusBadRequest},
 		{"a/.Warpgate-Tmp", http.StatusBadRequest},
 		{ulTmpDirName + "/x", http.StatusBadRequest},
-		{"trailing.", http.StatusBadRequest},
-		{"trailing ", http.StatusBadRequest},
-		{`back\\slash`, http.StatusBadRequest},
+		{`..\\escape`, http.StatusBadRequest},
 		{`ctl\u0001`, http.StatusBadRequest},
 		{strings.Repeat("n", 256), http.StatusBadRequest},
-		{"out/x", http.StatusForbidden}, // symlink leaving -ul-root
+	}
+	if runtime.GOOS == "windows" {
+		cases = append(cases,
+			tc{`a\\win`, http.StatusCreated}, // a separator on Windows
+			tc{"trailing.", http.StatusBadRequest},
+			tc{"CON", http.StatusBadRequest},
+			tc{"a/nul.txt", http.StatusBadRequest},
+			tc{"a:stream", http.StatusBadRequest},
+		)
+	} else {
+		cases = append(cases,
+			tc{`back\\slash`, http.StatusBadRequest}, // a name character elsewhere
+			tc{"trailing.", http.StatusCreated},
+			tc{"CON", http.StatusCreated},
+		)
+	}
+	if symlinks {
+		cases = append(cases, tc{"out/x", http.StatusForbidden}) // symlink leaving -ul-root
 	}
 	for _, c := range cases {
 		if got := mkdir(c.path); got != c.want {

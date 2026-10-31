@@ -21,24 +21,6 @@ import (
 	"warpgate/internal/transform"
 )
 
-func newWSTestServer(t *testing.T, cfg Config) *httptest.Server {
-	t.Helper()
-	db, err := OpenDB(":memory:")
-	if err != nil {
-		t.Fatalf("OpenDB: %v", err)
-	}
-	t.Cleanup(func() { db.Close() })
-
-	srv, err := NewServer(cfg, db)
-	if err != nil {
-		t.Fatalf("NewServer: %v", err)
-	}
-
-	ts := httptest.NewServer(srv.handler())
-	t.Cleanup(ts.Close)
-	return ts
-}
-
 func wsURL(ts *httptest.Server, path string) string {
 	return "ws" + strings.TrimPrefix(ts.URL, "http") + path
 }
@@ -53,7 +35,7 @@ func TestWSDownloadRoundTrip(t *testing.T) {
 		t.Fatalf("writing test file: %v", err)
 	}
 
-	ts := newWSTestServer(t, Config{Root: root, NoAuth: true, WSFrameMax: 16 * 1024 * 1024})
+	ts := newSimTestServer(t, Config{Root: root, NoAuth: true, WSFrameMax: 16 * 1024 * 1024})
 
 	conn, _, err := websocket.DefaultDialer.Dial(wsURL(ts, "/api/files/ws/download"), nil)
 	if err != nil {
@@ -129,7 +111,7 @@ func TestWSDownloadMultiFrame(t *testing.T) {
 		t.Fatalf("writing test file: %v", err)
 	}
 
-	ts := newWSTestServer(t, Config{Root: root, NoAuth: true, WSFrameMax: 16 * 1024 * 1024})
+	ts := newSimTestServer(t, Config{Root: root, NoAuth: true, WSFrameMax: 16 * 1024 * 1024})
 
 	conn, _, err := websocket.DefaultDialer.Dial(wsURL(ts, "/api/files/ws/download"), nil)
 	if err != nil {
@@ -200,7 +182,7 @@ func TestWSDownloadChunkSizeAnnouncement(t *testing.T) {
 		t.Fatalf("writing test file: %v", err)
 	}
 
-	ts := newWSTestServer(t, Config{Root: root, NoAuth: true, WSFrameMax: 16 * 1024 * 1024})
+	ts := newSimTestServer(t, Config{Root: root, NoAuth: true, WSFrameMax: 16 * 1024 * 1024})
 
 	htmlB64Args, err := json.Marshal(map[string]string{"key": "000102030405060708090a0b0c0d0e0f"})
 	if err != nil {
@@ -292,7 +274,7 @@ func TestWSDownloadChunkSizeAnnouncement(t *testing.T) {
 
 func TestWSUploadRoundTrip(t *testing.T) {
 	ulRoot := t.TempDir()
-	ts := newWSTestServer(t, Config{Root: t.TempDir(), UlRoot: ulRoot, NoAuth: true, WSFrameMax: 16 * 1024 * 1024})
+	ts := newSimTestServer(t, Config{Root: t.TempDir(), UlRoot: ulRoot, NoAuth: true, WSFrameMax: 16 * 1024 * 1024})
 
 	conn, _, err := websocket.DefaultDialer.Dial(wsURL(ts, "/api/files/ws/upload"), nil)
 	if err != nil {
@@ -348,7 +330,7 @@ func TestWSUploadRoundTrip(t *testing.T) {
 // key phase at the start of every Untransform call.
 func TestWSUploadMultiFrame(t *testing.T) {
 	ulRoot := t.TempDir()
-	ts := newWSTestServer(t, Config{Root: t.TempDir(), UlRoot: ulRoot, NoAuth: true, WSFrameMax: 16 * 1024 * 1024})
+	ts := newSimTestServer(t, Config{Root: t.TempDir(), UlRoot: ulRoot, NoAuth: true, WSFrameMax: 16 * 1024 * 1024})
 
 	conn, _, err := websocket.DefaultDialer.Dial(wsURL(ts, "/api/files/ws/upload"), nil)
 	if err != nil {
@@ -424,7 +406,7 @@ func TestWSDownloadFrameSizeValidation(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "f.bin"), []byte("hello"), 0o644); err != nil {
 		t.Fatalf("writing test file: %v", err)
 	}
-	ts := newWSTestServer(t, Config{Root: root, NoAuth: true, WSFrameMax: 1024 * 1024})
+	ts := newSimTestServer(t, Config{Root: root, NoAuth: true, WSFrameMax: 1024 * 1024})
 
 	for _, frameSize := range []int64{100, 2 * 1024 * 1024} { // too small, too large
 		conn, _, err := websocket.DefaultDialer.Dial(wsURL(ts, "/api/files/ws/download"), nil)
@@ -447,7 +429,7 @@ func TestWSDownloadFrameSizeValidation(t *testing.T) {
 
 func TestWSUploadFrameSizeValidation(t *testing.T) {
 	ulRoot := t.TempDir()
-	ts := newWSTestServer(t, Config{Root: t.TempDir(), UlRoot: ulRoot, NoAuth: true, WSFrameMax: 1024 * 1024})
+	ts := newSimTestServer(t, Config{Root: t.TempDir(), UlRoot: ulRoot, NoAuth: true, WSFrameMax: 1024 * 1024})
 
 	for _, frameSize := range []int64{100, 2 * 1024 * 1024} { // too small, too large
 		conn, _, err := websocket.DefaultDialer.Dial(wsURL(ts, "/api/files/ws/upload"), nil)
@@ -478,7 +460,7 @@ func TestWSDownloadAuthFailure(t *testing.T) {
 		t.Fatalf("writing test file: %v", err)
 	}
 
-	ts := newWSTestServer(t, Config{Root: root, Key: "correct-key"})
+	ts := newSimTestServer(t, Config{Root: root, Key: "correct-key"})
 
 	conn, _, err := websocket.DefaultDialer.Dial(wsURL(ts, "/api/files/ws/download"), nil)
 	if err != nil {
@@ -558,7 +540,7 @@ func TestWSDownloadEncryptedHandshakeEncryptsAcks(t *testing.T) {
 	}
 
 	const rawKey = "test-key"
-	ts := newWSTestServer(t, Config{Root: root, Key: rawKey, WSFrameMax: 16 * 1024 * 1024})
+	ts := newSimTestServer(t, Config{Root: root, Key: rawKey, WSFrameMax: 16 * 1024 * 1024})
 	keys := paramcrypt.DeriveKeys(rawKey)
 
 	conn, _, err := websocket.DefaultDialer.Dial(wsURL(ts, "/api/files/ws/download"), nil)
@@ -607,7 +589,7 @@ func TestWSDownloadEncryptedHandshakeEncryptsAcks(t *testing.T) {
 func TestWSUploadEncryptedHandshakeEncryptsAcks(t *testing.T) {
 	ulRoot := t.TempDir()
 	const rawKey = "test-key"
-	ts := newWSTestServer(t, Config{Root: t.TempDir(), UlRoot: ulRoot, Key: rawKey, WSFrameMax: 16 * 1024 * 1024})
+	ts := newSimTestServer(t, Config{Root: t.TempDir(), UlRoot: ulRoot, Key: rawKey, WSFrameMax: 16 * 1024 * 1024})
 	keys := paramcrypt.DeriveKeys(rawKey)
 
 	conn, _, err := websocket.DefaultDialer.Dial(wsURL(ts, "/api/files/ws/upload"), nil)
@@ -666,7 +648,7 @@ func TestWSAuthTimeout(t *testing.T) {
 	wsAuthTimeout = 100 * time.Millisecond
 	t.Cleanup(func() { wsAuthTimeout = old })
 
-	ts := newWSTestServer(t, Config{Root: t.TempDir(), Key: "k", WSFrameMax: 1 << 20})
+	ts := newSimTestServer(t, Config{Root: t.TempDir(), Key: "k", WSFrameMax: 1 << 20})
 	conn, _, err := websocket.DefaultDialer.Dial(wsURL(ts, "/api/files/ws/download"), nil)
 	if err != nil {
 		t.Fatalf("dial: %v", err)
@@ -685,7 +667,7 @@ func TestWSAuthTimeout(t *testing.T) {
 }
 
 func TestWSPreAuthMessageLimit(t *testing.T) {
-	ts := newWSTestServer(t, Config{Root: t.TempDir(), UlRoot: t.TempDir(), Key: "k", WSFrameMax: 16 << 20})
+	ts := newSimTestServer(t, Config{Root: t.TempDir(), UlRoot: t.TempDir(), Key: "k", WSFrameMax: 16 << 20})
 	for _, path := range []string{"/api/files/ws/download", "/api/files/ws/upload", "/api/sim/ws/download", "/api/sim/ws/upload"} {
 		t.Run(path, func(t *testing.T) {
 			conn, _, err := websocket.DefaultDialer.Dial(wsURL(ts, path), nil)
@@ -701,7 +683,7 @@ func TestWSPreAuthMessageLimit(t *testing.T) {
 
 func TestWSUploadFrameLimit(t *testing.T) {
 	ulRoot := t.TempDir()
-	ts := newWSTestServer(t, Config{Root: t.TempDir(), UlRoot: ulRoot, NoAuth: true, WSFrameMax: 16 << 20})
+	ts := newSimTestServer(t, Config{Root: t.TempDir(), UlRoot: ulRoot, NoAuth: true, WSFrameMax: 16 << 20})
 	cases := []struct {
 		path      string
 		handshake any
@@ -738,7 +720,7 @@ func TestWSUploadAbortKeepsOriginal(t *testing.T) {
 	if err := os.WriteFile(target, []byte("ORIGINAL"), 0o644); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
-	ts := newWSTestServer(t, Config{Root: t.TempDir(), UlRoot: ulRoot, NoAuth: true, WSFrameMax: 1 << 20})
+	ts := newSimTestServer(t, Config{Root: t.TempDir(), UlRoot: ulRoot, NoAuth: true, WSFrameMax: 1 << 20})
 
 	conn, _, err := websocket.DefaultDialer.Dial(wsURL(ts, "/api/files/ws/upload"), nil)
 	if err != nil {
@@ -778,7 +760,7 @@ func TestWSUploadIntoSubdir(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(ulRoot, "a", "b"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	ts := newWSTestServer(t, Config{Root: t.TempDir(), UlRoot: ulRoot, NoAuth: true, WSFrameMax: 1 << 20})
+	ts := newSimTestServer(t, Config{Root: t.TempDir(), UlRoot: ulRoot, NoAuth: true, WSFrameMax: 1 << 20})
 
 	upload := func(dir string) wsAck {
 		t.Helper()

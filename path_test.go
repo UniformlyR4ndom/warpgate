@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -102,6 +103,33 @@ func TestFileInsideDir(t *testing.T) {
 		got, err := fileInsideDir(tt.file, tt.dir)
 		if err != nil || got != tt.want {
 			t.Errorf("fileInsideDir(%q, %q) = %v, %v; want %v", tt.file, tt.dir, got, err, tt.want)
+		}
+	}
+}
+
+func TestValidName(t *testing.T) {
+	for _, name := range []string{"", ".", "..", "a/b", `a\b`, "a\x00b", "tab\tname", ulTmpDirName, ".WarpGate-Tmp ", strings.Repeat("n", 256)} {
+		if validName(name) {
+			t.Errorf("validName(%q) = true", name)
+		}
+	}
+	for _, name := range []string{"a", "report.pdf", "with space", "ünïcödé", strings.Repeat("n", 255)} {
+		if !validName(name) {
+			t.Errorf("validName(%q) = false", name)
+		}
+	}
+}
+
+func TestValidWindowsName(t *testing.T) {
+	for _, name := range []string{"a:b", "file.txt:ads", "c:", "q?", "s*", `x"y`, "<", ">", "p|q", "dot.", "space ",
+		"CON", "con", "nul.txt", "Aux.tar.gz", "COM1", "lpt9.log", "NUL .txt", "CONIN$"} {
+		if validWindowsName(name) {
+			t.Errorf("validWindowsName(%q) = true", name)
+		}
+	}
+	for _, name := range []string{"a", "CONSOLE", "nul_", "COM", "COM10", "LPTX", ".hidden", "a.b.c"} {
+		if !validWindowsName(name) {
+			t.Errorf("validWindowsName(%q) = false", name)
 		}
 	}
 }

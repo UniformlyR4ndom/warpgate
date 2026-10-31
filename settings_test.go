@@ -7,7 +7,7 @@ import (
 )
 
 func TestHandleSettings(t *testing.T) {
-	ts := newWSTestServer(t, Config{Root: t.TempDir(), NoAuth: true, WSFrameMax: 5 * 1024 * 1024})
+	ts := newSimTestServer(t, Config{Root: t.TempDir(), NoAuth: true, WSFrameMax: 5 * 1024 * 1024})
 
 	res, err := http.Get(ts.URL + "/api/public/settings")
 	if err != nil {

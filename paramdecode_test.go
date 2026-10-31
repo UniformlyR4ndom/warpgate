@@ -36,10 +36,7 @@ func newParamDecodeTestServer(t *testing.T, cfg Config) *Server {
 	t.Cleanup(func() { db.Close() })
 
 	cfg.Root = t.TempDir()
-	srv, err := NewServer(cfg, db)
-	if err != nil {
-		t.Fatalf("NewServer: %v", err)
-	}
+	srv := newTestServer(t, cfg, db)
 	return srv
 }
 

@@ -9,33 +9,14 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
-	"unicode"
 )
 
 // ulMkdirMaxDepth bounds how deep below the upload root a directory may be
 // created; deeper pre-existing directories remain usable.
 const ulMkdirMaxDepth = 4
 
-// maxDirNameLen is the common per-component limit (bytes) of Linux, macOS
-// and Windows file systems.
-const maxDirNameLen = 255
-
 type mkdirRequest struct {
 	Path string `json:"path"`
-}
-
-// validDirName rejects names that are unusable or ambiguous on some platform:
-// control characters, backslashes, and the trailing dots/spaces Windows strips.
-func validDirName(name string) bool {
-	if name == "" || len(name) > maxDirNameLen || strings.TrimRight(name, ". ") != name {
-		return false
-	}
-	for _, r := range name {
-		if unicode.IsControl(r) || r == '\\' {
-			return false
-		}
-	}
-	return true
 }
 
 // handleMkdir creates one directory below the upload root; its parent must
@@ -65,7 +46,7 @@ func (s *Server) handleMkdir(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, fmt.Sprintf("directories can be created at most %d levels deep", ulMkdirMaxDepth), http.StatusBadRequest)
 		return
 	}
-	if !validDirName(filepath.Base(rel)) {
+	if !validName(filepath.Base(rel)) {
 		http.Error(w, "invalid directory name", http.StatusBadRequest)
 		return
 	}
