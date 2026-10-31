@@ -2,26 +2,38 @@ package main
 
 import (
 	"errors"
-	"fmt"
 	"io/fs"
+	"os"
 	"path/filepath"
 	"strings"
 )
 
-// pathIsUnder reports whether path is equal to dir or directly inside it.
-func pathIsUnder(path, dir string) bool {
-	return path == dir || strings.HasPrefix(path, dir+string(filepath.Separator))
+var (
+	errInvalidPath  = errors.New("invalid path")
+	errReservedName = errors.New("path contains the reserved name " + ulTmpDirName)
+)
+
+// isReservedName reports whether a single path segment names the upload temp
+// directory, ignoring case and the trailing dots/spaces Windows strips.
+func isReservedName(name string) bool {
+	return strings.EqualFold(strings.TrimRight(name, ". "), ulTmpDirName)
 }
 
 // rootRelPath turns a client-supplied slash-separated path into a cleaned
-// path relative to a root ("." for the root itself), rejecting traversal.
+// path relative to a root ("." for the root itself), rejecting traversal and
+// any segment naming the upload temp directory.
 func rootRelPath(path string) (string, error) {
 	if strings.Contains(path, "../") || strings.Contains(path, `..\`) {
-		return "", fmt.Errorf("invalid path")
+		return "", errInvalidPath
 	}
 	rel := filepath.Clean(strings.TrimLeft(filepath.FromSlash(path), `/\`))
 	if filepath.IsAbs(rel) || filepath.VolumeName(rel) != "" || rel == ".." {
-		return "", fmt.Errorf("invalid path")
+		return "", errInvalidPath
+	}
+	for _, seg := range strings.Split(filepath.ToSlash(rel), "/") {
+		if isReservedName(seg) {
+			return "", errReservedName
+		}
 	}
 	return rel, nil
 }
@@ -33,4 +45,33 @@ const errSymlinkEscape = "symlink points outside the root"
 func isPathEscape(err error) bool {
 	var pe *fs.PathError
 	return errors.As(err, &pe) && pe.Err.Error() == "path escapes from parent"
+}
+
+// fileInsideDir reports whether file (which need not exist) lies inside dir,
+// comparing directory identity rather than path strings, so symlinks and bind
+// mounts on either side are seen through. Hard links are not detected.
+func fileInsideDir(file, dir string) (bool, error) {
+	dirInfo, err := os.Stat(dir)
+	if err != nil {
+		return false, err
+	}
+	p, err := filepath.Abs(file)
+	if err != nil {
+		return false, err
+	}
+	if resolved, err := filepath.EvalSymlinks(p); err == nil {
+		p = resolved
+	} else if resolved, err := filepath.EvalSymlinks(filepath.Dir(p)); err == nil {
+		p = filepath.Join(resolved, filepath.Base(p))
+	}
+	for {
+		if fi, err := os.Stat(p); err == nil && os.SameFile(fi, dirInfo) {
+			return true, nil
+		}
+		parent := filepath.Dir(p)
+		if parent == p {
+			return false, nil
+		}
+		p = parent
+	}
 }

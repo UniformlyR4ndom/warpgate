@@ -109,6 +109,10 @@ can create such links). Uploads
 are published by renaming within `ulRoot`, which replaces a symlink at the target instead of
 writing through it. Hard links and bind mounts are not detected.
 
+`main.go`'s `checkNotServed` refuses to start when `-db`, `-cert` or `-cert-key` lies inside
+`-root` or `-ul-root`, comparing directory identity (`fileInsideDir`, `path.go`), so symlinks and
+bind mounts on either side are seen through; the file need not exist yet.
+
 ### IP firewall
 
 `ipfilter.go`, enabled (`Server.ipFilter != nil`) when any of `-ip-allow`, `-ip-reg-path`,
@@ -233,10 +237,13 @@ chunked benchmark upload — see "Benchmark/Simulation Endpoints" below.
   success, so the target always holds either the previous complete version or nothing — no listing
   hiding or download blocking is needed while an upload runs, and an aborted upload never touches it.
   `NewServer` clears and recreates the directory at startup (`initUlTmpDir`). Uploads land flat in
-  `-ul-root` (`ulTarget` keeps only the base name), so the directory's own name is the only one a
-  temp file could collide with; an upload with that name is rejected. `Server.isUlTmpPath` keeps
-  the directory out of `/api/files/list` and both download endpoints, comparing resolved absolute
-  paths, so it is hidden whether `-root` equals, contains or is unrelated to `-ul-root`.
+  `-ul-root` (`ulTarget` keeps only the base name). The name is reserved at any depth:
+  `rootRelPath` and `ulTarget` reject any segment equal to it ignoring case and trailing dots/spaces
+  (`isReservedName`, `400`). As the actual guarantee, `Server.reachesUlTmp` compares every prefix of
+  a path against the directory's identity (`os.SameFile` with `Server.ulTmpInfo`) and refuses a
+  match (`403`, `errUlTmpPath`), catching other spellings (8.3 short names, symlinks);
+  `withoutUlTmp` drops it from listings. This holds whether `-root` equals, contains or is
+  unrelated to `-ul-root`.
 - **WS uploads** share the HTTP per-filename claim for the whole connection, and like a first chunk
   supersede any session on record.
 

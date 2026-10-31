@@ -77,13 +77,11 @@ func (s *Server) handleList(w http.ResponseWriter, r *http.Request) {
 
 	rel, err := rootRelPath(req.Path)
 	if err != nil {
-		http.Error(w, "invalid path", http.StatusBadRequest)
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-
-	target := filepath.Join(s.absRoot, rel)
-	if s.isUlTmpPath(target) {
-		http.Error(w, "path not found", http.StatusNotFound)
+	if s.reachesUlTmp(s.root, rel) {
+		http.Error(w, errUlTmpPath, http.StatusForbidden)
 		return
 	}
 
@@ -99,12 +97,18 @@ func (s *Server) handleList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	entries := s.withoutUlTmp(s.root, rel, all)
+	s.encodeParamsResponse(w, wasEncrypted, http.StatusOK, entries)
+}
+
+// withoutUlTmp drops the upload temp directory from a listing of rel.
+func (s *Server) withoutUlTmp(root *os.Root, rel string, all []listEntry) []listEntry {
 	entries := make([]listEntry, 0, len(all))
 	for _, e := range all {
-		if !s.isUlTmpPath(filepath.Join(target, e.Name)) {
-			entries = append(entries, e)
+		if e.Type == "d" && (isReservedName(e.Name) || s.isUlTmpDir(root, filepath.Join(rel, e.Name))) {
+			continue
 		}
+		entries = append(entries, e)
 	}
-
-	s.encodeParamsResponse(w, wasEncrypted, http.StatusOK, entries)
+	return entries
 }

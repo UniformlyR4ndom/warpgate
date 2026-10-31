@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"log"
 	"net"
-	"path/filepath"
 	"time"
 )
 
@@ -100,28 +99,7 @@ func main() {
 		log.Fatalf("-client-fp requires -cert and -cert-key")
 	}
 
-	if cfg.CertKey != "" {
-		certKeyAbs, err := filepath.Abs(cfg.CertKey)
-		if err != nil {
-			log.Fatalf("resolving -cert-key path: %v", err)
-		}
-		rootAbs, err := filepath.Abs(cfg.Root)
-		if err != nil {
-			log.Fatalf("resolving -root path: %v", err)
-		}
-		if pathIsUnder(certKeyAbs, rootAbs) {
-			log.Fatalf("-cert-key %q is inside the download root %q; refusing to start", cfg.CertKey, cfg.Root)
-		}
-		if cfg.UlRoot != "" {
-			ulRootAbs, err := filepath.Abs(cfg.UlRoot)
-			if err != nil {
-				log.Fatalf("resolving -ul-root path: %v", err)
-			}
-			if pathIsUnder(certKeyAbs, ulRootAbs) {
-				log.Fatalf("-cert-key %q is inside the upload root %q; refusing to start", cfg.CertKey, cfg.UlRoot)
-			}
-		}
-	}
+	checkNotServed(cfg)
 
 	if cfg.NoAuth && cfg.Key != "" {
 		log.Fatalf("-no-auth and -auth-key are mutually exclusive")
@@ -176,4 +154,28 @@ func main() {
 	}
 	log.Printf("WebSocket frame size ceiling: %d bytes", cfg.WSFrameMax)
 	log.Fatal(srv.ListenAndServe())
+}
+
+// checkNotServed refuses to start when the database, certificate or key is
+// reachable through a served directory.
+func checkNotServed(cfg Config) {
+	files := []struct{ flag, path string }{{"-cert", cfg.Cert}, {"-cert-key", cfg.CertKey}}
+	if cfg.DBPath != ":memory:" {
+		files = append(files, struct{ flag, path string }{"-db", cfg.DBPath})
+	}
+	dirs := []struct{ flag, path string }{{"-root", cfg.Root}, {"-ul-root", cfg.UlRoot}}
+	for _, f := range files {
+		for _, d := range dirs {
+			if f.path == "" || d.path == "" {
+				continue
+			}
+			inside, err := fileInsideDir(f.path, d.path)
+			if err != nil {
+				log.Fatalf("checking %s against %s: %v", f.flag, d.flag, err)
+			}
+			if inside {
+				log.Fatalf("%s %q is inside %s %q; refusing to start", f.flag, f.path, d.flag, d.path)
+			}
+		}
+	}
 }

@@ -330,13 +330,15 @@ paths:
                   type: f
                   size: 204800
         "400":
-          description: Invalid or path-traversal path.
+          description: Invalid or path-traversal path, or a segment named `.warpgate-tmp`.
         "401":
           description: |
             Missing or invalid `X-Auth` header, or the request body is malformed or fails to
             decrypt (see CLAUDE.md's "Parameter Encryption" section).
         "403":
-          description: The path passes through a symlink pointing outside the root.
+          description: |
+            The path passes through a symlink pointing outside the root, or leads to the upload
+            temp directory under another spelling.
         "404":
           description: Path not found.
         "405":
@@ -469,7 +471,7 @@ paths:
                 type: string
         "400":
           description: |
-            Invalid request — path traversal, non-positive `size`, unknown transform name,
+            Invalid request — path traversal or a `.warpgate-tmp` segment, non-positive `size`, unknown transform name,
             invalid transform args (e.g. wrong key length), or a non-empty `contentType` that's
             over 255 bytes or contains control characters.
         "401":
@@ -477,7 +479,9 @@ paths:
             Missing or invalid `X-Auth` header, or the request body is malformed or fails to
             decrypt (see CLAUDE.md's "Parameter Encryption" section).
         "403":
-          description: The path passes through a symlink pointing outside the root.
+          description: |
+            The path passes through a symlink pointing outside the root, or leads to the upload
+            temp directory under another spelling.
         "404":
           description: File not found.
         "405":
@@ -531,7 +535,7 @@ paths:
         upload's temp file and its session; the client must restart the upload from scratch.
 
         The target file is replaced only when the upload completes; until then it keeps its
-        previous content (or doesn't exist). The filename `.warpgate-tmp` is reserved.
+        previous content (or doesn't exist). The name `.warpgate-tmp` (any case, trailing dots/spaces ignored) is reserved and rejected with `400`.
 
         A plain one-shot upload — no `transform` part at all, or one that omits `ul-done` — behaves
         exactly as before chunking existed: the whole file in one request, written immediately, no

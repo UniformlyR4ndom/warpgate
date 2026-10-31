@@ -55,20 +55,50 @@ func (s *Server) removeUlTemp(path string) {
 // initUlTmpDir recreates the empty temp directory, discarding leftovers of
 // uploads interrupted by a restart.
 func (s *Server) initUlTmpDir() error {
-	s.ulTmpDir = filepath.Join(s.absUlRoot, ulTmpDirName)
 	if err := s.ulRoot.RemoveAll(ulTmpDirName); err != nil {
 		return fmt.Errorf("clearing upload temp dir: %w", err)
 	}
 	if err := s.ulRoot.Mkdir(ulTmpDirName, 0o700); err != nil {
 		return fmt.Errorf("creating upload temp dir: %w", err)
 	}
+	info, err := s.ulRoot.Stat(ulTmpDirName)
+	if err != nil {
+		return fmt.Errorf("creating upload temp dir: %w", err)
+	}
+	s.ulTmpInfo = info
 	return nil
 }
 
-// isUlTmpPath reports whether the absolute path is inside the upload temp
-// directory, which must never be listed or downloaded.
-func (s *Server) isUlTmpPath(path string) bool {
-	return s.ulTmpDir != "" && pathIsUnder(path, s.ulTmpDir)
+const errUlTmpPath = "path refers to the upload temp directory"
+
+// isUlTmpDir reports whether rel inside root is the upload temp directory,
+// by identity, so other spellings (case, short names, symlinks) are caught.
+func (s *Server) isUlTmpDir(root *os.Root, rel string) bool {
+	if s.ulTmpInfo == nil {
+		return false
+	}
+	fi, err := root.Stat(rel)
+	return err == nil && os.SameFile(fi, s.ulTmpInfo)
+}
+
+// reachesUlTmp reports whether rel inside root is or passes through the
+// upload temp directory, which must never be listed, read or written.
+func (s *Server) reachesUlTmp(root *os.Root, rel string) bool {
+	if s.ulTmpInfo == nil || rel == "." {
+		return false
+	}
+	prefix := ""
+	for _, seg := range strings.Split(rel, string(filepath.Separator)) {
+		prefix = filepath.Join(prefix, seg)
+		fi, err := root.Stat(prefix)
+		if err != nil {
+			return false
+		}
+		if os.SameFile(fi, s.ulTmpInfo) {
+			return true
+		}
+	}
+	return false
 }
 
 // createUlTemp creates an empty temp file and returns its path relative to
@@ -93,7 +123,7 @@ func (s *Server) createUlTemp() (string, error) {
 func ulTarget(clientName string) (string, error) {
 	// Normalize separators so Windows client paths are handled correctly.
 	filename := filepath.Base(strings.ReplaceAll(clientName, "\\", "/"))
-	if filename == "" || filename == "." || filename == ".." || filename == "/" || filename == ulTmpDirName {
+	if filename == "" || filename == "." || filename == ".." || filename == "/" || isReservedName(filename) {
 		return "", fmt.Errorf("invalid filename")
 	}
 	return filename, nil

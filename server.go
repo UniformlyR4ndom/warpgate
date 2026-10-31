@@ -26,8 +26,8 @@ type Server struct {
 	absRoot    string
 	absUlRoot  string
 	root       *os.Root
-	ulRoot     *os.Root // nil when uploads are disabled
-	ulTmpDir   string   // empty when uploads are disabled
+	ulRoot     *os.Root    // nil when uploads are disabled
+	ulTmpInfo  os.FileInfo // nil when uploads are disabled
 	clientCAs  *x509.CertPool
 	clientFP   []byte
 	wsUpgrader websocket.Upgrader

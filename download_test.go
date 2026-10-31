@@ -135,8 +135,8 @@ func TestDownloadDuringChunkedUpload(t *testing.T) {
 }
 
 // TestUlTmpDirNotReachable: with -root and -ul-root the same directory, the
-// upload temp dir must be neither listed nor downloadable, and its name is
-// reserved for uploads.
+// upload temp dir must be neither listed nor downloadable under any spelling,
+// and its name is reserved for uploads.
 func TestUlTmpDirNotReachable(t *testing.T) {
 	dir := t.TempDir()
 	ts := newSimTestServer(t, Config{Root: dir, UlRoot: dir, NoAuth: true})
@@ -174,11 +174,13 @@ func TestUlTmpDirNotReachable(t *testing.T) {
 			t.Fatalf("temp dir listed: %+v", entries)
 		}
 	}
-	if res := post("/api/files/list", listRequest{Path: ulTmpDirName}); res.StatusCode != http.StatusNotFound {
-		t.Fatalf("listing temp dir: status %d, want 404", res.StatusCode)
+	for _, p := range []string{ulTmpDirName, "/" + ulTmpDirName + "/", ".WARPGATE-TMP", ulTmpDirName + ". ", "sub/" + ulTmpDirName} {
+		if res := post("/api/files/list", listRequest{Path: p}); res.StatusCode != http.StatusBadRequest {
+			t.Fatalf("listing %q: status %d, want 400", p, res.StatusCode)
+		}
 	}
-	if res := post("/api/files/download", downloadRequest{Path: tmpRel, Size: 3, Transform: "id"}); res.StatusCode != http.StatusNotFound {
-		t.Fatalf("downloading temp file: status %d, want 404", res.StatusCode)
+	if res := post("/api/files/download", downloadRequest{Path: tmpRel, Size: 3, Transform: "id"}); res.StatusCode != http.StatusBadRequest {
+		t.Fatalf("downloading temp file: status %d, want 400", res.StatusCode)
 	}
 
 	conn, _, err := websocket.DefaultDialer.Dial(wsURL(ts, "/api/files/ws/download"), nil)
@@ -194,8 +196,56 @@ func TestUlTmpDirNotReachable(t *testing.T) {
 		t.Fatalf("WS download of temp file: ack %+v, err %v", ack, err)
 	}
 
-	if resp, _ := postChunk(t, ts.URL, ulTmpDirName, []byte("x"), "", true); resp.StatusCode != http.StatusBadRequest {
-		t.Fatalf("upload named %q: status %d, want 400", ulTmpDirName, resp.StatusCode)
+	for _, name := range []string{ulTmpDirName, ".Warpgate-Tmp", ulTmpDirName + "."} {
+		if resp, _ := postChunk(t, ts.URL, name, []byte("x"), "", true); resp.StatusCode != http.StatusBadRequest {
+			t.Fatalf("upload named %q: status %d, want 400", name, resp.StatusCode)
+		}
+	}
+}
+
+// TestUlTmpDirNotReachableViaSymlink: a symlink inside the download root that
+// leads to the temp dir is refused by identity, not by name.
+func TestUlTmpDirNotReachableViaSymlink(t *testing.T) {
+	root := t.TempDir()
+	ulRoot := filepath.Join(root, "uploads")
+	if err := os.Mkdir(ulRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	ts := newSimTestServer(t, Config{Root: root, UlRoot: ulRoot, NoAuth: true})
+	if err := os.WriteFile(filepath.Join(ulRoot, ulTmpDirName, "ul-x"), []byte("partial"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join("uploads", ulTmpDirName), filepath.Join(root, "tmplink")); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+
+	post := func(path string, body any) *http.Response {
+		t.Helper()
+		raw, _ := json.Marshal(body)
+		res, err := http.Post(ts.URL+path, "application/json", bytes.NewReader(raw))
+		if err != nil {
+			t.Fatalf("POST: %v", err)
+		}
+		t.Cleanup(func() { res.Body.Close() })
+		return res
+	}
+	for _, p := range []string{"tmplink", "tmplink/ul-x"} {
+		if res := post("/api/files/list", listRequest{Path: p}); res.StatusCode != http.StatusForbidden {
+			t.Fatalf("listing %q: status %d, want 403", p, res.StatusCode)
+		}
+	}
+	if res := post("/api/files/download", downloadRequest{Path: "tmplink/ul-x", Size: 7, Transform: "id"}); res.StatusCode != http.StatusForbidden {
+		t.Fatalf("downloading via symlink: status %d, want 403", res.StatusCode)
+	}
+	res := post("/api/files/list", listRequest{Path: ""})
+	var entries []listEntry
+	if err := json.NewDecoder(res.Body).Decode(&entries); err != nil {
+		t.Fatalf("decoding list: %v", err)
+	}
+	for _, e := range entries {
+		if e.Name == "tmplink" {
+			t.Fatalf("symlink to temp dir listed: %+v", entries)
+		}
 	}
 }
 
