@@ -87,3 +87,19 @@ func TestClipMatches(t *testing.T) {
 		}
 	}
 }
+
+func TestAttachCaptionFlags(t *testing.T) {
+	fs := flag.NewFlagSet("test", flag.ContinueOnError)
+	g := addGlobalFlags(fs)
+	var images []clipImage
+	fs.Var(attachFlag{&images}, "attach", "")
+	fs.Var(captionFlag{&images}, "caption", "")
+	err := parseFlags(fs, g, []string{"-attach", "a.png", "text", "-caption", "first", "-attach", "b.png", "-attach", "c.png", "-caption", "third"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []clipImage{{"a.png", "first"}, {"b.png", ""}, {"c.png", "third"}}
+	if !slices.Equal(images, want) || !slices.Equal(fs.Args(), []string{"text"}) {
+		t.Errorf("images = %+v, args = %q", images, fs.Args())
+	}
+}

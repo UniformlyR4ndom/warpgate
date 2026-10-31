@@ -206,3 +206,57 @@ func runClipGetAttachment(args []string) error {
 	g.report(map[string]any{"id": id, "out": *out, "bytes": size}, "wrote attachment %d (%d bytes) to %s", id, size, *out)
 	return nil
 }
+
+func runClipDeleteAttachment(args []string) error {
+	fs := flag.NewFlagSet("clip delete-attachment", flag.ExitOnError)
+	g := addGlobalFlags(fs)
+	if err := parseFlags(fs, g, args); err != nil {
+		return err
+	}
+	if fs.NArg() < 1 {
+		return fmt.Errorf("usage: wgcli clip delete-attachment [flags] <attachment-id>...")
+	}
+	ids := make([]int64, 0, fs.NArg())
+	for _, arg := range fs.Args() {
+		id, err := strconv.ParseInt(arg, 10, 64)
+		if err != nil {
+			return fmt.Errorf("invalid attachment id %q: %w", arg, err)
+		}
+		ids = append(ids, id)
+	}
+	for i, id := range ids {
+		err := sendClipJSON(g, http.MethodDelete, "/api/clip/attachment/delete", struct {
+			ID int64 `json:"id"`
+		}{id})
+		if err != nil {
+			return fmt.Errorf("deleting attachment %d (after deleting %d): %w", id, i, err)
+		}
+	}
+	g.report(map[string]any{"ids": ids}, "deleted %d attachment(s)", len(ids))
+	return nil
+}
+
+func runClipCaption(args []string) error {
+	fs := flag.NewFlagSet("clip caption", flag.ExitOnError)
+	g := addGlobalFlags(fs)
+	if err := parseFlags(fs, g, args); err != nil {
+		return err
+	}
+	if fs.NArg() != 2 {
+		return fmt.Errorf("usage: wgcli clip caption [flags] <attachment-id> <caption> (\"\" clears it)")
+	}
+	id, err := strconv.ParseInt(fs.Arg(0), 10, 64)
+	if err != nil {
+		return fmt.Errorf("invalid attachment id %q: %w", fs.Arg(0), err)
+	}
+	caption := fs.Arg(1)
+	err = sendClipJSON(g, http.MethodPost, "/api/clip/attachment/edit", struct {
+		ID      int64  `json:"id"`
+		Caption string `json:"caption"`
+	}{id, caption})
+	if err != nil {
+		return err
+	}
+	g.report(map[string]any{"id": id, "caption": caption}, "set caption of attachment %d", id)
+	return nil
+}

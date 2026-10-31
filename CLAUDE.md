@@ -49,7 +49,7 @@ The Go module (`warpgate`, Go 1.25.0) lives at the repo root. The frontend is em
 (for testing and scripted/agent use: global flags fall back to `WGCLI_*` environment variables,
 flags may follow positional arguments, transform keys default to random, `-cert`/`-cert-key` for
 TLS client auth, `wgcli register` for the IP firewall, `-json` output, filtered/incremental
-`clip list` and `clip get`); see the `wgcli` skill for usage details.
+`clip list` and `clip get`, image-only notes via `clip new -attach`); see the `wgcli` skill for usage details.
 
 ## Architecture
 

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"cmp"
 	"encoding/base64"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
@@ -14,6 +15,8 @@ import (
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	"warpgate/internal/transform"
 )
 
 // clipAttachmentMeta mirrors the server's AttachmentMeta (db.go).
@@ -111,43 +114,27 @@ func postClipNew(g *globalFlags, title string, data []byte) (id, ts int64, err e
 
 // postClipEdit leaves the note's title unchanged when title is nil.
 func postClipEdit(g *globalFlags, id int64, title *string, data []byte) error {
-	body, err := g.encodeBody(struct {
+	return sendClipJSON(g, http.MethodPost, "/api/clip/edit", struct {
 		ID    int64   `json:"id"`
 		Title *string `json:"title,omitempty"`
 		Data  string  `json:"data"`
 	}{id, title, base64.StdEncoding.EncodeToString(data)})
-	if err != nil {
-		return err
-	}
-
-	req, err := g.newRequest(http.MethodPost, "/api/clip/edit", bytes.NewReader(body))
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := g.httpClient().Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusNoContent {
-		errBody, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("%s: %s", resp.Status, strings.TrimSpace(string(errBody)))
-	}
-	return nil
 }
 
 func deleteClip(g *globalFlags, id int64) error {
-	body, err := g.encodeBody(struct {
+	return sendClipJSON(g, http.MethodDelete, "/api/clip/delete", struct {
 		ID int64 `json:"id"`
 	}{id})
+}
+
+// sendClipJSON sends v as the JSON body of a clipboard request answered with
+// 204 No Content.
+func sendClipJSON(g *globalFlags, method, path string, v any) error {
+	body, err := g.encodeBody(v)
 	if err != nil {
 		return err
 	}
-
-	req, err := g.newRequest(http.MethodDelete, "/api/clip/delete", bytes.NewReader(body))
+	req, err := g.newRequest(method, path, bytes.NewReader(body))
 	if err != nil {
 		return err
 	}
@@ -352,25 +339,84 @@ func runClipGet(args []string) error {
 	return printClipNotes(g, state, notes, *brief)
 }
 
+// clipImage is one -attach of clip new, with the -caption that followed it.
+type clipImage struct{ path, caption string }
+
+type attachFlag struct{ list *[]clipImage }
+
+func (f attachFlag) String() string { return "" }
+func (f attachFlag) Set(v string) error {
+	*f.list = append(*f.list, clipImage{path: v})
+	return nil
+}
+
+type captionFlag struct{ list *[]clipImage }
+
+func (f captionFlag) String() string { return "" }
+func (f captionFlag) Set(v string) error {
+	if len(*f.list) == 0 {
+		return fmt.Errorf("-caption must follow an -attach")
+	}
+	(*f.list)[len(*f.list)-1].caption = v
+	return nil
+}
+
 func runClipNew(args []string) error {
 	fs := flag.NewFlagSet("clip new", flag.ExitOnError)
 	g := addGlobalFlags(fs)
 	file := fs.String("f", "", "read note content from this file instead of the positional argument")
 	title := fs.String("title", "", "note title (optional)")
+	var images []clipImage
+	fs.Var(attachFlag{&images}, "attach", "image file to attach (repeatable); with at least one, the text is optional")
+	fs.Var(captionFlag{&images}, "caption", "caption of the preceding -attach")
+	transformName := fs.String("transform", "id", "transform to disguise the image bytes with")
+	key := fs.String("key", "", "transform key (hex), where applicable; random if omitted")
+	iv := fs.String("iv", "", "transform IV (hex), for aes-ctr; random if omitted")
 	if err := parseFlags(fs, g, args); err != nil {
 		return err
 	}
 
-	data, err := clipTextArg(fs, *file, 0)
-	if err != nil {
-		return err
+	var data []byte
+	if len(images) == 0 || *file != "" || fs.NArg() > 0 {
+		var err error
+		if data, err = clipTextArg(fs, *file, 0); err != nil {
+			return err
+		}
+	}
+	for _, img := range images {
+		if mimeForExt(img.path) == "application/octet-stream" {
+			return fmt.Errorf("%s: unsupported image type (png, jpg, gif, webp, bmp)", img.path)
+		}
+		if _, err := os.Stat(img.path); err != nil {
+			return err
+		}
+	}
+	var t transform.Transformer
+	var targs json.RawMessage
+	if len(images) > 0 {
+		var err error
+		if targs, err = buildTransformArgs(*transformName, *key, *iv, "", "attachment"); err != nil {
+			return err
+		}
+		if t, err = transform.New(*transformName, targs); err != nil {
+			return err
+		}
 	}
 
 	id, ts, err := postClipNew(g, *title, data)
 	if err != nil {
 		return err
 	}
-	g.report(map[string]any{"id": id, "ts": ts}, "created note %d at %s", id, time.Unix(ts, 0).Format(time.RFC3339))
+	atts := []clipAttachmentMeta{}
+	for _, img := range images {
+		meta, err := postClipAttachment(g, id, img.path, img.caption, *transformName, targs, t)
+		if err != nil {
+			return fmt.Errorf("note %d created with %d of %d image(s); attaching %s failed: %w", id, len(atts), len(images), img.path, err)
+		}
+		atts = append(atts, meta)
+	}
+	g.report(map[string]any{"id": id, "ts": ts, "attachments": atts},
+		"created note %d at %s with %d image(s)", id, time.Unix(ts, 0).Format(time.RFC3339), len(atts))
 	return nil
 }
 
@@ -433,7 +479,7 @@ func runClipDelete(args []string) error {
 
 func runClip(args []string) error {
 	if len(args) < 1 {
-		return fmt.Errorf("usage: wgcli clip <list|get|new|edit|delete|attach|get-attachment> [flags] [args...]")
+		return fmt.Errorf("usage: wgcli clip <list|get|new|edit|delete|attach|get-attachment|delete-attachment|caption> [flags] [args...]")
 	}
 	sub, rest := args[0], args[1:]
 	switch sub {
@@ -451,6 +497,10 @@ func runClip(args []string) error {
 		return runClipAttach(rest)
 	case "get-attachment":
 		return runClipGetAttachment(rest)
+	case "delete-attachment":
+		return runClipDeleteAttachment(rest)
+	case "caption":
+		return runClipCaption(rest)
 	default:
 		return fmt.Errorf("unknown clip subcommand %q", sub)
 	}
