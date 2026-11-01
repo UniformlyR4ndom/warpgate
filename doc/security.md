@@ -56,6 +56,8 @@ Confidentiality is provided only by TLS, and only as far as no proxy intercepts 
 - After authentication, a WebSocket that receives no data for 5 minutes, or takes that long to
   send one message, is closed, releasing its upload claim and temp files.
 - Optional mutual TLS (`-client-root`, `-client-fp`) in addition to the token.
+- HTTP connections must send their request headers within 30 s and are closed after 2 minutes
+  idle between requests.
 
 **Hiding and admission**
 - `-path-prefix`: everything outside the prefix gets an identical blank page.
@@ -72,6 +74,8 @@ Confidentiality is provided only by TLS, and only as far as no proxy intercepts 
   through the API under any spelling.
 - File and directory names are validated, including names Windows would reinterpret.
 - The server refuses to start if the database, certificate or key lies inside a served root.
+  `-db` must be a plain path: SQLite URI syntax (`file:`) and `?` options are rejected, since the
+  driver would open a different file than the one checked.
 
 **Browser**
 - Strict CSP on every response: `script-src 'self'` with no `unsafe-*`, no framing, Trusted Types
@@ -94,6 +98,8 @@ Confidentiality is provided only by TLS, and only as far as no proxy intercepts 
 | The auth token is a replayable bearer credential; requests with unencrypted parameters are always accepted | Accepted for simplicity. Use TLS, and the IP firewall or mutual TLS, where capture is a concern. |
 | A captured token or encrypted request allows offline passphrase guessing | Each guess costs a 128 MiB scrypt run. Only a PAKE would prevent it, at the cost of heavy dependencies. Use a strong passphrase where capture is a concern. |
 | An attacker with many IPv6 /64s, or more than 100,000 addresses, gets more online guesses | Beyond 100,000 tracked clients the rest share one failure entry, which bounds memory and still limits them collectively. |
+| Once 100,000 clients are tracked, each request from a new address scans the whole table under a lock (~7 ms), slowing authentication checks for new clients | Filling the table takes 100,000 addresses each sending a wrong token at least every 10 minutes. With IPv6 a single actor can do this (a /48 holds 65,536 /64s), so it is not limited to botnets. The IP firewall (with `-ip-allow` or `-ip-reg-max`), a secret `-path-prefix` or mutual TLS keep such clients from reaching authentication; the default listener is IPv4-only. It slows checks but bypasses nothing. |
+| A client can hold an HTTP connection open after its headers by declaring a request body and never sending it; there is no overall request deadline | A whole-request timeout would break large transfers. Holding connections open is already possible by sending headers slowly (30 s) and reconnecting, so a body deadline would gain little. Put a reverse proxy with connection limits, or mutual TLS, in front if this matters. |
 | `aes-ctr` keystream reuse; no payload integrity | Transforms are disguises, see above. |
 | `-no-auth` exposes all of the above to anyone who can reach the server | Explicit operator choice; combine with the IP firewall or mutual TLS. |
 | Hard links and bind mounts inside a served root are not detected | Only someone with local access to the host can create them, and the host is trusted. |

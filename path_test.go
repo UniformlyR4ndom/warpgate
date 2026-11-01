@@ -107,6 +107,19 @@ func TestFileInsideDir(t *testing.T) {
 	}
 }
 
+func TestCheckDBPath(t *testing.T) {
+	for _, p := range []string{"warpgate.sqlite", "/var/lib/wg/db.sqlite", `C:\wg\db.sqlite`, ":memory:"} {
+		if err := checkDBPath(p); err != nil {
+			t.Errorf("checkDBPath(%q) = %v", p, err)
+		}
+	}
+	for _, p := range []string{"file:/srv/files/db.sqlite", "file:db.sqlite", "db.sqlite?_pragma=x", "/srv/files/db.sqlite?"} {
+		if checkDBPath(p) == nil {
+			t.Errorf("checkDBPath(%q) = nil", p)
+		}
+	}
+}
+
 func TestValidName(t *testing.T) {
 	for _, name := range []string{"", ".", "..", "a/b", `a\b`, "a\x00b", "tab\tname", ulTmpDirName, ".WarpGate-Tmp ", strings.Repeat("n", 256)} {
 		if validName(name) {

@@ -45,7 +45,10 @@ type Server struct {
 	simUploadSessions *sessionStore[*simUlSession]
 }
 
-const httpReadHeaderTimeout = 30 * time.Second
+const (
+	httpReadHeaderTimeout = 30 * time.Second
+	httpIdleTimeout       = 2 * time.Minute
+)
 
 var deriveKey = authhash.DeriveKey
 
@@ -247,7 +250,12 @@ func (s *Server) handler() http.Handler {
 
 func (s *Server) ListenAndServe() error {
 	h := s.handler()
-	httpSrv := &http.Server{Addr: s.cfg.Addr, Handler: h, ReadHeaderTimeout: httpReadHeaderTimeout}
+	httpSrv := &http.Server{
+		Addr:              s.cfg.Addr,
+		Handler:           h,
+		ReadHeaderTimeout: httpReadHeaderTimeout,
+		IdleTimeout:       httpIdleTimeout,
+	}
 	if s.cfg.Cert != "" {
 		if s.clientCAs != nil || s.clientFP != nil {
 			tlsCfg := &tls.Config{}

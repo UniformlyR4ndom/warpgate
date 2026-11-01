@@ -3,10 +3,12 @@ package main
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"flag"
 	"fmt"
 	"log"
 	"net"
+	"strings"
 	"time"
 )
 
@@ -106,6 +108,9 @@ func main() {
 		log.Fatalf("-ul-flat requires -ul-root")
 	}
 
+	if err := checkDBPath(cfg.DBPath); err != nil {
+		log.Fatalf("invalid -db %q: %v", cfg.DBPath, err)
+	}
 	checkNotServed(cfg)
 
 	if cfg.NoAuth && cfg.Key != "" {
@@ -163,6 +168,15 @@ func main() {
 	}
 	log.Printf("WebSocket frame size ceiling: %d bytes", cfg.WSFrameMax)
 	log.Fatal(srv.ListenAndServe())
+}
+
+// checkDBPath rejects DSN syntax the SQLite driver would interpret differently
+// from the plain path checkNotServed examines.
+func checkDBPath(p string) error {
+	if strings.HasPrefix(p, "file:") || strings.Contains(p, "?") {
+		return errors.New("must be a plain file path (no file: URI, no '?')")
+	}
+	return nil
 }
 
 // checkNotServed refuses to start when the database, certificate or key is

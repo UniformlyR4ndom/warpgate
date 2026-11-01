@@ -110,7 +110,8 @@ mounts are not detected.
 
 `checkNotServed` (`main.go`) refuses to start when `-db`, `-cert` or `-cert-key` lies inside
 `-root` or `-ul-root`, comparing directory identity (`fileInsideDir`), so symlinks and bind mounts
-are seen through; the file need not exist yet.
+are seen through; the file need not exist yet. `checkDBPath` rejects `-db` values with `file:` or
+`?`, which the SQLite driver would read as URI syntax or options.
 
 ### IP firewall
 
@@ -646,7 +647,7 @@ test/push_to_wgclip_test.sh
 | `-root` | `./files` | Download directory |
 | `-ul-root` | — | Upload directory (upload endpoints off without it) |
 | `-ul-flat` | false | Flat upload directory: no `/api/ul/*`, `dir` rejected; needs `-ul-root` |
-| `-db` | `warpgate.sqlite` | SQLite database |
+| `-db` | `warpgate.sqlite` | SQLite database; a plain path (no `file:` URI or `?` options) |
 | `-listen` | `0.0.0.0:8080` | Listen address |
 | `-auth-key` | — | Auth passphrase (generated and logged if omitted); K is derived from it with scrypt |
 | `-no-auth` | false | Disable authentication |
