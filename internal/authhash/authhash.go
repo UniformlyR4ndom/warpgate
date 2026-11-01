@@ -1,32 +1,55 @@
-// Package authhash derives the value sent over the wire as X-Auth/auth from
-// the operator-configured key, so the raw key itself is never transmitted.
+// Package authhash derives the key material shared by server and clients
+// from the operator's passphrase: a memory-hard master key K, and from K the
+// value sent over the wire as X-Auth/auth.
 package authhash
 
 import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
+
+	"golang.org/x/crypto/scrypt"
 )
 
-const iterations = 1000
+// scrypt cost: 128 MiB and roughly a second per derivation in a browser.
+// Clients use these fixed values, never ones served by the server, so a proxy
+// can't downgrade the cost.
+const (
+	scryptN  = 1 << 17
+	scryptR  = 8
+	scryptP  = 1
+	KeySize  = 32
+	SaltSize = 16
+)
 
-// label domain-separates this derivation from any other value derived from
-// the same raw key — internal/paramcrypt.DeriveKeys's two labeled subkeys in
-// particular — so knowing one gives no information about, and can't be
-// confused with, the other.
-const label = "warpgate-auth-token-v1"
+const (
+	tokenLabel       = "warpgate-auth-token-v2"
+	fingerprintLabel = "warpgate-key-fingerprint-v1"
+)
 
-// Hash returns the hex-encoded result of seeding with HMAC-SHA256(key,
-// label), then applying plain SHA-256 to that seed repeated iterations
-// times total.
-func Hash(key string) string {
-	mac := hmac.New(sha256.New, []byte(key))
-	mac.Write([]byte(label))
-	seed := mac.Sum(nil)
-
-	h := sha256.Sum256(seed)
-	for i := 1; i < iterations; i++ {
-		h = sha256.Sum256(h[:])
+// DeriveKey returns the master key K for passphrase under the server's salt.
+func DeriveKey(passphrase string, salt []byte) ([]byte, error) {
+	k, err := scrypt.Key([]byte(passphrase), salt, scryptN, scryptR, scryptP, KeySize)
+	if err != nil {
+		return nil, fmt.Errorf("deriving key: %w", err)
 	}
-	return hex.EncodeToString(h[:])
+	return k, nil
+}
+
+// Token returns the hex-encoded auth token for K.
+func Token(k []byte) string {
+	return hex.EncodeToString(Label(k, tokenLabel))
+}
+
+// Fingerprint returns a short hex tag identifying K, for display only.
+func Fingerprint(k []byte) string {
+	return hex.EncodeToString(Label(k, fingerprintLabel)[:2])
+}
+
+// Label returns HMAC-SHA256(k, label), the derivation of every subkey of K.
+func Label(k []byte, label string) []byte {
+	mac := hmac.New(sha256.New, k)
+	mac.Write([]byte(label))
+	return mac.Sum(nil)
 }

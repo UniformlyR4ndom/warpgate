@@ -3,11 +3,10 @@ import { useEffect } from '../vendor/hooks.module.js';
 import { settings, state, backendTypes, transformTypes } from '../store.js';
 import { randomHex, normalizeExtOverride } from '../lib/util.js';
 import { OutboxSettings } from './outbox.js';
+import { AuthSettings } from './auth.js';
 
 // Tooltips, shared by each setting's label and its input.
 const TIP = {
-  auth: "Sent as the X-Auth header on every API request. Leave empty if the server was started with -no-auth.",
-  pcrypt: "Encrypt JSON request bodies and WebSocket control messages using a key derived from the auth key, so a proxy inspecting plaintext traffic can't read transform keys or paths. Requires an auth key.",
   bsize: "Total size of the synthetic file transferred by the benchmark (1-1024 MB). Nothing is read from or written to disk - all data is synthesized.",
   bchunk: "Splits the benchmark transfer into multiple requests of this size, simulating a chunked transfer: {start,size} requests for download, chunked-upload sessions for upload (HTTP backend only; Websocket upload always sends the whole file as one connection's frames).",
   dlchunk: "Split a file download into multiple sequential requests instead of one, useful for very large files or flaky connections.",
@@ -74,16 +73,7 @@ export function Panel() {
         <div class="panel-content">
 
           <${Section} title="Auth" openKey="authOpen">
-            <label title=${TIP.auth}>Key (X-Auth header)</label>
-            <div class="key-input-wrap">
-              <input type="text" ...${text(settings.auth, 'key')} placeholder="leave empty to skip"
-                     autocomplete="off" title=${TIP.auth} class=${state.authShowKey ? '' : 'key-masked'} />
-              <button type="button" class="key-toggle" onClick=${() => (state.authShowKey = !state.authShowKey)}
-                      title=${state.authShowKey ? 'Hide key' : 'Show key'}>👁</button>
-            </div>
-            <label class="auto-label ${settings.auth.key ? '' : 'disabled'}" title=${TIP.pcrypt}>
-              <input type="checkbox" ...${check(settings.paramCrypt, 'enabled')} disabled=${!settings.auth.key} /> Parameter obfuscation
-            </label>
+            <${AuthSettings} />
           <//>
 
           <${Section} title="Benchmark" openKey="benchmarkOpen" hidden=${tab !== 'benchmark'}>

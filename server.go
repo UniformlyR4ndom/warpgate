@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"crypto/sha256"
+	"crypto/subtle"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/hex"
@@ -31,8 +32,11 @@ type Server struct {
 	clientCAs  *x509.CertPool
 	clientFP   []byte
 	wsUpgrader websocket.Upgrader
-	authHash   string
+	authToken  string
 	paramKeys  paramcrypt.Keys // zero value when cfg.NoAuth: parameter encryption is unavailable
+	keyFP      string
+	kdfSalt    []byte
+	authLimit  *authLimiter
 
 	ipFilter       *ipFilter // nil when the IP firewall is disabled
 	trustedProxies []netip.Prefix
@@ -42,6 +46,8 @@ type Server struct {
 }
 
 const httpReadHeaderTimeout = 30 * time.Second
+
+var deriveKey = authhash.DeriveKey
 
 func NewServer(cfg Config, db *DB) (*Server, error) {
 	absRoot, err := filepath.Abs(cfg.Root)
@@ -73,10 +79,19 @@ func NewServer(cfg Config, db *DB) (*Server, error) {
 			ReadBufferSize:  wsBufferSize,
 			WriteBufferSize: wsBufferSize,
 		},
-		authHash: authhash.Hash(cfg.Key),
+		authLimit: newAuthLimiter(),
+	}
+	if s.kdfSalt, err = db.KDFSalt(); err != nil {
+		return nil, err
 	}
 	if !cfg.NoAuth {
-		s.paramKeys = paramcrypt.DeriveKeys(cfg.Key)
+		k, err := deriveKey(cfg.Key, s.kdfSalt)
+		if err != nil {
+			return nil, err
+		}
+		s.authToken = authhash.Token(k)
+		s.paramKeys = paramcrypt.DeriveKeys(k)
+		s.keyFP = authhash.Fingerprint(k)
 	}
 
 	if s.ipFilter, err = newIPFilter(cfg); err != nil {
@@ -180,12 +195,24 @@ func (s *Server) ulSweepExpired() {
 
 func (s *Server) withAuth(h http.HandlerFunc) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !s.cfg.NoAuth && r.Header.Get("X-Auth") != s.authHash {
-			http.Error(w, "unauthorized", http.StatusUnauthorized)
-			return
+		if !s.cfg.NoAuth {
+			client := s.authClient(r)
+			if s.authLimit.blocked(client) {
+				http.Error(w, authBlockedMsg, http.StatusTooManyRequests)
+				return
+			}
+			if token := r.Header.Get("X-Auth"); !tokenEqual(token, s.authToken) {
+				s.authLimit.failToken(client, token)
+				http.Error(w, "unauthorized", http.StatusUnauthorized)
+				return
+			}
 		}
 		h(w, r)
 	})
+}
+
+func tokenEqual(got, want string) bool {
+	return subtle.ConstantTimeCompare([]byte(got), []byte(want)) == 1
 }
 
 func (s *Server) handler() http.Handler {

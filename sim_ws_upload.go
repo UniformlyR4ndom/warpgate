@@ -27,13 +27,13 @@ func (s *Server) handleSimWSUpload(w http.ResponseWriter, r *http.Request) {
 	}
 	defer conn.Close()
 
-	req, encrypted, err := readWSHandshake[wsSimUploadRequest](s, conn)
+	req, encrypted, err := readWSHandshake[wsSimUploadRequest](s, conn, r)
 	if err != nil {
 		log.Printf("sim ws upload: reading control message: %v", err)
 		return
 	}
 
-	if !s.authorizeWS(conn, encrypted, req.Auth) {
+	if !s.authorizeWS(conn, r, encrypted, req.Auth) {
 		return
 	}
 

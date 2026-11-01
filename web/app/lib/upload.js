@@ -1,10 +1,10 @@
 // Upload tab logic: the flat upload-directory listing (-ul-flat), directory
 // creation, and whole-file/chunked uploads over HTTP or WS.
 import { API_BASE, state, settings, authKeyHash } from '../store.js';
-import { authHeaders, jsonHeaders, encodeBody, decodeResponseJSON, assertOk, noteAuthStatus,
-         paramEncryptEnabled, wsBaseURL, sendWSControl, wsDecryptFor } from './api.js';
+import { authHeaders, jsonHeaders, encodeBody, decodeResponseJSON, assertOk,
+         paramEncryptEnabled, apiFetch, apiWSOpen, noteWSAck, sendWSControl, wsDecryptFor } from './api.js';
 import { load } from './download.js';
-import { wsOpen, wsNextJSON, sendWSBinary } from './ws.js';
+import { wsNextJSON, sendWSBinary } from './ws.js';
 import { encodeBytesForUpload, encodeForUpload, uploadFilename } from './transform.js';
 import { addTransfer, removeTransfer, makeTransferProgress, updateIfChanged } from './transfers.js';
 
@@ -13,8 +13,7 @@ export async function loadUploadDir() {
   try {
     var encrypted = paramEncryptEnabled();
     var url = API_BASE + '/api/files/ul-list' + (encrypted ? '?e=1' : '');
-    var res = await fetch(url, { headers: authHeaders() });
-    noteAuthStatus(res);
+    var res = await apiFetch(url, { headers: authHeaders() });
     if (!res.ok) {
       state.uploadEntries = [];
       state.uploadError = res.status === 404
@@ -41,10 +40,9 @@ export const MKDIR_MAX_DEPTH = 4;
 
 export async function createDir(name) {
   var path = state.browse.ul.segments.concat([name]).join('/');
-  var res = await fetch(API_BASE + '/api/ul/mkdir', {
+  var res = await apiFetch(API_BASE + '/api/ul/mkdir', {
     method: 'POST', headers: jsonHeaders(), body: encodeBody({ path: path }),
   });
-  noteAuthStatus(res);
   if (!res.ok) throw new Error((await res.text()).trim() || 'HTTP ' + res.status);
   load('ul');
 }
@@ -93,7 +91,7 @@ async function uploadFileHTTP(file, dir, onProgress) {
 
   var result = await encodeForUpload(file);
   var spec   = encodeBody(withDir({ transform: settings.transform.type, args: result.args, 'ul-done': true }, dir));
-  var res = await fetch(API_BASE + '/api/files/upload', {
+  var res = await apiFetch(API_BASE + '/api/files/upload', {
     method: 'POST', headers: authHeaders(), body: uploadForm(spec, paramEncryptEnabled(), result.data, file.name),
   });
   assertOk(res);
@@ -122,7 +120,7 @@ async function uploadFileHTTPChunked(file, dir, onProgress) {
       'continuation-key': continuationKey,
       'ul-done': done,
     }, dir));
-    var res = await fetch(API_BASE + '/api/files/upload', {
+    var res = await apiFetch(API_BASE + '/api/files/upload', {
       method: 'POST', headers: authHeaders(), body: uploadForm(spec, encrypted, result.data, file.name),
     });
     assertOk(res);
@@ -140,7 +138,7 @@ async function uploadFileWS(file, dir, onProgress) {
   var frameSize = settings.wsFrameSizeKB * 1024;
   var decrypt   = wsDecryptFor(paramEncryptEnabled());
 
-  var ws = await wsOpen(wsBaseURL() + '/api/files/ws/upload');
+  var ws = await apiWSOpen('/api/files/ws/upload');
   try {
     sendWSControl(ws, withDir({
       auth:      authKeyHash.value,
@@ -149,7 +147,7 @@ async function uploadFileWS(file, dir, onProgress) {
       args:      result.args,
       frameSize: frameSize,
     }, dir));
-    var ack = await wsNextJSON(ws, decrypt);
+    var ack = noteWSAck(await wsNextJSON(ws, decrypt));
     if (!ack.ok) throw new Error(ack.error || 'upload failed');
 
     await sendWSBinary(ws, buffer, frameSize, onProgress);

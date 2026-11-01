@@ -1,7 +1,7 @@
 // Clipboard tab logic: incremental sync against /api/clip/state, note
 // create/edit/delete, and image attachments.
 import { API_BASE, state, settings } from '../store.js';
-import { authHeaders, jsonHeaders, encodeBody, decodeResponseJSON, paramEncryptEnabled, assertOk, noteAuthStatus } from './api.js';
+import { apiFetch, authHeaders, jsonHeaders, encodeBody, decodeResponseJSON, paramEncryptEnabled, assertOk } from './api.js';
 import { decrypt, buildTransformArgs, perRequestSecrets, encodeBytesForUpload } from './transform.js';
 import { textToBase64, base64ToText, triggerDownload, saveURL, safeFileName } from './util.js';
 
@@ -93,8 +93,7 @@ export async function pollClipboard() {
   try {
     var encrypted = paramEncryptEnabled();
     var url = API_BASE + '/api/clip/state?since=' + state.clipCursor + (encrypted ? '&e=1' : '');
-    var res = await fetch(url, { headers: authHeaders() });
-    noteAuthStatus(res);
+    var res = await apiFetch(url, { headers: authHeaders() });
     if (!res.ok) throw new Error('HTTP ' + res.status);
     applyClipState(await decodeResponseJSON(res, encrypted));
   } catch(err) {
@@ -150,7 +149,7 @@ export async function ensureAttachment(att) {
   state.clipImages[att.id] = 'loading';
   try {
     var s = perRequestSecrets();
-    var res = await fetch(API_BASE + '/api/clip/attachment/download', {
+    var res = await apiFetch(API_BASE + '/api/clip/attachment/download', {
       method:  'POST',
       headers: jsonHeaders(),
       body:    encodeBody({
@@ -213,7 +212,7 @@ async function uploadAttachment(noteId, pa) {
   var fd    = new FormData();
   fd.append('transform', new Blob([encodeBody(spec)]), 'transform.json');
   fd.append('file', enc.data, 'image');
-  var res = await fetch(API_BASE + '/api/clip/attachment', { method: 'POST', headers: authHeaders(), body: fd });
+  var res = await apiFetch(API_BASE + '/api/clip/attachment', { method: 'POST', headers: authHeaders(), body: fd });
   if (!res.ok) throw new Error('HTTP ' + res.status);
 }
 
@@ -232,7 +231,7 @@ export async function createNote(title, text, source) {
   var body = { title: sanitizeClipTitle(title), data: textToBase64(text) };
   if (source) { body.source = source; }
   var encrypted = paramEncryptEnabled();
-  var res = await fetch(API_BASE + '/api/clip/new', { method: 'POST', headers: jsonHeaders(), body: encodeBody(body) });
+  var res = await apiFetch(API_BASE + '/api/clip/new', { method: 'POST', headers: jsonHeaders(), body: encodeBody(body) });
   assertOk(res);
   return (await decodeResponseJSON(res, encrypted)).id;
 }
@@ -245,7 +244,7 @@ export async function submitClip() {
     var noteId = state.clipEditId;
     if (editing) {
       var body = { id: noteId, title: sanitizeClipTitle(state.clipTitle), data: textToBase64(state.clipText) };
-      var res = await fetch(API_BASE + '/api/clip/edit', { method: 'POST', headers: jsonHeaders(), body: encodeBody(body) });
+      var res = await apiFetch(API_BASE + '/api/clip/edit', { method: 'POST', headers: jsonHeaders(), body: encodeBody(body) });
       if (!res.ok) throw new Error('HTTP ' + res.status);
     } else {
       noteId = await createNote(state.clipTitle, state.clipText, '');
@@ -306,7 +305,7 @@ export async function deleteClip(id) {
   if (settings.confirmDelete && !window.confirm('Delete this note?')) return;
   state.clipError = null;
   try {
-    var res = await fetch(API_BASE + '/api/clip/delete', {
+    var res = await apiFetch(API_BASE + '/api/clip/delete', {
       method: 'DELETE', headers: jsonHeaders(), body: encodeBody({ id: id }),
     });
     if (!res.ok) throw new Error('HTTP ' + res.status);
@@ -317,14 +316,14 @@ export async function deleteClip(id) {
 }
 
 async function apiEditAttachmentCaption(id, caption) {
-  var res = await fetch(API_BASE + '/api/clip/attachment/edit', {
+  var res = await apiFetch(API_BASE + '/api/clip/attachment/edit', {
     method: 'POST', headers: jsonHeaders(), body: encodeBody({ id: id, caption: caption }),
   });
   if (!res.ok) throw new Error('HTTP ' + res.status);
 }
 
 async function apiDeleteAttachment(id) {
-  var res = await fetch(API_BASE + '/api/clip/attachment/delete', {
+  var res = await apiFetch(API_BASE + '/api/clip/attachment/delete', {
     method: 'DELETE', headers: jsonHeaders(), body: encodeBody({ id: id }),
   });
   if (!res.ok) throw new Error('HTTP ' + res.status);

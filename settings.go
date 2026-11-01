@@ -1,14 +1,16 @@
 package main
 
 import (
+	"encoding/hex"
 	"encoding/json"
 	"net/http"
 )
 
 type settingsResponse struct {
-	WSFrameMin int  `json:"wsFrameMin"`
-	WSFrameMax int  `json:"wsFrameMax"`
-	UlFlat     bool `json:"ulFlat"`
+	WSFrameMin int    `json:"wsFrameMin"`
+	WSFrameMax int    `json:"wsFrameMax"`
+	UlFlat     bool   `json:"ulFlat"`
+	KDFSalt    string `json:"kdfSalt"`
 }
 
 // handleSettings exposes server-configured limits the frontend needs to
@@ -21,5 +23,6 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 		WSFrameMin: wsFrameSizeMin,
 		WSFrameMax: s.cfg.WSFrameMax,
 		UlFlat:     s.cfg.UlFlat,
+		KDFSalt:    hex.EncodeToString(s.kdfSalt),
 	})
 }

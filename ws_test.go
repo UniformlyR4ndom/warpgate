@@ -541,7 +541,7 @@ func TestWSDownloadEncryptedHandshakeEncryptsAcks(t *testing.T) {
 
 	const rawKey = "test-key"
 	ts := newSimTestServer(t, Config{Root: root, Key: rawKey, WSFrameMax: 16 * 1024 * 1024})
-	keys := paramcrypt.DeriveKeys(rawKey)
+	keys := paramcrypt.DeriveKeys(testK(rawKey))
 
 	conn, _, err := websocket.DefaultDialer.Dial(wsURL(ts, "/api/files/ws/download"), nil)
 	if err != nil {
@@ -550,7 +550,7 @@ func TestWSDownloadEncryptedHandshakeEncryptsAcks(t *testing.T) {
 	defer conn.Close()
 
 	writeEncryptedWSJSON(t, conn, keys, wsDownloadRequest{
-		Auth: authhash.Hash(rawKey), Path: "note.txt", Transform: "id",
+		Auth: authhash.Token(testK(rawKey)), Path: "note.txt", Transform: "id",
 	})
 	var ack wsAck
 	readEncryptedWSJSON(t, conn, keys, &ack)
@@ -590,7 +590,7 @@ func TestWSUploadEncryptedHandshakeEncryptsAcks(t *testing.T) {
 	ulRoot := t.TempDir()
 	const rawKey = "test-key"
 	ts := newSimTestServer(t, Config{Root: t.TempDir(), UlRoot: ulRoot, Key: rawKey, WSFrameMax: 16 * 1024 * 1024})
-	keys := paramcrypt.DeriveKeys(rawKey)
+	keys := paramcrypt.DeriveKeys(testK(rawKey))
 
 	conn, _, err := websocket.DefaultDialer.Dial(wsURL(ts, "/api/files/ws/upload"), nil)
 	if err != nil {
@@ -599,7 +599,7 @@ func TestWSUploadEncryptedHandshakeEncryptsAcks(t *testing.T) {
 	defer conn.Close()
 
 	writeEncryptedWSJSON(t, conn, keys, wsUploadRequest{
-		Auth: authhash.Hash(rawKey), Filename: "up.bin", Transform: "id",
+		Auth: authhash.Token(testK(rawKey)), Filename: "up.bin", Transform: "id",
 	})
 	var ack wsAck
 	readEncryptedWSJSON(t, conn, keys, &ack)

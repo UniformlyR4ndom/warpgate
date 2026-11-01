@@ -2,7 +2,9 @@ package main
 
 import (
 	"crypto/tls"
+	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -19,12 +21,17 @@ import (
 type globalFlags struct {
 	url        string
 	authKey    string
+	authK      string
 	insecure   bool
 	paramCrypt bool
 	certFile   string
 	certKey    string
 	json       bool
 	tlsConfig  *tls.Config
+
+	keyResolved bool
+	k           []byte
+	keyErr      error
 }
 
 // globalEnv maps each global flag to the environment variable used when the
@@ -32,6 +39,7 @@ type globalFlags struct {
 var globalEnv = map[string]string{
 	"url":         "WGCLI_URL",
 	"auth-key":    "WGCLI_AUTH_KEY",
+	"auth-k":      "WGCLI_AUTH_K",
 	"insecure":    "WGCLI_INSECURE",
 	"param-crypt": "WGCLI_PARAM_CRYPT",
 	"cert":        "WGCLI_CERT",
@@ -42,7 +50,8 @@ var globalEnv = map[string]string{
 func addGlobalFlags(fs *flag.FlagSet) *globalFlags {
 	g := &globalFlags{}
 	fs.StringVar(&g.url, "url", "http://localhost:8080", "warpgate server base URL (env WGCLI_URL)")
-	fs.StringVar(&g.authKey, "auth-key", "", "raw auth key (env WGCLI_AUTH_KEY)")
+	fs.StringVar(&g.authKey, "auth-key", "", "auth passphrase; the key is derived with the server's salt, taking about a second (env WGCLI_AUTH_KEY)")
+	fs.StringVar(&g.authK, "auth-k", "", "derived key as printed by \"wgcli derive-key\"; overrides -auth-key (env WGCLI_AUTH_K)")
 	fs.BoolVar(&g.insecure, "insecure", false, "skip TLS certificate verification (self-signed test certs) (env WGCLI_INSECURE)")
 	fs.BoolVar(&g.paramCrypt, "param-crypt", false, "encrypt request control-parameter JSON (and decrypt matching responses) using a key derived from -auth-key; see CLAUDE.md's Parameter Encryption section (env WGCLI_PARAM_CRYPT)")
 	fs.StringVar(&g.certFile, "cert", "", "PEM client certificate (chain) for servers requiring TLS client auth; needs -cert-key (env WGCLI_CERT)")
@@ -130,25 +139,75 @@ func permuteArgs(fs *flag.FlagSet, args []string) []string {
 	return append(append(flags, "--"), pos...)
 }
 
-// paramKeys reports whether parameter encryption is active for this
-// invocation and, if so, the subkeys derived from -auth-key. Mirrors the
-// frontend's paramEncryptEnabled(): the -param-crypt flag alone isn't
-// enough — there's no shared secret to derive keys from without an auth
-// key, matching how the browser's checkbox is disabled with no key set.
-func (g *globalFlags) paramKeys() (paramcrypt.Keys, bool) {
-	if !g.paramCrypt || g.authKey == "" {
-		return paramcrypt.Keys{}, false
+// key returns the derived key K, nil without -auth-k/-auth-key. Deriving it
+// from -auth-key fetches the salt from the server; the result, or the error,
+// is cached for the invocation.
+func (g *globalFlags) key() ([]byte, error) {
+	if !g.keyResolved {
+		g.keyResolved = true
+		g.k, g.keyErr = g.resolveKey()
 	}
-	return paramcrypt.DeriveKeys(g.authKey), true
+	return g.k, g.keyErr
 }
 
-// authToken derives the value actually sent to the server (X-Auth header or
-// WS auth field) from -auth-key, so the raw key itself is never transmitted.
-func (g *globalFlags) authToken() string {
+func (g *globalFlags) resolveKey() ([]byte, error) {
+	if g.authK != "" {
+		k, err := hex.DecodeString(g.authK)
+		if err != nil || len(k) != authhash.KeySize {
+			return nil, fmt.Errorf("-auth-k must be %d hex-encoded bytes", authhash.KeySize)
+		}
+		return k, nil
+	}
 	if g.authKey == "" {
+		return nil, nil
+	}
+	salt, err := g.fetchSalt()
+	if err != nil {
+		return nil, err
+	}
+	return authhash.DeriveKey(g.authKey, salt)
+}
+
+func (g *globalFlags) fetchSalt() ([]byte, error) {
+	resp, err := g.httpClient().Get(strings.TrimRight(g.url, "/") + "/api/public/settings")
+	if err != nil {
+		return nil, fmt.Errorf("fetching KDF salt: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("fetching KDF salt: %s", resp.Status)
+	}
+	var v struct {
+		KDFSalt string `json:"kdfSalt"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&v); err != nil {
+		return nil, fmt.Errorf("fetching KDF salt: %w", err)
+	}
+	salt, err := hex.DecodeString(v.KDFSalt)
+	if err != nil || len(salt) == 0 {
+		return nil, errors.New("fetching KDF salt: server sent no valid salt")
+	}
+	return salt, nil
+}
+
+// paramKeys reports whether parameter encryption is active (-param-crypt
+// and a key) and, if so, the subkeys of K. A key error is reported by the
+// next request instead.
+func (g *globalFlags) paramKeys() (paramcrypt.Keys, bool) {
+	k, err := g.key()
+	if !g.paramCrypt || k == nil || err != nil {
+		return paramcrypt.Keys{}, false
+	}
+	return paramcrypt.DeriveKeys(k), true
+}
+
+// authToken returns the value sent as X-Auth or WS auth, "" without a key.
+func (g *globalFlags) authToken() string {
+	k, err := g.key()
+	if k == nil || err != nil {
 		return ""
 	}
-	return authhash.Hash(g.authKey)
+	return authhash.Token(k)
 }
 
 // httpClient refuses to follow redirects: Go would resend X-Auth to any host,
@@ -163,6 +222,9 @@ func (g *globalFlags) httpClient() *http.Client {
 }
 
 func (g *globalFlags) newRequest(method, path string, body io.Reader) (*http.Request, error) {
+	if _, err := g.key(); err != nil {
+		return nil, err
+	}
 	req, err := http.NewRequest(method, strings.TrimRight(g.url, "/")+path, body)
 	if err != nil {
 		return nil, err

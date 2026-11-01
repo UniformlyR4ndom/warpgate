@@ -8,7 +8,7 @@ import (
 )
 
 func TestRoundTrip(t *testing.T) {
-	k := DeriveKeys("test-shared-secret")
+	k := DeriveKeys([]byte("test-shared-secret"))
 	cases := [][]byte{
 		[]byte(""),
 		[]byte("a"),
@@ -31,7 +31,7 @@ func TestRoundTrip(t *testing.T) {
 }
 
 func TestTamperDetection(t *testing.T) {
-	k := DeriveKeys("test-shared-secret")
+	k := DeriveKeys([]byte("test-shared-secret"))
 	nonce := bytes.Repeat([]byte{0x11}, nonceSize)
 	pt := []byte(`{"path":"secret.pdf"}`)
 	blob, err := encryptWithNonce(k, nonce, pt)
@@ -54,24 +54,24 @@ func TestTamperDetection(t *testing.T) {
 }
 
 func TestWrongKeyRejected(t *testing.T) {
-	blob, err := Encrypt(DeriveKeys("secret-a"), []byte("hello"))
+	blob, err := Encrypt(DeriveKeys([]byte("secret-a")), []byte("hello"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := Decrypt(DeriveKeys("secret-b"), blob); !errors.Is(err, ErrAuthFailed) {
+	if _, err := Decrypt(DeriveKeys([]byte("secret-b")), blob); !errors.Is(err, ErrAuthFailed) {
 		t.Errorf("expected ErrAuthFailed, got %v", err)
 	}
 }
 
 func TestEncMacKeysDiffer(t *testing.T) {
-	k := DeriveKeys("test-shared-secret")
+	k := DeriveKeys([]byte("test-shared-secret"))
 	if bytes.Equal(k.enc, k.mac) {
 		t.Fatal("enc and mac keys must differ")
 	}
 }
 
 func TestDeterminism(t *testing.T) {
-	k := DeriveKeys("test-shared-secret")
+	k := DeriveKeys([]byte("test-shared-secret"))
 	nonce := bytes.Repeat([]byte{0x42}, nonceSize)
 	pt := []byte("same input")
 	a, err := encryptWithNonce(k, nonce, pt)
@@ -88,7 +88,7 @@ func TestDeterminism(t *testing.T) {
 }
 
 func TestDecryptRejectsShortBlob(t *testing.T) {
-	k := DeriveKeys("test-shared-secret")
+	k := DeriveKeys([]byte("test-shared-secret"))
 	short := base64.StdEncoding.EncodeToString(make([]byte, nonceSize+macSize-1))
 	if _, err := Decrypt(k, short); !errors.Is(err, ErrAuthFailed) {
 		t.Errorf("expected ErrAuthFailed, got %v", err)
@@ -96,7 +96,7 @@ func TestDecryptRejectsShortBlob(t *testing.T) {
 }
 
 func TestDecryptRejectsBadBase64(t *testing.T) {
-	k := DeriveKeys("test-shared-secret")
+	k := DeriveKeys([]byte("test-shared-secret"))
 	if _, err := Decrypt(k, "not base64!!!"); !errors.Is(err, ErrAuthFailed) {
 		t.Errorf("expected ErrAuthFailed, got %v", err)
 	}
@@ -108,7 +108,7 @@ func TestDecryptRejectsBadBase64(t *testing.T) {
 // Any change to the wire format, labels, or derivation must update this
 // vector (and re-verify the JS side) deliberately, not accidentally.
 func TestVector(t *testing.T) {
-	k := DeriveKeys("test-shared-secret")
+	k := DeriveKeys([]byte("test-shared-secret"))
 	nonce := make([]byte, nonceSize)
 	for i := range nonce {
 		nonce[i] = byte(i)
@@ -119,7 +119,7 @@ func TestVector(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	const want = "AAECAwQFBgcICQoLDA0OD12dksZjXS80RxuoiEWgMLGHJ8ss2ZH8LvBHJTCmWOZimHLh0JNRe6vDUzY5ld9MBfm0hP31KepF8GgPTizonGRu2jcJA6XB"
+	const want = "AAECAwQFBgcICQoLDA0ODyTxsdYlrdUBY6S5Q2atPLqYnmLk3IefGSVYLPYUp+rutWlly89T5yZmNI1ENUcfRjoHDbXfpPEtWNGmObKP5+cQdq7m/AOE"
 	if got != want {
 		t.Fatalf("test vector mismatch: got %q want %q", got, want)
 	}

@@ -3,13 +3,44 @@
 // depend on the store.
 import { API_BASE, settings, state, authKeyHash, paramEncKeyBytes } from '../store.js';
 import { encryptParams, decryptParams } from './paramcrypt.js';
+import { wsOpen } from './ws.js';
 
 export { API_BASE, decryptParams };
 
 export function authHeaders() {
   var h = {};
-  if (settings.auth.key) { h['X-Auth'] = authKeyHash.value; }
+  if (authKeyHash.value) { h['X-Auth'] = authKeyHash.value; }
   return h;
+}
+
+function authRejectedError() {
+  return Object.assign(new Error('The server rejected the auth key; set it again in the settings'), { status: 401 });
+}
+
+// Every authenticated request goes through here. After a 401 nothing is sent
+// until the key changes, so polling can't use up the server's failed-attempt
+// budget.
+export async function apiFetch(url, opts) {
+  if (state.authFailed) throw authRejectedError();
+  var res = await fetch(url, opts);
+  if (res.status === 401) state.authFailed = true;
+  state.authBlocked = res.status === 429;
+  if (state.authBlocked) {
+    throw Object.assign(new Error('Too many failed authentication attempts from this IP; wait up to 10 minutes or restart the server'), { status: 429 });
+  }
+  return res;
+}
+
+// WebSocket counterpart of apiFetch's gate.
+export async function apiWSOpen(path) {
+  if (state.authFailed) throw authRejectedError();
+  return wsOpen(wsBaseURL() + path);
+}
+
+// Records an "unauthorized" handshake ack like an HTTP 401.
+export function noteWSAck(ack) {
+  if (!ack.ok && ack.error === 'unauthorized') state.authFailed = true;
+  return ack;
 }
 
 export function jsonHeaders() {
@@ -32,11 +63,6 @@ export function sendWSControl(ws, obj) {
 export async function decodeResponseJSON(res, encrypted) {
   if (!encrypted) return res.json();
   return decryptParams(await res.text());
-}
-
-// Any other status means the auth check passed (it runs before routing).
-export function noteAuthStatus(res) {
-  state.authFailed = res.status === 401;
 }
 
 export function assertOk(res) {

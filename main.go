@@ -142,6 +142,8 @@ func main() {
 	}
 	if cfg.NoAuth {
 		log.Printf("authentication disabled")
+	} else {
+		log.Printf("auth key fingerprint: %s", srv.keyFP)
 	}
 	if cfg.ClientRoot != "" {
 		log.Printf("requiring TLS client certificate (root: %s)", cfg.ClientRoot)

@@ -2,9 +2,9 @@
 // directory): listing, navigation, and chunked/whole-file downloads over HTTP
 // or WS.
 import { API_BASE, state, settings } from '../store.js';
-import { jsonHeaders, authHeaders, encodeBody, decodeResponseJSON, assertOk, noteAuthStatus,
-         paramEncryptEnabled, wsBaseURL, sendWSControl, wsDecryptFor, closeWSSession } from './api.js';
-import { wsOpen, wsNextJSON, receiveWSBinary, readBodyWithProgress } from './ws.js';
+import { jsonHeaders, authHeaders, encodeBody, decodeResponseJSON, assertOk,
+         paramEncryptEnabled, apiFetch, apiWSOpen, noteWSAck, sendWSControl, wsDecryptFor, closeWSSession } from './api.js';
+import { wsNextJSON, receiveWSBinary, readBodyWithProgress } from './ws.js';
 import { decrypt, buildTransformArgs, perRequestSecrets, resolveContentTypeOverride } from './transform.js';
 import { authKeyHash } from '../store.js';
 import { padIndex, triggerDownload, applyExtOverride } from './util.js';
@@ -18,12 +18,11 @@ export async function load(root) {
   b.error = null;
   try {
     var encrypted = paramEncryptEnabled();
-    var res = await fetch(API_BASE + API_PREFIX[root] + 'list', {
+    var res = await apiFetch(API_BASE + API_PREFIX[root] + 'list', {
       method:  'POST',
       headers: jsonHeaders(),
       body:    encodeBody({ path: b.segments.join('/') }),
     });
-    noteAuthStatus(res);
     if (res.status === 404 && root === 'ul' && b.segments.length === 0) {
       b.entries = [];
       b.error = 'Uploads are not enabled on this server.';
@@ -62,7 +61,7 @@ async function fetchChunkHTTP(prefix, path, start, size, onProgress) {
     transform: t.type, args: buildTransformArgs(s.password, s.htmlB64Key),
   };
   if (contentType) body.contentType = contentType;
-  var res = await fetch(API_BASE + prefix + 'download', {
+  var res = await apiFetch(API_BASE + prefix + 'download', {
     method:  'POST',
     headers: jsonHeaders(),
     body:    encodeBody(body),
@@ -76,14 +75,14 @@ async function fetchChunkWS(wsSession, prefix, path, start, size, onProgress) {
   if (!wsSession.ws) {
     var t = settings.transform;
     var s = perRequestSecrets();
-    var ws = await wsOpen(wsBaseURL() + prefix + 'ws/download');
+    var ws = await apiWSOpen(prefix + 'ws/download');
     var encrypted = paramEncryptEnabled();
     sendWSControl(ws, {
       auth: authKeyHash.value, path: path, transform: t.type,
       args: buildTransformArgs(s.password, s.htmlB64Key),
       frameSize: settings.wsFrameSizeKB * 1024,
     });
-    var ack = await wsNextJSON(ws, wsDecryptFor(encrypted));
+    var ack = noteWSAck(await wsNextJSON(ws, wsDecryptFor(encrypted)));
     if (!ack.ok) { ws.close(); throw new Error(ack.error || 'download failed'); }
     wsSession.ws = ws;
     wsSession.password = s.password;

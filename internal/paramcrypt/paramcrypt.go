@@ -1,9 +1,8 @@
 // Package paramcrypt implements an optional client-side mechanism for
 // encrypting request control-parameter JSON blobs (paths, transform
 // keys/passwords, etc.), so a proxy that can read plaintext HTTP/WS traffic
-// can't recover them. Keys are derived from the same shared -auth-key used
-// for X-Auth, but via a distinct labeled HMAC-SHA256 derivation — unrelated
-// to authhash.Hash's derivation of the X-Auth token itself.
+// can't recover them. Keys are labeled subkeys of the master key K (see
+// internal/authhash), separate from the X-Auth token.
 package paramcrypt
 
 import (
@@ -15,14 +14,16 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+
+	"warpgate/internal/authhash"
 )
 
 const (
 	nonceSize = 16          // aes.BlockSize; also the AES-CTR initial counter size
 	macSize   = sha256.Size // 32
 
-	encLabel = "warpgate-param-enc-v1"
-	macLabel = "warpgate-param-mac-v1"
+	encLabel = "warpgate-param-enc-v2"
+	macLabel = "warpgate-param-mac-v2"
 )
 
 // ErrAuthFailed is returned by Decrypt for any failure — bad base64, a
@@ -30,31 +31,18 @@ const (
 // why a blob was rejected.
 var ErrAuthFailed = errors.New("paramcrypt: authentication failed")
 
-// Keys holds the two subkeys derived from the shared auth key: one for
-// AES-CTR encryption, one for HMAC-SHA256 authentication. Keeping them
-// distinct, rather than reusing one key for both algorithms, follows
-// standard key-separation practice.
+// Keys holds the AES-CTR and HMAC-SHA256 subkeys.
 type Keys struct {
 	enc []byte
 	mac []byte
 }
 
-// DeriveKeys derives the encryption and MAC subkeys from rawAuthKey (the
-// same string as -auth-key / Config.Key) via labeled HMAC-SHA256. The
-// labels domain-separate this derivation from authhash.Hash's derivation of
-// the X-Auth token, so knowing one value gives no information about the
-// other.
-func DeriveKeys(rawAuthKey string) Keys {
+// DeriveKeys derives the encryption and MAC subkeys from the master key K.
+func DeriveKeys(k []byte) Keys {
 	return Keys{
-		enc: label(rawAuthKey, encLabel),
-		mac: label(rawAuthKey, macLabel),
+		enc: authhash.Label(k, encLabel),
+		mac: authhash.Label(k, macLabel),
 	}
-}
-
-func label(rawAuthKey, l string) []byte {
-	h := hmac.New(sha256.New, []byte(rawAuthKey))
-	h.Write([]byte(l))
-	return h.Sum(nil)
 }
 
 // Encrypt returns the base64-encoded nonce||ciphertext||hmac blob for

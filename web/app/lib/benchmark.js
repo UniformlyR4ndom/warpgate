@@ -3,8 +3,8 @@
 // directions verify a SHA-256 hash, so corruption shows up as a failed run.
 import { API_BASE, state, settings, authKeyHash } from '../store.js';
 import { authHeaders, jsonHeaders, encodeBody, decodeResponseJSON, assertOk,
-         paramEncryptEnabled, wsBaseURL, sendWSControl, wsDecryptFor, closeWSSession } from './api.js';
-import { wsOpen, wsNextJSON, sendWSBinary, receiveWSBinary } from './ws.js';
+         paramEncryptEnabled, apiFetch, apiWSOpen, noteWSAck, sendWSControl, wsDecryptFor, closeWSSession } from './api.js';
+import { wsNextJSON, sendWSBinary, receiveWSBinary } from './ws.js';
 import { sha256Hex } from './util.js';
 
 const NO_SUBTLE = 'SHA-256 hashing requires a secure context (HTTPS or localhost)';
@@ -55,7 +55,7 @@ function resetBenchmarkFlags() {
 }
 
 async function fetchSimChunkHTTP(totalSize, start, size, onProgress) {
-  var res = await fetch(API_BASE + '/api/sim/download', {
+  var res = await apiFetch(API_BASE + '/api/sim/download', {
     method:  'POST',
     headers: jsonHeaders(),
     body:    encodeBody({ totalSize: totalSize, start: start, size: size }),
@@ -71,10 +71,10 @@ async function fetchSimChunkHTTP(totalSize, start, size, onProgress) {
 
 async function fetchSimChunkWS(wsSession, totalSize, start, size, onProgress) {
   if (!wsSession.ws) {
-    var ws = await wsOpen(wsBaseURL() + '/api/sim/ws/download');
+    var ws = await apiWSOpen('/api/sim/ws/download');
     var encrypted = paramEncryptEnabled();
     sendWSControl(ws, { auth: authKeyHash.value, totalSize: totalSize, frameSize: settings.wsFrameSizeKB * 1024 });
-    var ack = await wsNextJSON(ws, wsDecryptFor(encrypted));
+    var ack = noteWSAck(await wsNextJSON(ws, wsDecryptFor(encrypted)));
     if (!ack.ok) { ws.close(); throw new Error(ack.error || 'download failed'); }
     wsSession.ws = ws;
     wsSession.encrypted = encrypted;
@@ -164,7 +164,7 @@ async function generateRandomBuffer(totalSize, onProgress) {
 async function uploadSimHTTP(buffer) {
   var fd = new FormData();
   fd.append('file', new Blob([buffer]), 'bench.bin');
-  var res = await fetch(API_BASE + '/api/sim/upload', { method: 'POST', headers: authHeaders(), body: fd });
+  var res = await apiFetch(API_BASE + '/api/sim/upload', { method: 'POST', headers: authHeaders(), body: fd });
   assertOk(res);
   return (await res.json()).hash;
 }
@@ -187,7 +187,7 @@ async function uploadSimHTTPChunked(buffer, chunkSize, onProgress) {
     var fd = new FormData();
     fd.append('transform', new Blob([spec], { type: encrypted ? 'text/plain' : 'application/json' }), 'transform.json');
     fd.append('file', new Blob([slice]), 'bench.bin');
-    var res = await fetch(API_BASE + '/api/sim/upload', { method: 'POST', headers: authHeaders(), body: fd });
+    var res = await apiFetch(API_BASE + '/api/sim/upload', { method: 'POST', headers: authHeaders(), body: fd });
     assertOk(res);
     var data = await decodeResponseJSON(res, encrypted);
     continuationKey = data['continuation-key'] || '';
@@ -202,10 +202,10 @@ async function uploadSimHTTPChunked(buffer, chunkSize, onProgress) {
 async function uploadSimWS(buffer, onProgress) {
   var frameSize = settings.wsFrameSizeKB * 1024;
   var decrypt   = wsDecryptFor(paramEncryptEnabled());
-  var ws = await wsOpen(wsBaseURL() + '/api/sim/ws/upload');
+  var ws = await apiWSOpen('/api/sim/ws/upload');
   try {
     sendWSControl(ws, { auth: authKeyHash.value, frameSize: frameSize });
-    var ack = await wsNextJSON(ws, decrypt);
+    var ack = noteWSAck(await wsNextJSON(ws, decrypt));
     if (!ack.ok) throw new Error(ack.error || 'upload failed');
 
     await sendWSBinary(ws, buffer, frameSize, onProgress);

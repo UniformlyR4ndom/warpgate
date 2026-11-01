@@ -1,6 +1,7 @@
 package main
 
 import (
+	"crypto/rand"
 	"database/sql"
 	"encoding/base64"
 	"errors"
@@ -9,6 +10,8 @@ import (
 	"time"
 
 	_ "modernc.org/sqlite"
+
+	"warpgate/internal/authhash"
 )
 
 // errNoteNotFound is returned by attachment writes whose target note is gone.
@@ -46,6 +49,10 @@ func migrate(conn *sql.DB) error {
 		`CREATE TABLE IF NOT EXISTS meta (
 			key   TEXT PRIMARY KEY,
 			value INTEGER NOT NULL
+		)`,
+		`CREATE TABLE IF NOT EXISTS meta_blob (
+			key   TEXT PRIMARY KEY,
+			value BLOB NOT NULL
 		)`,
 		`CREATE TABLE IF NOT EXISTS clip_attachment (
 			id      INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -95,7 +102,24 @@ func migrate(conn *sql.DB) error {
 	if _, err := conn.Exec(`INSERT OR IGNORE INTO meta (key, value) VALUES ('last_del_rev', 0)`); err != nil {
 		return fmt.Errorf("migrating schema: %w", err)
 	}
+	salt := make([]byte, authhash.SaltSize)
+	if _, err := rand.Read(salt); err != nil {
+		return fmt.Errorf("generating KDF salt: %w", err)
+	}
+	if _, err := conn.Exec(`INSERT OR IGNORE INTO meta_blob (key, value) VALUES ('kdf_salt', ?)`, salt); err != nil {
+		return fmt.Errorf("migrating schema: %w", err)
+	}
 	return nil
+}
+
+// KDFSalt returns the salt for authhash.DeriveKey, fixed for the life of the
+// database.
+func (d *DB) KDFSalt() ([]byte, error) {
+	var salt []byte
+	if err := d.sql.QueryRow(`SELECT value FROM meta_blob WHERE key = 'kdf_salt'`).Scan(&salt); err != nil {
+		return nil, fmt.Errorf("reading KDF salt: %w", err)
+	}
+	return salt, nil
 }
 
 func addColumnIfMissing(conn *sql.DB, table, column, decl string) error {

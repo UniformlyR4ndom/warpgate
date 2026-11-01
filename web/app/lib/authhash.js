@@ -1,19 +1,23 @@
-// Mirrors internal/authhash.Hash: a labeled HMAC-SHA256 round seeds 1000
-// rounds of plain SHA-256. The raw key is never sent to the server; this
-// derives the X-Auth token value. sha256 is the vendored js-sha256 global.
-import { bytesToHex } from './util.js';
+// Mirrors internal/authhash: scrypt turns the passphrase into the master key
+// K; the auth token and all other subkeys are labeled HMACs of K.
+// sha256 is the vendored js-sha256 global.
+import { scryptAsync } from '../vendor/noble-hashes/scrypt.js';
+import { bytesToHex, hexToBytes } from './util.js';
+
+const SCRYPT = { N: 1 << 17, r: 8, p: 1, dkLen: 32 };
 
 // js-sha256 accepts Uint8Array directly; .array() returns a plain Array.
 export function hmacSha256Bytes(keyBytes, msgBytes) {
   return new Uint8Array(sha256.hmac.array(keyBytes, msgBytes));
 }
 
-export async function hashAuthKey(key) {
-  var keyBytes = new TextEncoder().encode(key);
-  var seed = hmacSha256Bytes(keyBytes, new TextEncoder().encode('warpgate-auth-token-v1'));
-  var data = new Uint8Array(await window.crypto.subtle.digest('SHA-256', seed));
-  for (var i = 1; i < 1000; i++) {
-    data = new Uint8Array(await window.crypto.subtle.digest('SHA-256', data));
-  }
-  return bytesToHex(data);
+export function labelBytes(k, label) {
+  return hmacSha256Bytes(k, new TextEncoder().encode(label));
 }
+
+export async function deriveKey(passphrase, saltHex, onProgress) {
+  return scryptAsync(passphrase, hexToBytes(saltHex), Object.assign({ onProgress: onProgress }, SCRYPT));
+}
+
+export function authToken(k)   { return bytesToHex(labelBytes(k, 'warpgate-auth-token-v2')); }
+export function fingerprint(k) { return bytesToHex(labelBytes(k, 'warpgate-key-fingerprint-v1').slice(0, 2)); }

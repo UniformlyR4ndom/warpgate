@@ -93,6 +93,13 @@ func TestSimReaderSmallBuffer(t *testing.T) {
 // the test ends, so Windows can delete the test's temp dirs.
 func newTestServer(t *testing.T, cfg Config, db *DB) *Server {
 	t.Helper()
+	if db == nil {
+		var err error
+		if db, err = OpenDB(":memory:"); err != nil {
+			t.Fatalf("OpenDB: %v", err)
+		}
+		t.Cleanup(func() { db.Close() })
+	}
 	srv, err := NewServer(cfg, db)
 	if err != nil {
 		t.Fatalf("NewServer: %v", err)

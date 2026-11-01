@@ -45,6 +45,9 @@ func (g *globalFlags) wsURL(path string) (string, error) {
 }
 
 func (g *globalFlags) dialWS(path string) (*websocket.Conn, error) {
+	if _, err := g.key(); err != nil {
+		return nil, err
+	}
 	target, err := g.wsURL(path)
 	if err != nil {
 		return nil, err

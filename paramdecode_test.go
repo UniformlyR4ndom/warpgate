@@ -88,7 +88,7 @@ func TestDecodeParamsGarbageRejected(t *testing.T) {
 
 func TestDecodeParamsWrongKeyRejected(t *testing.T) {
 	s := newParamDecodeTestServer(t, Config{Key: "test-key"})
-	otherKeys := paramcrypt.DeriveKeys("a-different-key")
+	otherKeys := paramcrypt.DeriveKeys(testK("a-different-key"))
 	blob, err := paramcrypt.Encrypt(otherKeys, []byte(`{"path":"a.txt"}`))
 	if err != nil {
 		t.Fatal(err)
@@ -114,7 +114,7 @@ func TestDecodeParamsNoAuthRejectsEncryptedBlob(t *testing.T) {
 	s := newParamDecodeTestServer(t, Config{NoAuth: true})
 	// Built with a real key even though the server has none — simulates a
 	// client mistakenly sending an encrypted blob to a -no-auth server.
-	blob, err := paramcrypt.Encrypt(paramcrypt.DeriveKeys("some-key"), []byte(`{"path":"a.txt"}`))
+	blob, err := paramcrypt.Encrypt(paramcrypt.DeriveKeys(testK("some-key")), []byte(`{"path":"a.txt"}`))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -173,7 +173,7 @@ func TestEncodeParamsResponseEncrypted(t *testing.T) {
 
 func TestHandleUlListQueryParamEncryption(t *testing.T) {
 	s := newParamDecodeTestServer(t, Config{Key: "test-key", UlRoot: t.TempDir()})
-	keys := paramcrypt.DeriveKeys("test-key")
+	keys := paramcrypt.DeriveKeys(testK("test-key"))
 
 	t.Run("with e param, response is encrypted", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/api/files/ul-list?e=1", nil)
@@ -207,7 +207,7 @@ func TestHandleUlListQueryParamIgnoredUnderNoAuth(t *testing.T) {
 
 func TestHandleClipStateQueryParamEncryption(t *testing.T) {
 	s := newParamDecodeTestServer(t, Config{Key: "test-key"})
-	keys := paramcrypt.DeriveKeys("test-key")
+	keys := paramcrypt.DeriveKeys(testK("test-key"))
 
 	t.Run("with e param, response is encrypted", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/api/clip/state?e=1", nil)

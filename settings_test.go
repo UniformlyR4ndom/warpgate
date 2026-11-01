@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"testing"
+
+	"warpgate/internal/authhash"
 )
 
 func TestHandleSettings(t *testing.T) {
@@ -22,7 +24,10 @@ func TestHandleSettings(t *testing.T) {
 	if err := json.NewDecoder(res.Body).Decode(&got); err != nil {
 		t.Fatalf("decoding response: %v", err)
 	}
-	want := settingsResponse{WSFrameMin: wsFrameSizeMin, WSFrameMax: 5 * 1024 * 1024}
+	if len(got.KDFSalt) != 2*authhash.SaltSize {
+		t.Errorf("kdfSalt = %q, want %d hex bytes", got.KDFSalt, authhash.SaltSize)
+	}
+	want := settingsResponse{WSFrameMin: wsFrameSizeMin, WSFrameMax: 5 * 1024 * 1024, KDFSalt: got.KDFSalt}
 	if got != want {
 		t.Fatalf("got %+v, want %+v", got, want)
 	}

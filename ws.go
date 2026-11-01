@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -42,10 +43,6 @@ type wsAck struct {
 	ChunkSize int64 `json:"chunkSize,omitempty"`
 }
 
-func (s *Server) checkWSAuth(key string) bool {
-	return s.cfg.NoAuth || key == s.authHash
-}
-
 // upgradeWS upgrades the request and applies the pre-auth limits: control
 // messages are capped at maxParamBodySize and the first one must arrive
 // within wsAuthTimeout.
@@ -61,8 +58,9 @@ func (s *Server) upgradeWS(w http.ResponseWriter, r *http.Request) (*websocket.C
 
 // authorizeWS checks the handshake's auth token. On failure it sends the
 // error and returns false; on success it lifts the pre-auth read deadline.
-func (s *Server) authorizeWS(conn *websocket.Conn, encrypted bool, key string) bool {
-	if !s.checkWSAuth(key) {
+func (s *Server) authorizeWS(conn *websocket.Conn, r *http.Request, encrypted bool, key string) bool {
+	if !s.cfg.NoAuth && !tokenEqual(key, s.authToken) {
+		s.authLimit.failToken(s.authClient(r), key)
 		s.writeWSError(conn, encrypted, websocket.ClosePolicyViolation, "unauthorized")
 		return false
 	}
@@ -86,14 +84,28 @@ func (s *Server) resolveFrameSize(requested int64) (int, error) {
 }
 
 // readWSHandshake reads and decodes the first control message, still under
-// the pre-auth deadline set by upgradeWS.
-func readWSHandshake[T any](s *Server, conn *websocket.Conn) (T, bool, error) {
+// the pre-auth deadline set by upgradeWS. A blocked client is refused, and a
+// message that doesn't decode counts as a failed authentication, since an
+// encrypted one fails to decode under the wrong key.
+func readWSHandshake[T any](s *Server, conn *websocket.Conn, r *http.Request) (T, bool, error) {
+	var v T
 	mt, p, err := conn.ReadMessage()
 	if err != nil {
-		var v T
 		return v, false, err
 	}
-	return decodeWSControl[T](s, mt, p)
+	if s.cfg.NoAuth {
+		return decodeWSControl[T](s, mt, p)
+	}
+	client := s.authClient(r)
+	if s.authLimit.blocked(client) {
+		s.writeWSError(conn, false, websocket.ClosePolicyViolation, authBlockedMsg)
+		return v, false, errors.New(authBlockedMsg)
+	}
+	v, encrypted, err := decodeWSControl[T](s, mt, p)
+	if err != nil {
+		s.authLimit.fail(client)
+	}
+	return v, encrypted, err
 }
 
 // readWSControl reads and decodes a control message after authentication.

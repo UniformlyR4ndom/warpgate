@@ -34,6 +34,8 @@ func main() {
 		err = runSim(args)
 	case "register":
 		err = runRegister(args)
+	case "derive-key":
+		err = runDeriveKey(args)
 	case "-h", "--help", "help":
 		usage()
 		return
@@ -59,7 +61,7 @@ Flags may come before or after positional arguments; "--" ends flag
 parsing (for an argument starting with "-").
 
 Global flags fall back to environment variables when not given:
-  WGCLI_URL, WGCLI_AUTH_KEY, WGCLI_INSECURE, WGCLI_PARAM_CRYPT,
+  WGCLI_URL, WGCLI_AUTH_KEY, WGCLI_AUTH_K, WGCLI_INSECURE, WGCLI_PARAM_CRYPT,
   WGCLI_CERT, WGCLI_CERT_KEY
 Transform keys/IVs left empty are generated randomly per invocation.
 
@@ -73,6 +75,7 @@ Commands:
             manage clipboard notes/images (newest first)
   sim       download|upload [flags]             probe transport via a synthetic file/buffer (no filesystem I/O, no transform)
   register  [flags] [registration-url]          register this client's IP with the IP firewall (default URL: -url)
+  derive-key [flags]                            print the key derived from -auth-key (for -auth-k / WGCLI_AUTH_K)
 
 Run "wgcli <command> -h" for command-specific flags.
 `)

@@ -119,7 +119,7 @@ func TestHTTPClientRefusesRedirect(t *testing.T) {
 	}))
 	defer origin.Close()
 
-	g := &globalFlags{url: origin.URL, authKey: "k"}
+	g := &globalFlags{url: origin.URL, authK: strings.Repeat("ab", 32)}
 	req, err := g.newRequest(http.MethodPost, "/api/files/list", strings.NewReader("{}"))
 	if err != nil {
 		t.Fatal(err)

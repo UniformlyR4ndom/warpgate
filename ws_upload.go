@@ -39,13 +39,13 @@ func (s *Server) handleWSUpload(w http.ResponseWriter, r *http.Request) {
 	}
 	defer conn.Close()
 
-	req, encrypted, err := readWSHandshake[wsUploadRequest](s, conn)
+	req, encrypted, err := readWSHandshake[wsUploadRequest](s, conn, r)
 	if err != nil {
 		log.Printf("ws upload: reading control message: %v", err)
 		return
 	}
 
-	if !s.authorizeWS(conn, encrypted, req.Auth) {
+	if !s.authorizeWS(conn, r, encrypted, req.Auth) {
 		return
 	}
 

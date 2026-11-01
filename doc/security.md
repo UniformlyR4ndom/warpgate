@@ -41,8 +41,16 @@ Confidentiality is provided only by TLS, and only as far as no proxy intercepts 
 ## Defenses in place
 
 **Authentication**
-- The raw key never goes on the wire; clients send a derived token (labeled HMAC + 1000 SHA-256
-  rounds). Without `-auth-key` a random 32-byte key is generated.
+- The passphrase never goes on the wire. Clients derive a master key with scrypt (N=2^17, r=8,
+  p=1: 128 MiB per guess) under a random per-database salt and send a labeled HMAC of it; the
+  parameter-encryption keys are other labeled HMACs of the same master key. Anyone who captures a
+  token or an encrypted request can still test passphrase guesses offline, but each guess costs a
+  full scrypt run, so weak, typed passphrases hold up far longer. The scrypt parameters are fixed
+  in the clients, so an active proxy can't lower them. Without `-auth-key` a random 32-byte key is
+  generated.
+- Online guessing is limited per client IP (IPv6: per /64): after 10 wrong tokens in 10 minutes,
+  every authenticated request from it gets `429` until the failures age out. In memory only; a
+  restart clears it. Clients sharing an IP with an attacker are blocked with it.
 - WebSocket routes authenticate in-band. Before authentication a connection may send at most
   `maxParamBodySize` and must authenticate within 10 s; transport buffers are a fixed 64 KiB.
 - After authentication, a WebSocket that receives no data for 5 minutes, or takes that long to
@@ -83,6 +91,8 @@ Confidentiality is provided only by TLS, and only as far as no proxy intercepts 
 | No size limits or quotas on uploads, clipboard notes or attachments in total, no cap on concurrent transfers | Authenticated clients are trusted, and large transfers are the point of the tool. Use a dedicated, quota-limited filesystem if this matters for a deployment. |
 | A small compressed PDF upload can expand to a large file and allocate several times that in memory before size checks apply | Requires authentication. Memory use scales with the expanded size, much like uploading a large plain file. Bounding it would require isolating or patching the PDF library. |
 | The auth token is a replayable bearer credential; requests with unencrypted parameters are always accepted | Accepted for simplicity. Use TLS, and the IP firewall or mutual TLS, where capture is a concern. |
+| A captured token or encrypted request allows offline passphrase guessing | Each guess costs a 128 MiB scrypt run. Only a PAKE would prevent it, at the cost of heavy dependencies. Use a strong passphrase where capture is a concern. |
+| An attacker with many IPv6 /64s, or more than 100,000 addresses, gets more online guesses | Beyond 100,000 tracked clients the rest share one failure entry, which bounds memory and still limits them collectively. |
 | `aes-ctr` keystream reuse; no payload integrity | Transforms are disguises, see above. |
 | `-no-auth` exposes all of the above to anyone who can reach the server | Explicit operator choice; combine with the IP firewall or mutual TLS. |
 | Hard links and bind mounts inside a served root are not detected | Only someone with local access to the host can create them, and the host is trusted. |

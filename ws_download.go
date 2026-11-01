@@ -41,13 +41,13 @@ func (s *Server) handleWSDownload(w http.ResponseWriter, r *http.Request, root *
 	}
 	defer conn.Close()
 
-	req, encrypted, err := readWSHandshake[wsDownloadRequest](s, conn)
+	req, encrypted, err := readWSHandshake[wsDownloadRequest](s, conn, r)
 	if err != nil {
 		log.Printf("ws download: reading control message: %v", err)
 		return
 	}
 
-	if !s.authorizeWS(conn, encrypted, req.Auth) {
+	if !s.authorizeWS(conn, r, encrypted, req.Auth) {
 		return
 	}
 

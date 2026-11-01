@@ -355,15 +355,13 @@ def run_upload_test(
 # ---------------------------------------------------------------------------
 
 
-def auth_token(key: str) -> str:
-    """Mirrors internal/authhash.Hash: a labeled HMAC-SHA256 round (domain-
-    separating this from internal/paramcrypt's derived subkeys) seeds 1000
-    rounds of plain SHA-256, hex-encoded."""
-    seed = hmac.new(key.encode("utf-8"), b"warpgate-auth-token-v1", hashlib.sha256).digest()
-    h = hashlib.sha256(seed).digest()
-    for _ in range(999):
-        h = hashlib.sha256(h).digest()
-    return h.hex()
+def auth_token(base_url: str, key: str) -> str:
+    """Mirrors internal/authhash: K = scrypt(passphrase, server salt), the
+    token a labeled HMAC-SHA256 of K, hex-encoded."""
+    with urllib.request.urlopen(base_url + "/api/public/settings", timeout=10) as resp:
+        salt = bytes.fromhex(json.load(resp)["kdfSalt"])
+    k = hashlib.scrypt(key.encode("utf-8"), salt=salt, n=1 << 17, r=8, p=1, maxmem=1 << 28, dklen=32)
+    return hmac.new(k, b"warpgate-auth-token-v2", hashlib.sha256).hexdigest()
 
 
 def raw_download(base_url: str, auth_key: str, path: str, size: int, transform: str, transform_args: dict) -> bytes:
@@ -376,7 +374,7 @@ def raw_download(base_url: str, auth_key: str, path: str, size: int, transform: 
     }).encode("utf-8")
     req = urllib.request.Request(
         base_url + "/api/files/download", data=body, method="POST",
-        headers={"Content-Type": "application/json", "X-Auth": auth_token(auth_key)},
+        headers={"Content-Type": "application/json", "X-Auth": auth_token(base_url, auth_key)},
     )
     with urllib.request.urlopen(req, timeout=10) as resp:
         return resp.read()
@@ -580,10 +578,12 @@ def http_request_body(raw: bytes) -> bytes:
     return raw[sep + 4:] if sep != -1 else b""
 
 
-def run_param_crypt_wire_tests(wgcli_bin: Path, auth_key: str) -> list[TestResult]:
+def run_param_crypt_wire_tests(wgcli_bin: Path) -> list[TestResult]:
     results: list[TestResult] = []
+    # The capture listener can't serve the KDF salt, so pass a key directly.
+    auth_k = secrets.token_hex(32)
 
-    plain_raw = capture_raw_request(wgcli_bin, ["list", "-auth-key", auth_key])
+    plain_raw = capture_raw_request(wgcli_bin, ["list", "-auth-k", auth_k])
     plain_body = http_request_body(plain_raw)
     try:
         parsed_ok = json.loads(plain_body) == {"path": ""}
@@ -592,7 +592,7 @@ def run_param_crypt_wire_tests(wgcli_bin: Path, auth_key: str) -> list[TestResul
     detail = "" if parsed_ok else f"expected plain JSON {{\"path\": \"\"}}, got: {plain_body!r}"
     results.append(TestResult("wire: request body is plain JSON without --param-crypt", parsed_ok, detail))
 
-    enc_raw = capture_raw_request(wgcli_bin, ["list", "-auth-key", auth_key, "-param-crypt"])
+    enc_raw = capture_raw_request(wgcli_bin, ["list", "-auth-k", auth_k, "-param-crypt"])
     enc_body = http_request_body(enc_raw)
     is_json = True
     try:
@@ -786,6 +786,23 @@ def run_edge_case_tests(wgcli_bin: Path, base_url: str, auth_key: str, sample_fi
     return results
 
 
+def run_lockout_test(wgcli_bin: Path, base_url: str, auth_key: str) -> list[TestResult]:
+    """Wrong keys until the server answers 429, then the right key must be
+    refused too. Locks out 127.0.0.1, so this runs last."""
+    attempts = 0
+    blocked = False
+    while attempts < 20 and not blocked:
+        p = run_cli(wgcli_bin, ["list", "-url", base_url, "-auth-k", secrets.token_hex(32)])
+        blocked = "429" in p.stderr
+        attempts += 1
+    ok = blocked and attempts <= 10
+    results = [TestResult("repeated wrong keys get 429", ok, "" if ok else f"blocked={blocked} after {attempts} attempts")]
+    p = run_cli(wgcli_bin, ["list", "-url", base_url, "-auth-key", auth_key])
+    ok = p.returncode != 0 and "429" in p.stderr
+    results.append(TestResult("blocked client refused even with the right key", ok, "" if ok else p.stdout + p.stderr))
+    return results
+
+
 def run_ul_tree_tests(wgcli_bin: Path, base_url: str, auth_key: str, root_dir: Path, upload_dir: Path, download_dir: Path, sample_file: str) -> list[TestResult]:
     """Subdirectories of the upload root: mkdir, upload -dir, list/download -ul, and confinement."""
     results: list[TestResult] = []
@@ -966,7 +983,7 @@ def main() -> int:
         for r in run_clipboard_tests(wgcli_bin, base_url, auth_key, param_crypt=True):
             print_result(r)
             results.append(r)
-        for r in run_param_crypt_wire_tests(wgcli_bin, auth_key):
+        for r in run_param_crypt_wire_tests(wgcli_bin):
             print_result(r)
             results.append(r)
 
@@ -979,6 +996,9 @@ def main() -> int:
 
         print()
         for r in run_edge_case_tests(wgcli_bin, base_url, auth_key, sample_file):
+            print_result(r)
+            results.append(r)
+        for r in run_lockout_test(wgcli_bin, base_url, auth_key):
             print_result(r)
             results.append(r)
 

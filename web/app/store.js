@@ -1,18 +1,19 @@
 import { deepSignal } from './vendor/deepsignal.module.js';
 import { signal, effect } from './vendor/signals.module.js';
-import { hashAuthKey, hmacSha256Bytes } from './lib/authhash.js';
+import { deriveKey, authToken, fingerprint, labelBytes } from './lib/authhash.js';
+import { bytesToHex, hexToBytes } from './lib/util.js';
 
 export const API_BASE = window.location.pathname.replace(/\/[^/]*$/, '');
 
 const SETTINGS_STORAGE_KEY = 'warpgate-settings';
 const SETTINGS_VERSION = 1;
-// The auth key is persisted separately, in sessionStorage, so it doesn't
-// outlive the browser session/tab.
-const AUTH_KEY_STORAGE_KEY = 'warpgate-auth-key';
+// The derived key K lives in sessionStorage, so it doesn't outlive the
+// browser tab; the passphrase itself is never stored.
+const AUTH_K_STORAGE_KEY = 'warpgate-auth-k';
+const LEGACY_AUTH_KEY_STORAGE_KEY = 'warpgate-auth-key';
 
-// Persisted config. Keep serializable; auth.key is carved into sessionStorage.
+// Persisted config. Keep serializable.
 export const settings = deepSignal({
-  auth: { key: '' },
   paramCrypt: { enabled: false },
   backend: 'http',
   autoRefresh: false,
@@ -47,6 +48,13 @@ export const state = deepSignal({
   },
   newDirName: null, // null = the upload tab's "New folder" form is closed
   authFailed: false,
+  authBlocked: false,
+  // Auth section: "Change" form open, input, derivation progress (0..1, null = idle).
+  authEditing: false,
+  authPassphrase: '',
+  authDeriving: null,
+  authError: '',
+  kdfSalt: '',
   ulFlat: false,
   uploadEntries: [],
   uploadError: null,
@@ -77,8 +85,9 @@ export const state = deepSignal({
   outbox: { supported: false, status: 'off', folder: '', error: '', notices: [], showScript: false },
 });
 
-// Derived from settings.auth.key, recomputed on change (not per request).
+// All derived from K by setAuthK, not per request. authToken is '' without a key.
 export const authKeyHash = signal('');
+export const authFingerprint = signal('');
 export const paramEncKeyBytes = signal(null);
 export const paramMacKeyBytes = signal(null);
 
@@ -119,20 +128,20 @@ function loadSettings() {
       mergeSettings(settings, parsed.settings);
     }
   } catch(e) {}
+}
+
+function loadAuthK() {
   try {
-    settings.auth.key = sessionStorage.getItem(AUTH_KEY_STORAGE_KEY) || '';
+    sessionStorage.removeItem(LEGACY_AUTH_KEY_STORAGE_KEY);
+    var hex = sessionStorage.getItem(AUTH_K_STORAGE_KEY) || '';
+    if (/^[0-9a-f]{64}$/.test(hex)) return hexToBytes(hex);
   } catch(e) {}
+  return null;
 }
 
 function saveSettings() {
   try {
-    var toStore = JSON.parse(JSON.stringify(settings));
-    toStore.auth.key = '';
-    localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify({ version: SETTINGS_VERSION, settings: toStore }));
-  } catch(e) {}
-  try {
-    if (settings.auth.key) sessionStorage.setItem(AUTH_KEY_STORAGE_KEY, settings.auth.key);
-    else sessionStorage.removeItem(AUTH_KEY_STORAGE_KEY);
+    localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify({ version: SETTINGS_VERSION, settings: settings }));
   } catch(e) {}
 }
 
@@ -153,39 +162,75 @@ function hex(n) {
   return Array.from(b).map(function(x) { return ('0' + x.toString(16)).slice(-2); }).join('');
 }
 
-function recomputeDerivedKeys(key) {
-  if (!key) {
-    paramEncKeyBytes.value = null;
-    paramMacKeyBytes.value = null;
-    authKeyHash.value = '';
-    return Promise.resolve();
-  }
-  var keyBytes = new TextEncoder().encode(key);
-  paramEncKeyBytes.value = hmacSha256Bytes(keyBytes, new TextEncoder().encode('warpgate-param-enc-v1'));
-  paramMacKeyBytes.value = hmacSha256Bytes(keyBytes, new TextEncoder().encode('warpgate-param-mac-v1'));
-  return hashAuthKey(key).then(function(h) {
-    // Guard against a race if the key changed again mid-hash.
-    if (settings.auth.key === key) authKeyHash.value = h;
-  });
+function applyAuthK(k) {
+  authKeyHash.value = k ? authToken(k) : '';
+  authFingerprint.value = k ? fingerprint(k) : '';
+  paramEncKeyBytes.value = k ? labelBytes(k, 'warpgate-param-enc-v2') : null;
+  paramMacKeyBytes.value = k ? labelBytes(k, 'warpgate-param-mac-v2') : null;
 }
 
-// Wires persistence + derivations and fetches server settings. `onAuthKeyChange`
-// (optional) runs after the derived keys are refreshed on a key change, for
-// reloading listings. Returns a promise resolved once the initial auth hash is ready.
-export async function initStore(onAuthKeyChange) {
+var onKeyChange = null;
+
+// Installs K (null: no key), persists it and resets the auth status.
+function setAuthK(k) {
+  applyAuthK(k);
+  try {
+    if (k) sessionStorage.setItem(AUTH_K_STORAGE_KEY, bytesToHex(k));
+    else sessionStorage.removeItem(AUTH_K_STORAGE_KEY);
+  } catch(e) {}
+  state.authFailed = false;
+  state.authBlocked = false;
+  if (onKeyChange) onKeyChange();
+}
+
+var saltPromise = null;
+
+// Derives K from the passphrase form's input; an empty passphrase means no
+// key (servers started with -no-auth).
+export async function submitPassphrase() {
+  if (state.authDeriving !== null) return;
+  var passphrase = state.authPassphrase;
+  state.authError = '';
+  if (!passphrase) {
+    finishPassphrase(null);
+    return;
+  }
+  state.authDeriving = 0;
+  try {
+    var salt = state.kdfSalt || (await saltPromise, state.kdfSalt);
+    if (!salt) throw new Error('could not load the key salt from the server');
+    var k = await deriveKey(passphrase, salt, function(p) {
+      p = Math.floor(p * 20) / 20;
+      if (p !== state.authDeriving) state.authDeriving = p;
+    });
+    finishPassphrase(k);
+  } catch (e) {
+    state.authError = e.message;
+  } finally {
+    state.authDeriving = null;
+  }
+}
+
+function finishPassphrase(k) {
+  state.authPassphrase = '';
+  state.authShowKey = false;
+  state.authEditing = false;
+  setAuthK(k);
+}
+
+export function clearAuthK() {
+  state.authEditing = false;
+  setAuthK(null);
+}
+
+// Wires persistence and fetches server settings. `onAuthKeyChange` (optional)
+// runs after every key change, for reloading listings.
+export function initStore(onAuthKeyChange) {
   loadSettings();
   applyAuto();
-  await recomputeDerivedKeys(settings.auth.key);
-
-  // React to later key changes: recompute, then notify.
-  var first = true;
-  effect(function() {
-    var key = settings.auth.key; // subscribe
-    if (first) { first = false; return; }
-    recomputeDerivedKeys(key).then(function() {
-      if (onAuthKeyChange) onAuthKeyChange();
-    });
-  });
+  var k = loadAuthK();
+  applyAuthK(k);
+  onKeyChange = onAuthKeyChange || null;
 
   // Persist on any settings change (reading the whole tree subscribes).
   var firstSave = true;
@@ -196,10 +241,11 @@ export async function initStore(onAuthKeyChange) {
   });
 
   fetch(API_BASE + '/api/public/checkin').catch(function() {});
-  fetch(API_BASE + '/api/public/settings')
+  saltPromise = fetch(API_BASE + '/api/public/settings')
     .then(function(res) { return res.ok ? res.json() : null; })
     .then(function(data) {
       if (!data) return;
+      state.kdfSalt = /^[0-9a-f]+$/.test(data.kdfSalt || '') ? data.kdfSalt : '';
       state.ulFlat = !!data.ulFlat;
       state.wsFrameMinKB = Math.ceil(data.wsFrameMin / 1024);
       state.wsFrameMaxKB = Math.floor(data.wsFrameMax / 1024);

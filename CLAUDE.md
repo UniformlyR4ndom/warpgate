@@ -57,7 +57,7 @@ accepted risks; update it when a security-relevant decision changes.
 | Method   | Path                    | Auth | Description |
 |----------|-------------------------|------|-------------|
 | GET      | `/api/public/checkin`   | No   | Logs the client IP (`clientIP`); called once on page load |
-| GET      | `/api/public/settings`  | No   | `{"wsFrameMin","wsFrameMax","ulFlat"}` for UI clamping and the `-ul-flat` mode |
+| GET      | `/api/public/settings`  | No   | `{"wsFrameMin","wsFrameMax","ulFlat","kdfSalt"}` for UI clamping, the `-ul-flat` mode and key derivation |
 | POST     | `/api/files/list`       | Yes  | List a directory of the download root; body `{"path":"subdir"}` |
 | POST     | `/api/files/download`   | Yes  | Download a (chunk of a) file, transformed |
 | POST     | `/api/files/upload`     | Yes  | Upload a (chunk of a) file (needs `-ul-root`); multipart |
@@ -284,24 +284,43 @@ filesystem I/O.
 All endpoints except `/api/public/*` need `X-Auth` (WS: in-band). `withAuth` (`server.go`) is
 applied at route registration.
 
-- The raw key never goes over the wire. `internal/authhash.Hash(key)` derives the token:
-  `HMAC-SHA256(key, "warpgate-auth-token-v1")` seeds 1000 rounds of SHA-256, hex-encoded. The label
-  separates it from the param-crypt subkeys. Server and clients compute it independently;
-  `web/app/lib/authhash.js` (`hashAuthKey`) is the JS reimplementation.
+- The passphrase (`-auth-key`) never goes over the wire. `internal/authhash`: `DeriveKey` makes the
+  master key `K = scrypt(passphrase, salt, N=2^17, r=8, p=1, 32 bytes)` (128 MiB, ~0.25 s in Go,
+  ~0.5 s in Chromium); `Token(K)` = `HMAC-SHA256(K, "warpgate-auth-token-v2")`, hex. Every subkey
+  of K is a labeled HMAC (`authhash.Label`): the token, the param-crypt keys, and `Fingerprint`
+  (2 bytes, logged at startup and shown in the UI). `web/app/lib/authhash.js` reimplements it with
+  the vendored `@noble/hashes` scrypt (`app/vendor/noble-hashes/`, `_`-prefixed files renamed because
+  `go:embed` skips them). The scrypt parameters are constants on both sides, never served, so a
+  proxy can't downgrade them; `authhash_test.go` pins a test vector.
+- **Salt**: 16 random bytes in `meta_blob` (`kdf_salt`), created once per database (`DB.KDFSalt`) and
+  served as `kdfSalt` by `/api/public/settings`. A new DB changes K even for the same passphrase.
 - `-auth-key`; if omitted (and not `-no-auth`), a random 32-byte hex key is generated and logged.
-  `Server.authHash` is computed once. `-no-auth` disables auth.
-- Frontend: raw key in `sessionStorage` (see "UI settings persistence"); the token is cached in the
-  `authKeyHash` signal, recomputed on key change and awaited in `initStore()` before the first
-  request. `wgcli -auth-key` takes the raw key too (`globalFlags.authToken()`).
+  `NewServer` derives K once (via the `deriveKey` var, which tests replace with a cheap stand-in).
+  `-no-auth` disables auth.
+- **Failure limit** (`authlimit.go`): 10 wrong tokens within 10 min from one client (`authClient`:
+  `clientIP`, else the TCP peer; IPv6 by /64) block every authenticated request from it with `429`
+  until the oldest failure ages out. A missing token is no guess and doesn't count. Applied in
+  `withAuth` and for WS in `readWSHandshake` (a handshake that doesn't decode counts too, since an
+  encrypted one fails under a wrong key) and `authorizeWS`. Beyond 100k tracked clients the rest
+  share one entry. In memory only: a restart clears it.
+- **Frontend**: the Auth section takes a passphrase (Set / Enter); `submitPassphrase` derives K
+  (`scryptAsync` with progress) and keeps it as hex in `sessionStorage["warpgate-auth-k"]`; the
+  passphrase is dropped. With a key it shows "Key set <fingerprint>" with Change (Esc cancels) and
+  Clear; the form reappears on `state.authFailed`. Every authenticated request goes through
+  `apiFetch`/`apiWSOpen` (`lib/api.js`): after a `401` (or a WS `unauthorized` ack, `noteWSAck`)
+  nothing is sent until the key changes, so polling doesn't use up the failure budget; `429` sets
+  `state.authBlocked`.
+- **wgcli**: `-auth-key` fetches the salt and derives K lazily (`globalFlags.key()`, cached);
+  `-auth-k`/`WGCLI_AUTH_K` takes K directly; `wgcli derive-key` prints it.
 
 ## Parameter Encryption
 
 Without it, request parameters — paths, file names, the very transform keys — travel as plaintext
-JSON, so a TLS-terminating proxy could undo the disguise. Opt-in, client-side, keyed from the auth key.
+JSON, so a TLS-terminating proxy could undo the disguise. Opt-in, client-side, keyed from K.
 
 - **Format**: `base64(nonce[16] || AES-CTR ciphertext || HMAC-SHA256[32])`, encrypt-then-MAC over
-  nonce and ciphertext. Subkeys from `internal/paramcrypt.DeriveKeys`: labeled HMACs
-  `warpgate-param-enc-v1` / `warpgate-param-mac-v1`.
+  nonce and ciphertext. Subkeys from `internal/paramcrypt.DeriveKeys(K)`: labeled HMACs
+  `warpgate-param-enc-v2` / `warpgate-param-mac-v2`.
 - **Server** (`Server.decodeParams`, `paramdecode.go`): tries JSON first, then (auth enabled) the
   encrypted form; both are always accepted, no flag. Any decode failure is `401`, like a bad
   `X-Auth`. Not available under `-no-auth`.
@@ -321,7 +340,7 @@ JSON, so a TLS-terminating proxy could undo the disguise. Opt-in, client-side, k
   `paramMacKeyBytes`) are signals recomputed by `recomputeDerivedKeys()`. It must work over plain
   HTTP, so no `crypto.subtle`: nonces via `crypto.getRandomValues`, AES via `aes-js` (`web/aes.js`),
   HMAC via `js-sha256` (`web/sha256.js`); MAC comparison is constant-time.
-- **wgcli**: `-param-crypt`, effective only with `-auth-key` (`globalFlags.paramKeys()`).
+- **wgcli**: `-param-crypt`, effective only with a key (`globalFlags.paramKeys()`).
   `cmd/wgcli/paramcrypt.go` has `encodeBody`/`decodeJSON`; `maybeEncryptedQuery` adds `?e=1` to
   bodyless GETs; WS goes through `writeWSJSON`/`readWSAck`.
 
@@ -383,6 +402,7 @@ CREATE TABLE clipboard (
     source    TEXT    NOT NULL DEFAULT ''      -- '' UI, 'outbox' local script, 'cli' wgcli
 )
 CREATE TABLE meta (key TEXT PRIMARY KEY, value INTEGER NOT NULL)  -- 'clip_rev', 'last_del_rev'
+CREATE TABLE meta_blob (key TEXT PRIMARY KEY, value BLOB NOT NULL) -- 'kdf_salt'
 CREATE TABLE clip_attachment (
     id      INTEGER PRIMARY KEY AUTOINCREMENT,
     note_id INTEGER NOT NULL REFERENCES clipboard(id),  -- deleted explicitly, no cascade
@@ -484,9 +504,9 @@ saves. New configurable values belong in `settings`. `mergeSettings` restores on
 exist. `initStore()` runs `loadSettings()` before `applyAuto()`, so a custom key with `auto: false`
 survives and `auto: true` regenerates.
 
-- `settings.auth.key` lives in `sessionStorage["warpgate-auth-key"]` instead (per browser tab, gone
-  when it closes): `saveSettings()` blanks it in the stored blob and `loadSettings()` always
-  overwrites it from `sessionStorage`, so an old blob can't bring it back.
+- The auth key is not in `settings`: K lives in `sessionStorage["warpgate-auth-k"]` (per browser
+  tab, gone when it closes; see "Authentication"). `loadAuthK` deletes the old
+  `"warpgate-auth-key"` entry.
 - `state` is not persisted (`browse` paths could go stale; `wsFrameMinKB`/`wsFrameMaxKB` come from
   `/api/public/settings`; `authShowKey` starts masked). Exception: `state.tab`, kept in
   `sessionStorage["warpgate-tab"]` by `setTab` and reapplied by `restoreTab()` (unknown → Download).
@@ -500,7 +520,7 @@ setting has a short `title` tooltip on its label and input that doesn't restate 
 
 | Section   | Contents |
 |-----------|----------|
-| Auth      | Raw key (masked; the 👁 reveal state isn't persisted), Parameter obfuscation |
+| Auth      | Passphrase form (masked, 👁 not persisted; Set) or "Key set <fingerprint>" with Change / Clear (`components/auth.js`); Parameter obfuscation |
 | Benchmark | Benchmark tab: Size (1–1024 MB), Chunk size (≤ Size) |
 | Chunking  | Download: chunking, chunk size, reassembly. Upload: chunking and size (HTTP backend only) |
 | General   | Auto-refresh (1 s); Confirm note delete; Backend (HTTP/WS); WS frame size (WS only, clamped to the server); Content-Type override (download, HTTP only); Extension override (`settings.extOverride`, replace/append the saved file's extension for browsers that block types; `applyExtOverride`) |
@@ -626,7 +646,7 @@ test/push_to_wgclip_test.sh
 | `-ul-flat` | false | Flat upload directory: no `/api/ul/*`, `dir` rejected; needs `-ul-root` |
 | `-db` | `warpgate.sqlite` | SQLite database |
 | `-listen` | `0.0.0.0:8080` | Listen address |
-| `-auth-key` | — | Auth key (generated and logged if omitted) |
+| `-auth-key` | — | Auth passphrase (generated and logged if omitted); K is derived from it with scrypt |
 | `-no-auth` | false | Disable authentication |
 | `-cert`, `-cert-key` | — | TLS certificate (chain) and key; both or neither |
 | `-client-root` | — | PEM to verify client certificates; needs `-cert` |

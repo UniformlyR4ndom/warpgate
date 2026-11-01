@@ -1036,3 +1036,24 @@ input[type="text"].clip-caption-input:focus {
 .script-dialog .tabs {
   margin-bottom: 0;
 }
+
+.auth-status {
+  font-size: 0.85rem;
+  color: var(--muted);
+  margin-bottom: 0.5rem;
+}
+
+.auth-fp {
+  color: var(--text);
+  margin-left: 0.25rem;
+}
+
+.auth-hint {
+  font-size: 0.8rem;
+  color: var(--dim);
+  margin-top: 0.4rem;
+}
+
+.auth-error {
+  color: var(--error);
+}
