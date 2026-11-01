@@ -1043,6 +1043,14 @@ input[type="text"].clip-caption-input:focus {
   margin-bottom: 0.5rem;
 }
 
+.auth-buttons {
+  margin-top: 0.6rem;
+}
+
+.auth-status + .auth-buttons {
+  margin-top: 0;
+}
+
 .auth-fp {
   color: var(--text);
   margin-left: 0.25rem;

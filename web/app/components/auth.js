@@ -21,9 +21,9 @@ export function AuthSettings() {
     <div>
       ${hasKey && !showForm && html`
         <div class="auth-status">
-          Key set <code class="auth-fp" title=${TIP.fp}>${authFingerprint.value}</code>
+          Key ID: <code class="auth-fp" title=${TIP.fp}>${authFingerprint.value}</code>
         </div>
-        <div class="outbox-buttons">
+        <div class="outbox-buttons auth-buttons">
           <button class="choose-btn" onClick=${() => (state.authEditing = true)} title="Enter a different passphrase.">Change</button>
           <button class="choose-btn" onClick=${clearAuthK} title="Remove the key from this browser tab.">Clear</button>
         </div>`}
@@ -36,7 +36,7 @@ export function AuthSettings() {
           <button type="button" class="key-toggle" onClick=${() => (state.authShowKey = !state.authShowKey)}
                   title=${state.authShowKey ? 'Hide passphrase' : 'Show passphrase'}>👁</button>
         </div>
-        <div class="outbox-buttons">
+        <div class="outbox-buttons auth-buttons">
           <button class="choose-btn" onClick=${submitPassphrase} disabled=${deriving} title="Derive the key and use it (Enter).">Set</button>
           ${canCancel && html`<button class="choose-btn" onClick=${() => (state.authEditing = false)} disabled=${deriving}
                                       title="Keep the current key (Esc).">Cancel</button>`}

@@ -305,7 +305,7 @@ applied at route registration.
   share one entry. In memory only: a restart clears it.
 - **Frontend**: the Auth section takes a passphrase (Set / Enter); `submitPassphrase` derives K
   (`scryptAsync` with progress) and keeps it as hex in `sessionStorage["warpgate-auth-k"]`; the
-  passphrase is dropped. With a key it shows "Key set <fingerprint>" with Change (Esc cancels) and
+  passphrase is dropped. With a key it shows "Key ID: <fingerprint>" with Change (Esc cancels) and
   Clear; the form reappears on `state.authFailed`. Every authenticated request goes through
   `apiFetch`/`apiWSOpen` (`lib/api.js`): after a `401` (or a WS `unauthorized` ack, `noteWSAck`)
   nothing is sent until the key changes, so polling doesn't use up the failure budget; `429` sets
@@ -520,7 +520,7 @@ setting has a short `title` tooltip on its label and input that doesn't restate 
 
 | Section   | Contents |
 |-----------|----------|
-| Auth      | Passphrase form (masked, 👁 not persisted; Set) or "Key set <fingerprint>" with Change / Clear (`components/auth.js`); Parameter obfuscation |
+| Auth      | Passphrase form (masked, 👁 not persisted; Set) or "Key ID: <fingerprint>" with Change / Clear (`components/auth.js`); Parameter obfuscation |
 | Benchmark | Benchmark tab: Size (1–1024 MB), Chunk size (≤ Size) |
 | Chunking  | Download: chunking, chunk size, reassembly. Upload: chunking and size (HTTP backend only) |
 | General   | Auto-refresh (1 s); Confirm note delete; Backend (HTTP/WS); WS frame size (WS only, clamped to the server); Content-Type override (download, HTTP only); Extension override (`settings.extOverride`, replace/append the saved file's extension for browsers that block types; `applyExtOverride`) |
