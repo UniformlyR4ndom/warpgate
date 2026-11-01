@@ -4,6 +4,12 @@ Warpgate is a file server designed to bypass restrictive web proxies that perfor
 
 All frontend assets are embedded in the server binary; no internet access is required at runtime.
 
+Besides file transfer, the UI offers a shared clipboard for text notes and images, and a benchmark for finding the transport settings a given proxy lets through.
+
+![Download tab: file browser with the settings panel, XOR transform selected](doc/download.png)
+
+![Clipboard tab: note editor and a note with an attached image](doc/clipboard.png)
+
 ## Usage
 
 ```
