@@ -74,7 +74,7 @@ export const state = deepSignal({
   wsFrameMaxKB: 262144,
   hasFileSystemAccess: typeof window.showSaveFilePicker === 'function',
   // status: off | reconnect | other-tab | watching | auth | error
-  outbox: { supported: false, status: 'off', folder: '', error: '', events: [], notices: [], showScript: false },
+  outbox: { supported: false, status: 'off', folder: '', error: '', notices: [], showScript: false },
 });
 
 // Derived from settings.auth.key, recomputed on change (not per request).

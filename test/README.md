@@ -70,3 +70,21 @@ wgcli command exists for either), and chunked-upload protocol edge cases beyond 
 (stale/replayed `continuation-key`, the concurrent-request `409` lock, session expiry, the
 download-blocked-by-upload `409`) are exercised manually (see the `wgcli` skill) but not by this
 suite.
+
+# test/push_to_wgclip_test.sh
+
+Tests the bash/zsh push function (`web/push-to-wgclip.sh`) without a browser or server: a
+background loop plays the warpgate tab, verifying each hash file and then consuming the push or
+renaming it to `.failed`. It covers stdin and `-f` input, titles, the 512 KiB limit, a failed
+push, `-n`, the timeout, and that two pushes in the same second get distinct names. Each run
+happens once in bash and once in zsh (skipped if not installed).
+
+It also pastes the function into an interactive bash and zsh through `script(1)` (util-linux;
+skipped if missing), the way a terminal paste arrives: history expansion (`!`) or other
+interactive-only behavior would drop the definition there.
+
+```bash
+test/push_to_wgclip_test.sh
+```
+
+Takes about 10 s. Exit code is `0` if every check passed, `1` otherwise.

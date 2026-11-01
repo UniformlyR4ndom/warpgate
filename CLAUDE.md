@@ -878,8 +878,8 @@ Preact + htm + `@preact/signals` + `deepsignal`, as native ES modules — no bui
   `util.js`, `outbox.js` (see "Outbox"), and one module per tab: `download.js`, `upload.js`,
   `clipboard.js`, `benchmark.js`
 - `app/components/` — `html.js` (bound `html` tag + `text`/`num`/`check`/`sel` two-way-binding prop
-  spreads), `app.js` (header, tabs), `panel.js`, `transfers.js`, `outbox.js` (panel section, notices, PowerShell dialog), `browser.js` (`FileBrowser`, shared by the Download and Upload tabs), one component file per tab
-- `push-to-wgclip.ps1` — the PowerShell push function shown by the Outbox dialog (see "Outbox")
+  spreads), `app.js` (header, tabs), `panel.js`, `transfers.js`, `outbox.js` (panel section, notices, push function dialog), `browser.js` (`FileBrowser`, shared by the Download and Upload tabs), one component file per tab
+- `push-to-wgclip.ps1`, `push-to-wgclip.sh` — the PowerShell and bash/zsh push functions shown by the Outbox dialog (see "Outbox")
 
 All JS libraries are served locally (embedded in the binary); no CDN requests at runtime.
 
@@ -953,7 +953,7 @@ could point at a since-deleted directory), `wsFrameMinKB`/`wsFrameMaxKB` (fetche
 ### Side panel sections (alphabetical order)
 
 The panel (`components/panel.js`) is shown and hidden by the ⚙ Settings button next to Refresh
-(`settings.panel.open`); Esc closes it, except while the lightbox or the PowerShell dialog is open
+(`settings.panel.open`); Esc closes it, except while the lightbox or the push function dialog is open
 or when the key goes to a field outside the panel. While it is closed, an orange dot on the button
 flags a state the user has to act on: `state.authFailed` (the last list/poll request got a `401`,
 set by `noteAuthStatus` in `lib/api.js`) or an outbox in `reconnect`/`auth`/`error`.
@@ -964,7 +964,7 @@ set by `noteAuthStatus` in `lib/api.js`) or an outbox in `reconnect`/`auth`/`err
 | Benchmark | Benchmark tab only; Size (MB, 1-1024) and Chunk size (MB, ≤ Size) for the synthetic transfer — see "Benchmark tab" below |
 | Chunking  | Download tab: enable chunked download, set chunk size, enable File System Access API reassembly. Upload tab: enable chunked upload and set chunk size (HTTP POST backend only — hidden when Backend is Websocket) |
 | General   | Auto-refresh (polls the active tab every second; re-renders only on changes); Confirm note delete; Backend (HTTP POST/Websocket, download+upload+benchmark tabs); WS frame size in KB (download+upload+benchmark tabs, only when Backend is Websocket; default 4M, clamped to the server's `-ws-frame-max` via `/api/public/settings`); Content-Type (download tab only, only when Backend is HTTP POST — a preset dropdown of common MIME types plus "Custom…", overriding the download response's `Content-Type` header; see `/api/files/download`'s `contentType` field above); Extension override (download+upload tabs: text field + Replace/Append dropdown, `settings.extOverride`; empty = off; changes the extension the browser saves downloaded files under, for browsers that block certain file types — client-side only, files without an extension unaffected, `applyExtOverride` in `lib/util.js`) |
-| Outbox    | Connect/reconnect/disconnect the outbox folder, status, last pushes/failures, "PowerShell function" dialog; all tabs, hidden without `showDirectoryPicker` (see "Outbox") |
+| Outbox    | Connect/reconnect/disconnect the outbox folder, status, "Push function" dialog; all tabs, hidden without `showDirectoryPicker` (see "Outbox") |
 | Transform | Select transform type and configure its parameters (auto-generate keys/IVs) |
 
 Every setting in the side panel has a `title` attribute (on both its `<label>` and its input/select)
@@ -1022,9 +1022,16 @@ up and creates the note. Design notes and measurements (local only, git-ignored)
   `$PSBoundParameters.ContainsKey`), and is meant to be loaded interactively, not run as a script
   file (execution policy only governs files). The dialog recommends Copy +
   `Get-Clipboard -Raw | Invoke-Expression`: pasting 80 lines directly crashes Windows PowerShell
-  5.1's PSReadLine 2.0 when the paste is taller than the console window. The panel warns when the
-  connected folder isn't named `wgclip-outbox` (the function's default; `$env:WGCLIP_OUTBOX`
-  overrides it).
+  5.1's PSReadLine 2.0 when the paste is taller than the console window.
+- **`push-to-wgclip.sh`** is the same function for bash and zsh (Linux and macOS: `sha256sum` or
+  `shasum -a 256`, no GNU-only `date` options), pasted into the terminal or `source`d. It writes the
+  hash file under a temporary name and renames it, so the tab never sees it half-written. The random
+  part of the file name comes from `/dev/urandom`: zsh's `$RANDOM` repeats in subshells.
+  It must not contain `!` anywhere: pasted into an interactive shell, `!` triggers history
+  expansion, and zsh then drops the whole definition ("event not found").
+- The dialog has a PowerShell / Bash tab, defaulting to the browser's platform. The panel warns when
+  the connected folder isn't named `wgclip-outbox` (the functions' default; `WGCLIP_OUTBOX`
+  overrides it), with the path and variable syntax of the browser's platform.
 
 ### Benchmark tab
 
@@ -1097,6 +1104,9 @@ golangci-lint run
 # combo plus clipboard and edge cases against a throwaway server instance)
 python3 test/e2e_suite.py --quick   # fast sanity run
 python3 test/e2e_suite.py           # full run, up to 1G files; see test/README.md
+
+# push-to-wgclip.sh (bash + zsh, fake tab, interactive paste); no server needed
+test/push_to_wgclip_test.sh
 ```
 
 ### Flags

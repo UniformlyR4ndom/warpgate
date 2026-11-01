@@ -897,25 +897,55 @@ input[type="text"].clip-caption-input:focus {
 /* ── Outbox ── */
 
 .outbox-status {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.45rem;
   font-size: 0.8rem;
   color: var(--muted);
-  margin-bottom: 0.4rem;
+  margin-bottom: 0.5rem;
   word-break: break-word;
 }
 
-.outbox-warn {
+.outbox-dot {
+  flex: none;
+  width: 0.5rem;
+  height: 0.5rem;
+  margin-top: 0.3em;
+  border-radius: 50%;
+  background: var(--dim);
+}
+
+.outbox-st-watching .outbox-dot {
+  background: var(--accent);
+}
+
+.outbox-st-reconnect .outbox-dot {
+  background: var(--warn);
+}
+
+.outbox-st-auth,
+.outbox-st-error {
   color: var(--error);
+}
+
+.outbox-st-auth .outbox-dot,
+.outbox-st-error .outbox-dot {
+  background: var(--error);
 }
 
 .outbox-hint {
-  font-size: 0.75rem;
-  color: var(--muted);
-  margin-bottom: 0.4rem;
+  font-size: 0.8rem;
+  color: var(--dim);
+  margin: -0.25rem 0 0.5rem;
   word-break: break-word;
 }
 
-.outbox-hint.outbox-warn {
-  color: var(--error);
+.outbox-mismatch {
+  color: var(--warn);
+}
+
+.outbox-hint code {
+  white-space: nowrap;
 }
 
 .outbox-buttons {
@@ -924,17 +954,8 @@ input[type="text"].clip-caption-input:focus {
   gap: 0.4rem;
 }
 
-.outbox-events {
-  list-style: none;
-  margin: 0.5rem 0 0;
-  padding: 0;
-  font-size: 0.75rem;
-  color: var(--muted);
-}
-
-.outbox-events li {
-  margin-top: 0.2rem;
-  word-break: break-word;
+.outbox-stacked {
+  flex-direction: column;
 }
 
 .clip-source {
@@ -1010,4 +1031,8 @@ input[type="text"].clip-caption-input:focus {
   padding: 0.6rem;
   font-size: 0.8rem;
   min-height: 10rem;
+}
+
+.script-dialog .tabs {
+  margin-bottom: 0;
 }

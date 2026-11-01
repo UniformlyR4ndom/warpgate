@@ -15,7 +15,6 @@ var FAIL_AFTER_MS = 10000;
 var LEFTOVER_MS = 60 * 60 * 1000;
 var REMOVE_RETRY_MS = [0, 200, 500, 1000, 2000];
 var NOTICE_MS = 5000;
-var MAX_EVENTS = 5;
 
 var dir = null;
 var savedHandle = null;
@@ -227,7 +226,7 @@ async function processPush(folder, name, files) {
   // Recorded before deleting, so a hash file that survives a failed delete is never pushed twice.
   await kvSet('pushed:' + hashName, parsed.hash).catch(function() {});
   delete firstSeen[hashName];
-  addEvent(true, 'Note #' + id + (title ? ' "' + title + '"' : '') + ' pushed from outbox');
+  notify(true, 'Note #' + id + (title ? ' "' + title + '"' : '') + ' pushed from outbox');
   pollClipboard();
   await removePushed(folder, name);
 }
@@ -239,7 +238,7 @@ function retryOrFail(name, files, waited, msg) {
 
 async function fail(name, files, msg) {
   delete firstSeen[name + '.sha256'];
-  addEvent(false, name + ': ' + msg);
+  notify(false, name + ': ' + msg);
   for (var i = 0; i < REMOVE_RETRY_MS.length; i++) {
     await delay(REMOVE_RETRY_MS[i]);
     try { await files[name + '.sha256'].move(name + '.failed'); return; } catch (e) {}
@@ -281,11 +280,9 @@ async function removeLeftovers(folder, names, files) {
   }
 }
 
-// --- events and notices
+// --- notices
 
-function addEvent(ok, text) {
-  state.outbox.events.unshift({ t: Date.now(), ok: ok, text: text });
-  state.outbox.events.splice(MAX_EVENTS);
+function notify(ok, text) {
   var id = ++noticeSeq;
   state.outbox.notices.push({ id: id, ok: ok, text: text });
   if (ok) setTimeout(function() { dismissNotice(id); }, NOTICE_MS);
