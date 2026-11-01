@@ -5,7 +5,7 @@ import { settings } from './store.js';
 import { initStore } from './store.js';
 import { load } from './lib/download.js';
 import { initOutbox } from './lib/outbox.js';
-import { refreshActive, onAuthKeyChange } from './nav.js';
+import { refreshActive, onAuthKeyChange, restoreTab } from './nav.js';
 import { App } from './components/app.js';
 import { GlobalWorkerOptions } from '../pdf.min.mjs';
 
@@ -26,6 +26,7 @@ var refreshTimer = null;
 async function boot() {
   await initStore(onAuthKeyChange);
   load('dl'); // initial download listing
+  restoreTab();
 
   // Auto-refresh: poll the active tab every second while enabled.
   effect(function() {

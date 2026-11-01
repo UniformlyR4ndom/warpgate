@@ -923,10 +923,15 @@ Everything under `store.js`'s `settings` object (backend choice, auto-refresh, c
 size, transform config, chunking config, benchmark size/chunk-size config, clipboard sort/search scope,
 and side-panel open/section-collapsed state) is persisted as one JSON blob in
 `localStorage["warpgate-settings"]`, restored on the next page load. Everything else lives in the
-separate, never-persisted `state` object: navigation (`tab`/`browse` — a stale restored path
-could point at a since-deleted directory), `wsFrameMinKB`/`wsFrameMaxKB` (fetched fresh from
-`/api/public/settings` every load), `authShowKey` (the auth key always starts masked), and
-`benchmarkResults` (a run history, not configuration).
+separate `state` object, which is not persisted: the browsed directories (`browse` — a stale
+restored path could point at a since-deleted directory), `wsFrameMinKB`/`wsFrameMaxKB` (fetched
+fresh from `/api/public/settings` every load), `authShowKey` (the auth key always starts masked),
+and `benchmarkResults` (a run history, not configuration).
+
+- **`state.tab` is the one exception**: `setTab` (`nav.js`) stores it in
+  `sessionStorage["warpgate-tab"]`, and `restoreTab()` reapplies it at boot (unknown values fall
+  back to Download). Like the auth key it is per browser tab: a reload keeps it, a new tab starts
+  on Download. `TABS` in `nav.js` is the single list of tabs.
 
 - **`settings.auth.key` is the one field of `settings` carved out of that blob.** It stays in the
   reactive tree, but is persisted separately in `sessionStorage["warpgate-auth-key"]` instead of

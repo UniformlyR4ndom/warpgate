@@ -37,7 +37,7 @@ export const settings = deepSignal({
   },
 });
 
-// Transient UI state (never persisted).
+// Transient UI state; only `tab` is kept, in sessionStorage.
 export const state = deepSignal({
   tab: 'download',
   // One file browser per root: dl = download root, ul = upload directory.

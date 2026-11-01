@@ -1,6 +1,6 @@
 import { html, Fragment } from './html.js';
 import { settings, state } from '../store.js';
-import { setTab, refreshActive } from '../nav.js';
+import { TABS, setTab, refreshActive } from '../nav.js';
 import { Panel } from './panel.js';
 import { DownloadTab } from './download.js';
 import { UploadTab } from './upload.js';
@@ -15,13 +15,6 @@ function settingsAttention() {
   if (st === 'reconnect' || st === 'auth' || st === 'error') return 'The outbox needs attention';
   return '';
 }
-
-const TABS = [
-  { id: 'download',  label: 'Download' },
-  { id: 'upload',    label: 'Upload' },
-  { id: 'clipboard', label: 'Clipboard' },
-  { id: 'benchmark', label: 'Benchmark' },
-];
 
 export function App() {
   return html`
