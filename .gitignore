@@ -2,4 +2,4 @@
 .playwright-mcp/
 *.sqlite
 /warpgate
-/push-to-wgclip/
+/local/
