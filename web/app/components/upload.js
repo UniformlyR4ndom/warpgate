@@ -26,7 +26,7 @@ function DropZone() {
          onDragEnter=${(e) => { e.preventDefault(); e.currentTarget.classList.add('drag-active'); }}
          onDragLeave=${onDragLeave}
          onDrop=${onDrop}>
-      Drop files here or
+      Drop files here or${' '}
       <button class="choose-btn" onClick=${() => input.click()}>choose files</button>
       <input type="file" style="display:none" multiple ref=${(el) => (input = el)} onChange=${onChange} />
     </div>`;
