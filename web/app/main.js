@@ -9,7 +9,7 @@ import { refreshActive, onAuthKeyChange } from './nav.js';
 import { App } from './components/app.js';
 import { GlobalWorkerOptions } from '../pdf.min.mjs';
 
-var PDF_WORKER = 'pdf.worker.min.mjs';
+var PDF_WORKER = 'static/pdf.worker.min.mjs';
 var workerURL = window.trustedTypes
   ? trustedTypes.createPolicy('pdfjs-worker', {
       createScriptURL: function(url) {

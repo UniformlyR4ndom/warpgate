@@ -128,6 +128,14 @@ func (c fwClient) expectRedirect(method, path, ip, to string) {
 	}
 }
 
+func (c fwClient) expectUI(path, ip string) {
+	c.t.Helper()
+	rec := c.do(http.MethodGet, path, ip)
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "static/app/main.js") {
+		c.t.Errorf("GET %s from %s: got %d %q; want the UI", path, ip, rec.Code, rec.Body.String())
+	}
+}
+
 func (c fwClient) expectServed(path, ip string) {
 	c.t.Helper()
 	rec := c.do(http.MethodGet, path, ip)
@@ -157,14 +165,14 @@ func TestIPFilterRegistration(t *testing.T) {
 
 	c.expectRegPage("/pfx/reg", a)
 	c.expectBlank(http.MethodGet, "/pfx/static/style.css", a) // GET alone doesn't register
-	c.expectRedirect(http.MethodPost, "/pfx/reg", a, "/pfx/static/")
+	c.expectRedirect(http.MethodPost, "/pfx/reg", a, "/pfx/")
 	c.expectServed("/pfx/static/style.css", a)
 	c.expectServed("/pfx/api/public/settings", a)
-	c.expectRedirect(http.MethodGet, "/pfx", a, "/pfx/static/")
-	c.expectRedirect(http.MethodGet, "/pfx/reg", a, "/pfx/static/")
-	c.expectRedirect(http.MethodPost, "/pfx/reg", a, "/pfx/static/") // re-registration doesn't use a slot
+	c.expectRedirect(http.MethodGet, "/pfx", a, "/pfx/")
+	c.expectRedirect(http.MethodGet, "/pfx/reg", a, "/pfx/")
+	c.expectRedirect(http.MethodPost, "/pfx/reg", a, "/pfx/") // re-registration doesn't use a slot
 
-	c.expectRedirect(http.MethodPost, "/pfx/reg", b, "/pfx/static/")
+	c.expectRedirect(http.MethodPost, "/pfx/reg", b, "/pfx/")
 	c.expectBlank(http.MethodGet, "/pfx/reg", d) // limit reached
 	c.expectBlank(http.MethodPost, "/pfx/reg", d)
 	c.expectBlank(http.MethodGet, "/pfx/static/style.css", d)
@@ -187,20 +195,21 @@ func TestIPFilterBasePathRegistration(t *testing.T) {
 	c.expectBlank(http.MethodGet, "/", a)
 	c.expectRegPage("/pfx", a)
 	c.expectRegPage("/pfx/", a)
-	c.expectRegPage("/pfx/static/", a)
-	c.expectBlank(http.MethodGet, "/pfx/static", a)
+	c.expectBlank(http.MethodGet, "/pfx/static/", a)
 	c.expectBlank(http.MethodGet, "/pfx/static/style.css", a)
-	c.expectBlank(http.MethodGet, "/pfx/static/index.html", a)
-	c.expectRedirect(http.MethodPost, "/pfx/", a, "/pfx/static/")
-	c.expectRedirect(http.MethodGet, "/pfx", a, "/pfx/static/")
-	c.expectServed("/pfx/static/", a)
+	c.expectBlank(http.MethodGet, "/pfx/index.html", a)
+	c.expectRedirect(http.MethodPost, "/pfx/", a, "/pfx/")
+	c.expectRedirect(http.MethodGet, "/pfx", a, "/pfx/")
+	c.expectRedirect(http.MethodPost, "/pfx", a, "/pfx/") // re-registration via -url without trailing slash
+	c.expectRedirect(http.MethodPost, "/pfx/", a, "/pfx/")
+	c.expectUI("/pfx/", a)
 	c.expectServed("/pfx/static/style.css", a)
 
-	c.expectRedirect(http.MethodPost, "/pfx/static/", b, "/pfx/static/")
-	c.expectServed("/pfx/static/", b)
+	c.expectRedirect(http.MethodPost, "/pfx", b, "/pfx/")
+	c.expectUI("/pfx/", b)
 
-	c.expectBlank(http.MethodGet, "/pfx/static/", d) // limit reached
-	c.expectBlank(http.MethodPost, "/pfx/static/", d)
+	c.expectBlank(http.MethodGet, "/pfx/", d) // limit reached
+	c.expectBlank(http.MethodPost, "/pfx/", d)
 	c.expectBlank(http.MethodGet, "/pfx", d)
 }
 
@@ -210,11 +219,11 @@ func TestIPFilterDedicatedPathOnly(t *testing.T) {
 	const a = "198.51.100.1"
 
 	c.expectBlank(http.MethodGet, "/pfx", a)
-	c.expectBlank(http.MethodGet, "/pfx/static/", a)
-	c.expectBlank(http.MethodPost, "/pfx/static/", a)
+	c.expectBlank(http.MethodGet, "/pfx/", a)
+	c.expectBlank(http.MethodPost, "/pfx/", a)
 	c.expectRegPage("/pfx/reg", a)
-	c.expectRedirect(http.MethodPost, "/pfx/reg", a, "/pfx/static/")
-	c.expectServed("/pfx/static/", a)
+	c.expectRedirect(http.MethodPost, "/pfx/reg", a, "/pfx/")
+	c.expectUI("/pfx/", a)
 }
 
 // TestIPFilterUnknownClientBlocked: a trusted proxy that is itself

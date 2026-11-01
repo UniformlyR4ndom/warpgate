@@ -190,16 +190,14 @@ func (f *ipFilter) register(a netip.Addr) bool {
 }
 
 // isRegPath reports whether p (after prefix stripping) serves registration.
-// With base-path registration, the UI entry point registers too, so a reload
-// after a server restart doesn't need a detour through the base path.
 func (f *ipFilter) isRegPath(p string) bool {
-	return f.regPath != "" && (p == f.regPath || f.regPath == "/" && p == "/static/")
+	return f.regPath != "" && (p == f.regPath || f.regPath == "/" && p == "")
 }
 
 // withIPFilter must run after path-prefix stripping.
 func (s *Server) withIPFilter(h http.Handler) http.Handler {
 	f := s.ipFilter
-	uiURL := s.cfg.PathPrefix + "/static/"
+	uiURL := s.cfg.PathPrefix + "/"
 	toUI := func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
 		http.Redirect(w, r, uiURL, http.StatusSeeOther)
@@ -211,7 +209,8 @@ func (s *Server) withIPFilter(h http.Handler) http.Handler {
 			return
 		}
 		if f.admitted(ip) {
-			if f.regPath != "/" && r.URL.Path == f.regPath {
+			// The base path is also the UI, so only a POST there re-registers.
+			if f.isRegPath(r.URL.Path) && (f.regPath != "/" || r.Method == http.MethodPost) {
 				toUI(w, r)
 				return
 			}

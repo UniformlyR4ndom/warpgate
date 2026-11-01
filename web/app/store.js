@@ -2,7 +2,7 @@ import { deepSignal } from './vendor/deepsignal.module.js';
 import { signal, effect } from './vendor/signals.module.js';
 import { hashAuthKey, hmacSha256Bytes } from './lib/authhash.js';
 
-export const API_BASE = window.location.pathname.replace(/\/static\/.*$/, '');
+export const API_BASE = window.location.pathname.replace(/\/[^/]*$/, '');
 
 const SETTINGS_STORAGE_KEY = 'warpgate-settings';
 const SETTINGS_VERSION = 1;

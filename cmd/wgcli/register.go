@@ -32,7 +32,7 @@ func (t blankPageTransport) RoundTrip(req *http.Request) (*http.Response, error)
 }
 
 // runRegister does what the browser's registration page does: an empty form
-// POST to the registration URL, which answers with a redirect to the UI.
+// POST to the registration URL, which answers with a 303 to the UI.
 func runRegister(args []string) error {
 	fs := flag.NewFlagSet("register", flag.ExitOnError)
 	g := addGlobalFlags(fs)
@@ -57,7 +57,7 @@ func runRegister(args []string) error {
 		return err
 	}
 	resp.Body.Close()
-	if resp.StatusCode/100 == 3 && strings.HasSuffix(resp.Header.Get("Location"), "/static/") {
+	if resp.StatusCode == http.StatusSeeOther {
 		g.report(map[string]any{"url": target}, "registered (or already admitted) at %s", target)
 		return nil
 	}

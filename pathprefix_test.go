@@ -3,6 +3,7 @@ package main
 import (
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -50,11 +51,18 @@ func TestPathPrefixRouting(t *testing.T) {
 		}
 	}
 
-	for _, p := range []string{"/pfx", "/pfx/", "/pfx/static"} {
+	for p, to := range map[string]string{
+		"/pfx": "/pfx/", "/pfx/static": "/pfx/", "/pfx/static/": "/pfx/",
+		"/pfx/static/index.html": "./", // http.FileServer; the next hop lands on /pfx/static/
+	} {
 		rec := do(http.MethodGet, p)
-		if rec.Code != http.StatusMovedPermanently || rec.Header().Get("Location") != "/pfx/static/" {
-			t.Errorf("GET %s: got %d Location=%q; want 301 to /pfx/static/", p, rec.Code, rec.Header().Get("Location"))
+		if rec.Code != http.StatusMovedPermanently || rec.Header().Get("Location") != to {
+			t.Errorf("GET %s: got %d Location=%q; want 301 to %s", p, rec.Code, rec.Header().Get("Location"), to)
 		}
+	}
+
+	if rec := do(http.MethodGet, "/pfx/"); rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "static/app/main.js") {
+		t.Errorf("GET /pfx/: got %d %q; want index.html", rec.Code, rec.Body.String())
 	}
 
 	if rec := do(http.MethodGet, "/pfx/api/public/settings"); rec.Code != http.StatusOK || rec.Body.Len() == 0 {

@@ -13,7 +13,7 @@ import (
 func TestCSPHeaderOnUIAndAPI(t *testing.T) {
 	s := newTestServer(t, Config{Root: t.TempDir(), NoAuth: true}, nil)
 	h := s.handler()
-	for _, p := range []string{"/static/", "/static/app/main.js", "/api/public/settings"} {
+	for _, p := range []string{"/", "/static/app/main.js", "/api/public/settings"} {
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, p, nil))
 		if got := rec.Header().Get("Content-Security-Policy"); got != contentSecurityPolicy {

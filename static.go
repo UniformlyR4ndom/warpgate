@@ -3,16 +3,15 @@ package main
 import (
 	"embed"
 	"io/fs"
-	"net/http"
 )
 
 //go:embed web
 var webFS embed.FS
 
-func staticHandler() http.Handler {
+var webRoot = func() fs.FS {
 	sub, err := fs.Sub(webFS, "web")
 	if err != nil {
 		panic(err)
 	}
-	return http.FileServer(http.FS(sub))
-}
+	return sub
+}()

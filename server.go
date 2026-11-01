@@ -189,14 +189,21 @@ func (s *Server) withAuth(h http.HandlerFunc) http.Handler {
 }
 
 func (s *Server) handler() http.Handler {
-	static := http.StripPrefix("/static/", staticHandler())
+	static := http.StripPrefix("/static/", http.FileServer(http.FS(webRoot)))
 	var h http.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, pattern := s.mux.Handler(r)
-		if pattern == "" {
-			if r.URL.Path == "/" || r.URL.Path == "/static" {
-				http.Redirect(w, r, s.cfg.PathPrefix+"/static/", http.StatusMovedPermanently)
-				return
-			}
+		switch r.URL.Path {
+		case "":
+			// Exactly the path prefix: index.html's relative URLs need the trailing slash.
+			http.Redirect(w, r, s.cfg.PathPrefix+"/", http.StatusMovedPermanently)
+			return
+		case "/":
+			http.ServeFileFS(w, r, webRoot, "index.html")
+			return
+		case "/static", "/static/":
+			http.Redirect(w, r, s.cfg.PathPrefix+"/", http.StatusMovedPermanently)
+			return
+		}
+		if _, pattern := s.mux.Handler(r); pattern == "" {
 			static.ServeHTTP(w, r)
 			return
 		}

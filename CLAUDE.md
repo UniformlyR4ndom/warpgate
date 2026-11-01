@@ -82,9 +82,10 @@ TLS client auth, `wgcli register` for the IP firewall, `-json` output, filtered/
 | POST     | `/api/clip/attachment/download` | Yes   | Fetch an image's bytes, transform-disguised; body: `{id,transform,args,contentType?}` |
 | POST     | `/api/clip/attachment/edit`     | Yes   | Set one image's caption; body: `{"id":<id>,"caption":"..."}` |
 | DELETE   | `/api/clip/attachment/delete`   | Yes   | Delete one image by ID; body: `{"id":<id>}` |
-| GET      | `/static/...`           | No            | Embedded frontend (HTML, JS, CSS) |
+| GET      | `/`                     | No            | The UI (`web/index.html`) |
+| GET      | `/static/...`           | No            | Embedded frontend assets (JS, CSS) |
 
-`/` and `/static` redirect to `/static/`.
+`/static` and `/static/` redirect to `/` (old bookmarks); `index.html` references its assets as `static/...`.
 
 ### Path prefix
 
@@ -95,11 +96,12 @@ one path segment of `[A-Za-z0-9._~-]` (leading `/` optional; `.`/`..` rejected),
 `withPathPrefix` wraps `Server.handler()`: a path that is exactly `<prefix>` or starts with
 `<prefix>/` has the prefix stripped (and `RawPath` cleared) before normal routing; anything else —
 any method, including `<prefix>foo` — gets an identical empty `200 text/html; charset=utf-8`
-response, with no Go-specific body or redirect, to be hard to fingerprint. The `/` → `/static/`
-redirect becomes `<prefix>/static/`.
+response, with no Go-specific body or redirect, to be hard to fingerprint. Exactly `<prefix>`
+reaches the handler with an empty path, which 301s it to `<prefix>/` (the relative asset URLs need
+the trailing slash) — after the IP firewall, so an unadmitted client can't tell a valid prefix by it.
 
 The frontend needs no configuration: `API_BASE` (`web/app/store.js`) is derived from `location.pathname`
-(everything before `/static/`) and prepended to every `fetch` URL and to `wsBaseURL()`. Static assets
+(everything up to the last `/`) and prepended to every `fetch` URL and to `wsBaseURL()`. Static assets
 already use relative URLs. `wgcli` just takes the prefix as part of `-url`.
 
 ### Filesystem confinement
@@ -135,18 +137,17 @@ logs.
   Everything else gets `writeBlank` — the same response as a wrong prefix.
 - **Registration path**: `-ip-reg-path <segment>`, or — when only `-ip-reg-max`/`-ip-reg-window` are
   set — the base path `/` (i.e. `<prefix>`/`<prefix>/`), which then requires `-path-prefix` (a bare
-  `/` would let internet noise claim the slots). In base-path mode `<prefix>/static/` (exactly) is a
-  second registration URL, so reloading the UI after a restart re-registers; it holds no less secret
-  than the base path. A dedicated `-ip-reg-path` is the only registration URL in its mode, since the
-  UI URL doesn't contain it. While registration is open (window not expired,
+  `/` would let internet noise claim the slots). In base-path mode the registration URL is also the
+  UI URL, so reloading the UI after a restart re-registers. While registration is open (window not expired,
   `len(registered) < regMax`), GET returns `regPageHTML`, a page that auto-submits an empty form
-  POST to the same URL; only the POST registers, then 303s to `<prefix>/static/`. The page's one inline
+  POST to the same URL; only the POST registers, then 303s to `<prefix>/`. The page's one inline
   script is allowed by its own CSP (`regPageCSP`, `csp.go`) via a SHA-256 hash, replacing the global one. This keeps link
-  scanners/proxies that just GET the URL from consuming slots. Admitted IPs bypass registration handling
-  entirely (so `/static/` serves the UI), except on a dedicated `-ip-reg-path`, which 303s them to the
-  UI.
+  scanners/proxies that just GET the URL from consuming slots. Admitted IPs bypass registration
+  handling (so `<prefix>/` serves them the UI), except on a dedicated `-ip-reg-path` (any method) and
+  a base-path POST, which 303 them to the UI.
 - `wgcli register [registration-url]` (default: `-url`) sends the same empty form POST, without
-  running any script, and reports success when the response redirects to `.../static/`. Every other
+  running any script, and reports success on a `303` (only a registration, or an admitted client's
+  re-registration, answers with one). Every other
   wgcli request reports the blank page as an explanatory error instead of failing to decode it.
 - `-ip-reg-max`/`-ip-reg-window` 0 mean unlimited; the window counts from `NewServer`. Existing
   registrations outlive the window. State is an in-memory map — lost on restart.

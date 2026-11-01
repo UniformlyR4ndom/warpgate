@@ -30,16 +30,14 @@ func writeBlank(w http.ResponseWriter) {
 }
 
 // withPathPrefix serves h only for paths under prefix (stripped before h sees
-// them); every other request gets a blank page.
+// them); every other request gets a blank page. A request for exactly prefix
+// reaches h with an empty path.
 func withPathPrefix(prefix string, h http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		rest, ok := strings.CutPrefix(r.URL.Path, prefix)
 		if !ok || (rest != "" && rest[0] != '/') {
 			writeBlank(w)
 			return
-		}
-		if rest == "" {
-			rest = "/"
 		}
 		r2 := r.Clone(r.Context())
 		r2.URL.Path = rest

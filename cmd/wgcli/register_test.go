@@ -15,7 +15,7 @@ func fakeFirewall(t *testing.T) *httptest.Server {
 		switch {
 		case r.URL.Path == "/reg" && r.Method == http.MethodPost:
 			registered = true
-			http.Redirect(w, r, "/static/", http.StatusSeeOther)
+			http.Redirect(w, r, "/", http.StatusSeeOther)
 		case registered:
 			_, _ = w.Write([]byte("[]"))
 		default:
