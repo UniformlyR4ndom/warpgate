@@ -42,7 +42,7 @@ Run:
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `-auth-key <key>` | — | Secret key clients must supply in the `X-Auth` HTTP header. If omitted, a random 32-byte hex key is generated at startup and printed to the log. |
+| `-auth-key <key>` | — | Passphrase clients must know. It never goes over the wire: clients derive a key from it with scrypt (under a per-database salt) and send a token derived from that key in the `X-Auth` header. After 10 wrong tokens in 10 minutes, a client IP gets `429` until the failures age out; a restart clears this. If omitted, a random 32-byte hex key is generated at startup and printed to the log. |
 | `-no-auth` | false | Disable authentication entirely. No `X-Auth` header is required. |
 
 ### IP firewall

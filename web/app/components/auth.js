@@ -4,7 +4,7 @@ import { settings, state, authKeyHash, authFingerprint, submitPassphrase, clearA
 const TIP = {
   pass: "The server's -auth-key. A key is derived from it (about a second) and kept for this browser tab; the passphrase itself is not stored. Leave empty if the server was started with -no-auth.",
   fp: 'Fingerprint of the derived key. The server logs the same value at startup.',
-  pcrypt: "Encrypt JSON request bodies and WebSocket control messages using a key derived from the auth key, so a proxy inspecting plaintext traffic can't read transform keys or paths. Requires an auth key.",
+  pcrypt: "Encrypt JSON request bodies and WebSocket control messages using keys derived from the passphrase, so a proxy inspecting plaintext traffic can't read transform keys or paths. Requires a key.",
 };
 
 function onKeyDown(e, canCancel) {

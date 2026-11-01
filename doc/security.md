@@ -77,7 +77,8 @@ Confidentiality is provided only by TLS, and only as far as no proxy intercepts 
 - Strict CSP on every response: `script-src 'self'` with no `unsafe-*`, no framing, Trusted Types
   with a single policy that only allows the pdf.js worker URL.
 - No string HTML sinks; note text, titles, captions and filenames are rendered as text.
-- The raw key is kept in `sessionStorage`, so it doesn't outlive the tab.
+- Only the derived key is kept, in `sessionStorage`, so it doesn't outlive the tab; the passphrase
+  is not stored.
 - Vendored libraries are kept current (pdf.js 6.4.299).
 
 **CLI (`wgcli`)**

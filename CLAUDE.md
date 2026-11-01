@@ -463,7 +463,8 @@ Preact + htm + `@preact/signals` + `deepsignal` as native ES modules; no build s
   (`pdf-lib.min.js`, `aes.js`, `sha256.js`) and `static/app/main.js`
 - `favicon.svg` — linked relatively (`/favicon.ico` would miss the path prefix)
 - `pdf.min.mjs`, `pdf.worker.min.mjs` — pdf.js 6.4.299 (modern build)
-- `app/vendor/` — the libraries, bare imports rewritten to relative paths
+- `app/vendor/` — the libraries, bare imports rewritten to relative paths; `noble-hashes/` is the
+  scrypt subset of `@noble/hashes` 2.4.0
 - `app/main.js` — boot; `app/store.js` — `settings`, `state`, derived key signals, `API_BASE`;
   `app/nav.js` — `TABS`, `setTab`, `restoreTab`, `refreshActive`, `onAuthKeyChange`
 - `app/lib/` — logic: `api.js` (auth headers, `encodeBody`/`decodeResponseJSON`/`sendWSControl`),
@@ -610,6 +611,7 @@ timed. `crypto.subtle` needs a secure context; without one a run fails with a me
 | `github.com/pdfcpu/pdfcpu` | v0.13.0 | PDFs, attachments, AES-256 encryption |
 | `modernc.org/sqlite` | v1.53.0 | Pure-Go SQLite (no CGO) |
 | `github.com/gorilla/websocket` | v1.5.3 | WebSocket transport |
+| `golang.org/x/crypto` | v0.52.0 | scrypt for the auth key |
 
 ## Development
 
