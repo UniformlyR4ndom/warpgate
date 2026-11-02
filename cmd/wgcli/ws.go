@@ -67,6 +67,7 @@ func (g *globalFlags) dialWS(path string) (*websocket.Conn, error) {
 		}
 		return nil, fmt.Errorf("dialing %s: %w", target, err)
 	}
+	g.contacted.Store(true)
 	return conn, nil
 }
 

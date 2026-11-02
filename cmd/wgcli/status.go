@@ -8,9 +8,11 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"strings"
 
 	"warpgate/internal/authhash"
+	"warpgate/internal/bytesize"
 )
 
 type statusOut struct {
@@ -22,6 +24,61 @@ type statusOut struct {
 	UlFlat     bool   `json:"ulFlat"`
 	Auth       string `json:"auth"`
 	KeyID      string `json:"keyId,omitempty"`
+	// Transfer holds what transfers use unless their flags say otherwise.
+	Transfer transferSettings `json:"transfer"`
+}
+
+type transferSettings struct {
+	Transform  string `json:"transform"`
+	Backend    string `json:"backend"`
+	FrameSize  int64  `json:"frameSize"` // 0: the server's maximum (download) or 1 MiB (upload)
+	ChunkSize  int64  `json:"chunkSize"` // 0: each command's default
+	ParamCrypt bool   `json:"paramCrypt"`
+}
+
+// envTransferSettings reports the transfer defaults set by WGCLI_* variables,
+// rejecting values the transfer commands would reject.
+func envTransferSettings(g *globalFlags) (transferSettings, error) {
+	t := transferSettings{Transform: "id", Backend: "http"}
+	_, t.ParamCrypt = g.paramKeys()
+	if v, ok := os.LookupEnv(transferEnv["transform"]); ok {
+		if _, err := buildTransformArgs(v, "", "", "", ""); err != nil {
+			return t, fmt.Errorf("%s=%q: %w", transferEnv["transform"], v, err)
+		}
+		t.Transform = v
+	}
+	if v, ok := os.LookupEnv(transferEnv["backend"]); ok {
+		if v != "http" && v != "ws" {
+			return t, fmt.Errorf("%s=%q: must be http or ws", transferEnv["backend"], v)
+		}
+		t.Backend = v
+	}
+	for name, dst := range map[string]*int64{"frame-size": &t.FrameSize, "chunk-size": &t.ChunkSize} {
+		if v, ok := os.LookupEnv(transferEnv[name]); ok {
+			n, err := bytesize.Parse(v)
+			if err != nil {
+				return t, fmt.Errorf("%s=%q: %w", transferEnv[name], v, err)
+			}
+			*dst = n
+		}
+	}
+	return t, nil
+}
+
+func (t transferSettings) String() string {
+	frame, chunk := "default", "default"
+	if t.FrameSize > 0 {
+		frame = fmt.Sprint(t.FrameSize)
+	}
+	if t.ChunkSize > 0 {
+		chunk = fmt.Sprint(t.ChunkSize)
+	}
+	pc := "off"
+	if t.ParamCrypt {
+		pc = "on"
+	}
+	return fmt.Sprintf("transform %s, backend %s, frame size %s, chunk size %s, parameter encryption %s",
+		t.Transform, t.Backend, frame, chunk, pc)
 }
 
 // runStatus checks, in order, that the server is reachable (registering with
@@ -54,6 +111,9 @@ func runStatus(args []string) error {
 	if out.Auth, err = g.checkAuth(k != nil); err != nil {
 		return err
 	}
+	if out.Transfer, err = envTransferSettings(g); err != nil {
+		return err
+	}
 
 	if g.json {
 		printJSON(out)
@@ -83,6 +143,7 @@ func runStatus(args []string) error {
 	} else {
 		fmt.Println("auth:     disabled on the server")
 	}
+	fmt.Printf("transfer: %s\n", out.Transfer)
 	return nil
 }
 

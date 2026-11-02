@@ -66,11 +66,13 @@ type xferSummary struct {
 	Skipped     []xferNote   `json:"skipped"`
 	Failed      []xferNote   `json:"failed"`
 	Bytes       int64        `json:"bytes"`
+	Transform   string       `json:"transform"`
 	Seconds     float64      `json:"seconds"`
 }
 
-func newSummary(g *globalFlags) *xferSummary {
-	return &xferSummary{g: g, start: time.Now(), Transferred: []fileResult{}, Skipped: []xferNote{}, Failed: []xferNote{}}
+func newSummary(g *globalFlags, o xferOpts) *xferSummary {
+	return &xferSummary{g: g, start: time.Now(), Transform: o.transformName,
+		Transferred: []fileResult{}, Skipped: []xferNote{}, Failed: []xferNote{}}
 }
 
 func (s *xferSummary) done(label string, r fileResult) {
@@ -122,7 +124,7 @@ type dlItem struct {
 // downloadMany puts each argument into outDir under its own name;
 // directories need recursive.
 func downloadMany(g *globalFlags, o xferOpts, args []string, outDir string, recursive, force bool) error {
-	sum := newSummary(g)
+	sum := newSummary(g, o)
 	var dirs []string
 	var items []dlItem
 
@@ -252,7 +254,7 @@ func uploadMany(g *globalFlags, o xferOpts, args []string, remoteDir string, rec
 		return errors.New("the server keeps the upload directory flat: no -dir")
 	}
 
-	sum := newSummary(g)
+	sum := newSummary(g, o)
 	var dirs []string // remote directories, parents first
 	var items []ulItem
 	for _, arg := range args {

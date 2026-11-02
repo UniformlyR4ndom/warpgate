@@ -70,7 +70,8 @@ chunked; WebSocket uploads ignore it.
 
 IP firewall: optional on the server. When it blocks this machine's IP (first contact, or after a
 server restart), every command registers the IP by itself and resends the refused request; stderr
-says `wgcli: registered this IP …`. That needs the token's registration URL, or a server that
+says `wgcli: registered this IP …`, with "again … (server restarted?)" when the server knew it
+earlier in the same run. That needs the token's registration URL, or a server that
 registers at its base URL; otherwise run `wgcli register <url>` with the URL the operator gave you.
 
 ## Transforms
@@ -96,9 +97,12 @@ use `-json` when parsing. JSON fields that are empty and optional are left out.
 ### wgcli status
 Checks the connection and stops at the first problem, with a message saying what to fix: reaches
 the server (registering with its IP firewall if that blocks), reads what it offers, and makes one
-authenticated request. Run it first, and whenever commands fail unexpectedly.
-JSON: `{"url","tls","pinned","registered","uploads","ulFlat","auth":"ok"|"disabled","keyId"}`;
-`registered` is true when this run registered the IP.
+authenticated request. Run it first, and whenever commands fail unexpectedly. It also shows the
+transfer defaults from the `WGCLI_*` variables (transform, backend, sizes, parameter encryption),
+so you can confirm what transfers will use; invalid values are reported.
+JSON: `{"url","tls","pinned","registered","uploads","ulFlat","auth":"ok"|"disabled","keyId",
+"transfer":{"transform","backend","frameSize","chunkSize","paramCrypt"}}`; `registered` is true when
+this run registered the IP; a size of 0 means the command's own default.
 
 ### wgcli list [-ul] [dir]
 Lists a directory of the download root (`-ul`: of the upload directory).
@@ -118,9 +122,9 @@ With several paths or `-r`, files that are identical locally are skipped (`-forc
 anyway), and names this system can't store fail. `-chunk-size` (default 4 MiB) is the plaintext
 size per request; `-backend http|ws`; `-frame-size` (0 = server maximum). Transform flags:
 `-transform`, `-key`, `-iv`, `-password`.
-JSON, one file: `{"path","out","bytes","sha256","verified","seconds"}` (`verified`: the server's
+JSON, one file: `{"path","out","bytes","sha256","verified","transform","seconds"}` (`verified`: the server's
 hash matched); several (see "Transfer summary"):
-`{"transferred":[{"path","out","bytes","sha256","verified"}],"skipped","failed","bytes","seconds"}`.
+`{"transferred":[{"path","out","bytes","sha256","verified"}],"skipped","failed","bytes","transform","seconds"}`.
 
 ### wgcli upload [flags] <local>...
 Uploads into the upload directory, or into its existing subdirectory `-dir`; each path lands there
@@ -131,7 +135,7 @@ is replaced without warning**, except that with several paths or `-r` identical 
 (`-force`: upload anyway). The server's SHA-256 of each stored file is compared with the local
 one. `-chunk-size` splits each file into sequential requests (HTTP only; default: one request);
 `-backend http|ws`; `-frame-size` (0 = 1 MiB). Transform flags: `-transform`, `-key`, `-iv`,
-`-filename`. JSON, one file: `{"path","name","bytes","sha256","verified","seconds"}` (`name`:
+`-filename`. JSON, one file: `{"path","name","bytes","sha256","verified","transform","seconds"}` (`name`:
 stored path); several: as for `download`, entries `{"path","name","bytes","sha256","verified"}`.
 
 **Transfer summary** (several paths or `-r`): text output reports each file as it happens, then a
@@ -163,7 +167,9 @@ optional. `-attach <image>` (repeatable; png, jpg, gif, webp, bmp, by extension)
 optionally followed by `-caption <text>`; with images the text is optional. `-transform`, `-key`,
 `-iv` disguise the image bytes. If an image fails, the note exists and the error names its id.
 JSON: `{"id","ts","since","attachments"}`: pass `since` to `clip wait -since` and `ts` to
-`wait-file -since` to catch the reply to this note however quickly it comes (see below).
+`wait-file -since` to catch the reply to this note however quickly it comes (see below). `since`
+is the clipboard's revision before this note (it counts every change; 0 on an empty clipboard),
+`ts` the server's Unix time.
 
 ### wgcli clip edit [flags] <id> [text]
 Replaces a note's text (argument or `-f <file>`). `-title` replaces the title (`-title ""` clears

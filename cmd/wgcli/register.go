@@ -33,6 +33,9 @@ type blankPageTransport struct {
 func (t blankPageTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	resp, err := t.base.RoundTrip(req)
 	if err != nil || !isBlankPage(resp) {
+		if err == nil && t.g != nil {
+			t.g.contacted.Store(true)
+		}
 		return resp, err
 	}
 	resp.Body.Close()
@@ -72,7 +75,11 @@ func (g *globalFlags) autoRegister() error {
 		return g.regErr
 	}
 	g.registered = true
-	fmt.Fprintln(os.Stderr, "wgcli: registered this IP with the server's IP firewall")
+	if g.contacted.Load() {
+		fmt.Fprintln(os.Stderr, "wgcli: registered this IP again: the server's IP firewall no longer knew it (server restarted?)")
+	} else {
+		fmt.Fprintln(os.Stderr, "wgcli: registered this IP with the server's IP firewall")
+	}
 	return nil
 }
 

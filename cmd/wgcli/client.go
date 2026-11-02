@@ -14,6 +14,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"warpgate/internal/authhash"
 	"warpgate/internal/bytesize"
@@ -43,6 +44,7 @@ type globalFlags struct {
 	k           []byte
 	keyErr      error
 
+	contacted  atomic.Bool // a request got through to the server
 	regMu      sync.Mutex
 	regErr     error
 	registered bool // this invocation registered the client's IP

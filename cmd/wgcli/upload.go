@@ -253,8 +253,8 @@ func uploadWS(g *globalFlags, o xferOpts, localPath, dir, name string) (uploadRe
 	return uploadResult{Name: ack.Name, SHA256: ack.SHA256}, hex.EncodeToString(h.Sum(nil)), nil
 }
 
-func printUploadResult(g *globalFlags, r fileResult, elapsed time.Duration) {
-	g.report(map[string]any{"path": r.Path, "name": r.Name, "bytes": r.Bytes, "sha256": r.SHA256, "verified": r.Verified, "seconds": elapsed.Seconds()},
+func printUploadResult(g *globalFlags, r fileResult, transformName string, elapsed time.Duration) {
+	g.report(map[string]any{"path": r.Path, "name": r.Name, "bytes": r.Bytes, "sha256": r.SHA256, "verified": r.Verified, "transform": transformName, "seconds": elapsed.Seconds()},
 		"uploaded %s as %q (%d bytes) in %s, %s", r.Path, r.Name, r.Bytes, elapsed.Round(time.Millisecond), hashNote(r))
 }
 
@@ -328,6 +328,6 @@ func runUpload(args []string) error {
 	if err != nil {
 		return err
 	}
-	printUploadResult(g, r, time.Since(start))
+	printUploadResult(g, r, o.transformName, time.Since(start))
 	return nil
 }

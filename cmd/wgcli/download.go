@@ -252,9 +252,9 @@ func downloadWS(g *globalFlags, o xferOpts, remotePath, dst string) (size int64,
 	return size, sum, verified, nil
 }
 
-func printDownloadResult(g *globalFlags, r fileResult, elapsed time.Duration) {
+func printDownloadResult(g *globalFlags, r fileResult, transformName string, elapsed time.Duration) {
 	throughput := float64(r.Bytes) / 1e6 / elapsed.Seconds()
-	g.report(map[string]any{"path": r.Path, "out": r.Out, "bytes": r.Bytes, "sha256": r.SHA256, "verified": r.Verified, "seconds": elapsed.Seconds()},
+	g.report(map[string]any{"path": r.Path, "out": r.Out, "bytes": r.Bytes, "sha256": r.SHA256, "verified": r.Verified, "transform": transformName, "seconds": elapsed.Seconds()},
 		"downloaded %d bytes to %s in %s (%.2f MB/s), %s", r.Bytes, r.Out, elapsed.Round(time.Millisecond), throughput, hashNote(r))
 }
 
@@ -315,6 +315,6 @@ func runDownload(args []string) error {
 	if err != nil {
 		return err
 	}
-	printDownloadResult(g, r, time.Since(start))
+	printDownloadResult(g, r, o.transformName, time.Since(start))
 	return nil
 }
