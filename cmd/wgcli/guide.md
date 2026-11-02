@@ -42,6 +42,8 @@ export WGCLI_JSON=1 WGCLI_PARAM_CRYPT=1
 ```
 
 Without a token, set `WGCLI_URL` instead, plus `WGCLI_INSECURE=1` for a self-signed certificate.
+If your shell state doesn't persist between commands, put the `export` lines in a file and source
+it before each command.
 
 Sizes (`-chunk-size`, `-frame-size`, `-total-size`) are bytes, or KiB/MiB with a `K`/`M` suffix.
 
@@ -101,8 +103,9 @@ With several paths or `-r`, files that are identical locally are skipped (`-forc
 anyway), and names this system can't store fail. `-chunk-size` (default 4 MiB) is the plaintext
 size per request; `-backend http|ws`; `-frame-size` (0 = server maximum). Transform flags:
 `-transform`, `-key`, `-iv`, `-password`.
-JSON, one file: `{"path","out","bytes","sha256","seconds"}`; several (see "Transfer summary"):
-`{"transferred":[{"path","out","bytes","sha256"}],"skipped","failed","bytes","seconds"}`.
+JSON, one file: `{"path","out","bytes","sha256","verified","seconds"}` (`verified`: the server's
+hash matched); several (see "Transfer summary"):
+`{"transferred":[{"path","out","bytes","sha256","verified"}],"skipped","failed","bytes","seconds"}`.
 
 ### wgcli upload [flags] <local>...
 Uploads into the upload directory, or into its existing subdirectory `-dir`; each path lands there
@@ -113,8 +116,8 @@ is replaced without warning**, except that with several paths or `-r` identical 
 (`-force`: upload anyway). The server's SHA-256 of each stored file is compared with the local
 one. `-chunk-size` splits each file into sequential requests (HTTP only; default: one request);
 `-backend http|ws`; `-frame-size` (0 = 1 MiB). Transform flags: `-transform`, `-key`, `-iv`,
-`-filename`. JSON, one file: `{"path","name","bytes","sha256","seconds"}` (`name`: stored path);
-several: as for `download`, entries `{"path","name","bytes","sha256"}`.
+`-filename`. JSON, one file: `{"path","name","bytes","sha256","verified","seconds"}` (`name`:
+stored path); several: as for `download`, entries `{"path","name","bytes","sha256","verified"}`.
 
 **Transfer summary** (several paths or `-r`): text output reports each file as it happens, then a
 line with the totals. Transfers continue past failures; the exit status is 1 if any file failed.
@@ -143,7 +146,8 @@ Creates a note. Text from the argument or `-f <file>` (`-f /dev/stdin` for a pip
 optional. `-attach <image>` (repeatable; png, jpg, gif, webp, bmp, by extension) adds images, each
 optionally followed by `-caption <text>`; with images the text is optional. `-transform`, `-key`,
 `-iv` disguise the image bytes. If an image fails, the note exists and the error names its id.
-JSON: `{"id","ts","attachments"}`.
+JSON: `{"id","ts","since","attachments"}`: pass `since` to `clip wait -since` and `ts` to
+`wait-file -since` to catch the reply to this note however quickly it comes (see below).
 
 ### wgcli clip edit [flags] <id> [text]
 Replaces a note's text (argument or `-f <file>`). `-title` replaces the title (`-title ""` clears
@@ -167,21 +171,27 @@ Deletes images, stopping at the first failure. JSON: `{"ids"}`.
 Sets an image caption; `""` clears it. JSON: `{"id","caption"}`.
 
 ### wgcli clip wait [flags]
-Waits until a note is created or edited, then prints the notes like `clip list`. Counts from now,
-or from `-since <rev>`; ignores notes written by wgcli unless `-any-source`. `-search`/`-scope` as
-in `clip list` wait for a specific note. `-timeout` (default 2m, `0` = indefinitely); on timeout it
-exits with status 2, prints `{"rev","notes":[]}` and says which `-since` continues without gaps.
+Waits until a note is created or edited after `-since <rev>` (default: from now), then prints the
+notes like `clip list`. Ignores notes written by wgcli unless `-any-source`. `-search`/`-scope` as
+in `clip list` wait for a specific note. `-timeout` (default `2m`; `90s`, `5m`, or plain seconds;
+`0` = indefinitely); on timeout it exits with status 2, prints `{"rev","notes":[]}` and says which
+`-since` continues without gaps.
 
 ### wgcli wait-file [flags] [path]
 Waits for a file, by default in the download root (`-ul`: the upload directory, where the
-operator's uploads land). A directory path (or none, the root) waits for any new file or a new
-version of one in it; a file path waits until the file exists, with `-new` until a newer version
-than the present one arrives. Files appear only when completely uploaded. `-timeout` as in
+operator's uploads land). **Without a path or with a directory, any new file counts**, so you
+needn't know its name; with a file path, that file (`-new`: only a newer version than the present
+one). `-since <unix-time>` counts every file modified from then on as new, including ones that
+arrived before the wait started. Files appear only when completely uploaded. `-timeout` as in
 `clip wait` (status 2, prints `[]`). JSON: `[{"path","size","mtime","sha256"}]`.
 
-**Waiting for the operator** (`clip wait`, `wait-file`): the operator may take a while or change
-plans. Run waits in the background if your environment allows it, so you stay responsive;
-otherwise keep timeouts short and wait again. Server restarts during a wait are ridden out.
+**Asking the operator for something:**
+1. `wgcli clip new "please paste …"`, keeping `since` and `ts` from its output.
+2. `wgcli clip wait -since <since>` for a reply note, or `wgcli wait-file -ul -since <ts>` for an
+   upload, in the background if your environment allows it, so you stay responsive when the
+   operator takes a while or changes plans; otherwise with short timeouts, repeated.
+Without `-since`, a wait counts from its own start and misses anything that arrived earlier, for
+example while a failed wait was being retried. Server restarts during a wait are ridden out.
 
 ### wgcli register [registration-url]
 Admits this machine's IP through the server's IP firewall. Other commands do this by themselves;
@@ -210,7 +220,8 @@ output only.
 
 ## Errors
 
-Errors go to stderr as `wgcli: <message>`, exit status 1; HTTP errors read `<status>: <server text>`.
+Errors go to stderr as `wgcli: <message>`, exit status 1, invalid flags included; status 2 means
+only that a wait timed out. HTTP errors read `<status>: <server text>`.
 
 | Message contains | Meaning | Action |
 |------------------|---------|--------|

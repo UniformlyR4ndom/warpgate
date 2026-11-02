@@ -59,8 +59,12 @@ func main() {
 		os.Exit(1)
 	}
 
+	if errors.Is(err, errHelpShown) {
+		return
+	}
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "wgcli:", err)
+		// 2 means only "timed out": flag errors exit with 1 like any other.
 		if errors.Is(err, errWaitTimeout) {
 			os.Exit(2)
 		}

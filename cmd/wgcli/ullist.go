@@ -39,7 +39,7 @@ func fetchUlList(g *globalFlags) ([]listEntry, error) {
 }
 
 func runUlList(args []string) error {
-	fs := flag.NewFlagSet("ul-list", flag.ExitOnError)
+	fs := flag.NewFlagSet("ul-list", flag.ContinueOnError)
 	g := addGlobalFlags(fs)
 	if err := parseFlags(fs, g, args); err != nil {
 		return err

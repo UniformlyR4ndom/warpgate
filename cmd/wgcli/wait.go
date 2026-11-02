@@ -10,6 +10,7 @@ import (
 	"os"
 	"path"
 	"slices"
+	"strconv"
 	"syscall"
 	"time"
 )
@@ -49,10 +50,10 @@ func isTransient(err error) bool {
 }
 
 func runClipWait(args []string) error {
-	fs := flag.NewFlagSet("clip wait", flag.ExitOnError)
+	fs := flag.NewFlagSet("clip wait", flag.ContinueOnError)
 	g := addGlobalFlags(fs)
 	since := fs.Int64("since", -1, "wait for notes created or edited after this revision (default: from now)")
-	timeout := fs.Duration("timeout", 2*time.Minute, "give up after this long, exit status 2 (0 = wait indefinitely)")
+	timeout := durationFlag(fs, "timeout", 2*time.Minute, "give up after this long, exit status 2 (0 = wait indefinitely)")
 	search := fs.String("search", "", "only notes containing this (case-insensitive)")
 	scope := fs.String("scope", "all", "where -search looks: all|title|content (content includes image captions)")
 	anySource := fs.Bool("any-source", false, "also wake on notes written by wgcli (source cli)")
@@ -139,13 +140,17 @@ type waitFileOut struct {
 }
 
 func runWaitFile(args []string) error {
-	fs := flag.NewFlagSet("wait-file", flag.ExitOnError)
+	fs := flag.NewFlagSet("wait-file", flag.ContinueOnError)
 	g := addGlobalFlags(fs)
 	ul := fs.Bool("ul", false, "watch the upload directory instead of the download root")
 	newOnly := fs.Bool("new", false, "for a file that exists already: wait for a newer version")
-	timeout := fs.Duration("timeout", 2*time.Minute, "give up after this long, exit status 2 (0 = wait indefinitely)")
+	since := fs.Int64("since", 0, "count files modified at or after this Unix time as new (the ts of \"clip new\")")
+	timeout := durationFlag(fs, "timeout", 2*time.Minute, "give up after this long, exit status 2 (0 = wait indefinitely)")
 	if err := parseFlags(fs, g, args); err != nil {
 		return err
+	}
+	if *newOnly && *since > 0 {
+		return errors.New("-new and -since exclude each other")
 	}
 	prefix := apiPrefix(*ul)
 	target := path.Clean("/" + fs.Arg(0))[1:]
@@ -181,6 +186,14 @@ func runWaitFile(args []string) error {
 			if e.Type == "f" && (name == "" || e.Name == name) {
 				current[e.Name] = versionOf(e)
 			}
+		}
+		if *since > 0 {
+			for n, v := range current {
+				if v.mtime >= *since {
+					found = append(found, filesNamed(entries, n)...)
+				}
+			}
+			return len(found) > 0, nil
 		}
 		if baseline == nil {
 			baseline = current
@@ -235,5 +248,29 @@ func filesNamed(entries []listEntry, name string) []listEntry {
 			return []listEntry{e}
 		}
 	}
+	return nil
+}
+
+// durationFlag defines a duration flag that also takes plain seconds.
+func durationFlag(fs *flag.FlagSet, name string, def time.Duration, usage string) *time.Duration {
+	d := def
+	fs.Var((*secondsOrDuration)(&d), name, usage+" (e.g. 90s, 5m; a plain number is seconds)")
+	return &d
+}
+
+type secondsOrDuration time.Duration
+
+func (d *secondsOrDuration) String() string { return time.Duration(*d).String() }
+
+func (d *secondsOrDuration) Set(s string) error {
+	if n, err := strconv.ParseInt(s, 10, 64); err == nil {
+		*d = secondsOrDuration(time.Duration(n) * time.Second)
+		return nil
+	}
+	v, err := time.ParseDuration(s)
+	if err != nil {
+		return errors.New("not a duration")
+	}
+	*d = secondsOrDuration(v)
 	return nil
 }

@@ -106,7 +106,9 @@ func printJSON(v any) {
 // ends flag parsing), then fills global flags not given from the
 // environment and loads the client certificate.
 func parseFlags(fs *flag.FlagSet, g *globalFlags, args []string) error {
-	fs.Parse(permuteArgs(fs, args))
+	if err := parseArgs(fs, args); err != nil {
+		return err
+	}
 	set := map[string]bool{}
 	fs.Visit(func(f *flag.Flag) { set[f.Name] = true })
 	g.fromEnv = map[string]bool{}
@@ -136,6 +138,27 @@ func parseFlags(fs *flag.FlagSet, g *globalFlags, args []string) error {
 			return fmt.Errorf("loading client certificate: %w", err)
 		}
 		g.tlsConfig.Certificates = []tls.Certificate{cert}
+	}
+	return nil
+}
+
+// errHelpShown ends wgcli with status 0 after -h printed the flags.
+var errHelpShown = errors.New("help shown")
+
+// parseArgs parses args, allowing flags after positional arguments. A bad
+// flag is reported in one line, not with the whole flag list, which -h
+// prints.
+func parseArgs(fs *flag.FlagSet, args []string) error {
+	fs.SetOutput(io.Discard)
+	err := fs.Parse(permuteArgs(fs, args))
+	fs.SetOutput(os.Stderr)
+	if errors.Is(err, flag.ErrHelp) {
+		fmt.Fprintf(os.Stderr, "Usage of %s:\n", fs.Name())
+		fs.PrintDefaults()
+		return errHelpShown
+	}
+	if err != nil {
+		return fmt.Errorf("%w (see \"wgcli %s -h\")", err, fs.Name())
 	}
 	return nil
 }

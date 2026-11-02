@@ -11,7 +11,7 @@ import (
 // runDeriveKey prints K for -auth-key, to be passed as -auth-k later
 // without repeating the derivation.
 func runDeriveKey(args []string) error {
-	fs := flag.NewFlagSet("derive-key", flag.ExitOnError)
+	fs := flag.NewFlagSet("derive-key", flag.ContinueOnError)
 	saltHex := fs.String("salt", "", "hex KDF salt (default: fetched from the server's /api/public/settings)")
 	g := addGlobalFlags(fs)
 	if err := parseFlags(fs, g, args); err != nil {

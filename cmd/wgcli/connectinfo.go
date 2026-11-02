@@ -14,9 +14,11 @@ import (
 // runConnectInfo decodes a connect token without contacting the server, so it
 // needs neither a host nor a key.
 func runConnectInfo(args []string) error {
-	fs := flag.NewFlagSet("connect-info", flag.ExitOnError)
+	fs := flag.NewFlagSet("connect-info", flag.ContinueOnError)
 	asJSON := fs.Bool("json", false, "print one JSON document on stdout (env WGCLI_JSON)")
-	fs.Parse(permuteArgs(fs, args))
+	if err := parseArgs(fs, args); err != nil {
+		return err
+	}
 	if v, ok := os.LookupEnv("WGCLI_JSON"); ok && !*asJSON {
 		*asJSON, _ = strconv.ParseBool(v)
 	}

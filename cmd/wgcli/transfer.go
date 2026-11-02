@@ -31,11 +31,24 @@ type xferOpts struct {
 }
 
 type fileResult struct {
-	Path   string `json:"path"`
-	Out    string `json:"out,omitempty"`
-	Name   string `json:"name,omitempty"`
-	Bytes  int64  `json:"bytes"`
-	SHA256 string `json:"sha256"`
+	Path     string `json:"path"`
+	Out      string `json:"out,omitempty"`
+	Name     string `json:"name,omitempty"`
+	Bytes    int64  `json:"bytes"`
+	SHA256   string `json:"sha256"`
+	Verified bool   `json:"verified"` // the server's hash matched
+}
+
+// hashNote describes r's hash for text output.
+func hashNote(r fileResult) string {
+	short := r.SHA256
+	if len(short) > 16 {
+		short = short[:16] + "…"
+	}
+	if r.Verified {
+		return "SHA-256 " + short + " verified"
+	}
+	return "SHA-256 " + short + " (not verified)"
 }
 
 type xferNote struct {
@@ -64,7 +77,7 @@ func (s *xferSummary) done(label string, r fileResult) {
 	s.Transferred = append(s.Transferred, r)
 	s.Bytes += r.Bytes
 	if !s.g.json {
-		fmt.Printf("%-12s %s (%d bytes)\n", label, r.Path, r.Bytes)
+		fmt.Printf("%-12s %s (%d bytes, %s)\n", label, r.Path, r.Bytes, hashNote(r))
 	}
 }
 

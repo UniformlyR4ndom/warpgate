@@ -193,7 +193,7 @@ func simDownloadWS(g *globalFlags, totalSize, chunkSize, frameSize int64) error 
 }
 
 func runSimDownload(args []string) error {
-	fs := flag.NewFlagSet("sim download", flag.ExitOnError)
+	fs := flag.NewFlagSet("sim download", flag.ContinueOnError)
 	g := addGlobalFlags(fs)
 	totalSize := sizeFlag(fs, "total-size", 0, "size in bytes of the synthetic file to download (required)")
 	chunkSize := sizeFlag(fs, "chunk-size", 4<<20, "chunk size in bytes for the download loop")
@@ -402,7 +402,7 @@ func simUploadWS(g *globalFlags, totalSize, frameSize int64) error {
 }
 
 func runSimUpload(args []string) error {
-	fs := flag.NewFlagSet("sim upload", flag.ExitOnError)
+	fs := flag.NewFlagSet("sim upload", flag.ContinueOnError)
 	g := addGlobalFlags(fs)
 	totalSize := sizeFlag(fs, "total-size", 0, "size in bytes of the synthetic buffer to upload (required)")
 	chunkSize := sizeFlag(fs, "chunk-size", 0, "chunk size in bytes for chunked upload via the continuation-key protocol (0 = one-shot; http backend only)")

@@ -79,7 +79,7 @@ func (g *globalFlags) autoRegister() error {
 // runRegister does what the browser's registration page does: an empty form
 // POST to the registration URL, which answers with a 303 to the UI.
 func runRegister(args []string) error {
-	fs := flag.NewFlagSet("register", flag.ExitOnError)
+	fs := flag.NewFlagSet("register", flag.ContinueOnError)
 	g := addGlobalFlags(fs)
 	if err := parseFlags(fs, g, args); err != nil {
 		return err

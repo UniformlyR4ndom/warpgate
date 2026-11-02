@@ -27,7 +27,7 @@ type statusOut struct {
 // runStatus checks, in order, that the server is reachable (registering with
 // the IP firewall if it blocks), what it offers, and that the key works.
 func runStatus(args []string) error {
-	fs := flag.NewFlagSet("status", flag.ExitOnError)
+	fs := flag.NewFlagSet("status", flag.ContinueOnError)
 	g := addGlobalFlags(fs)
 	if err := parseFlags(fs, g, args); err != nil {
 		return err

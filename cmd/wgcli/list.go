@@ -89,7 +89,7 @@ func fetchListing(g *globalFlags, prefix, p string, hash bool) ([]listEntry, err
 }
 
 func runList(args []string) error {
-	fs := flag.NewFlagSet("list", flag.ExitOnError)
+	fs := flag.NewFlagSet("list", flag.ContinueOnError)
 	g := addGlobalFlags(fs)
 	ul := fs.Bool("ul", false, "list the upload directory instead of the download root")
 	if err := parseFlags(fs, g, args); err != nil {

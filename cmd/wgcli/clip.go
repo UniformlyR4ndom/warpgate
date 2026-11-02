@@ -269,7 +269,7 @@ func printClipNotes(g *globalFlags, state *clipStateResponse, notes []clipNoteMe
 }
 
 func runClipList(args []string) error {
-	fs := flag.NewFlagSet("clip list", flag.ExitOnError)
+	fs := flag.NewFlagSet("clip list", flag.ContinueOnError)
 	g := addGlobalFlags(fs)
 	since := fs.Int64("since", 0, "only notes created or edited after this revision (as printed by a previous list)")
 	limit := fs.Int("limit", 0, "only the newest n notes (0 = all)")
@@ -310,7 +310,7 @@ func runClipList(args []string) error {
 }
 
 func runClipGet(args []string) error {
-	fs := flag.NewFlagSet("clip get", flag.ExitOnError)
+	fs := flag.NewFlagSet("clip get", flag.ContinueOnError)
 	g := addGlobalFlags(fs)
 	brief := fs.Bool("brief", false, "one line per note, without the text")
 	if err := parseFlags(fs, g, args); err != nil {
@@ -366,7 +366,7 @@ func (f captionFlag) Set(v string) error {
 }
 
 func runClipNew(args []string) error {
-	fs := flag.NewFlagSet("clip new", flag.ExitOnError)
+	fs := flag.NewFlagSet("clip new", flag.ContinueOnError)
 	g := addGlobalFlags(fs)
 	file := fs.String("f", "", "read note content from this file instead of the positional argument")
 	title := fs.String("title", "", "note title (optional)")
@@ -407,6 +407,12 @@ func runClipNew(args []string) error {
 		}
 	}
 
+	// The revision before the note: "clip wait -since" from it can't miss
+	// a reply, however fast it comes.
+	before, err := fetchClipState(g, 0)
+	if err != nil {
+		return err
+	}
 	id, ts, err := postClipNew(g, *title, data)
 	if err != nil {
 		return err
@@ -423,12 +429,13 @@ func runClipNew(args []string) error {
 	if len(atts) > 0 {
 		msg += fmt.Sprintf(" with %d image(s)", len(atts))
 	}
-	g.report(map[string]any{"id": id, "ts": ts, "attachments": atts}, "%s", msg)
+	msg += fmt.Sprintf("; replies: clip wait -since %d, files: wait-file -since %d", before.Rev, ts)
+	g.report(map[string]any{"id": id, "ts": ts, "since": before.Rev, "attachments": atts}, "%s", msg)
 	return nil
 }
 
 func runClipEdit(args []string) error {
-	fs := flag.NewFlagSet("clip edit", flag.ExitOnError)
+	fs := flag.NewFlagSet("clip edit", flag.ContinueOnError)
 	g := addGlobalFlags(fs)
 	file := fs.String("f", "", "read note content from this file instead of the positional argument")
 	titleFlag := fs.String("title", "", "new note title; empty clears it, omitting the flag keeps the current one")
@@ -463,7 +470,7 @@ func runClipEdit(args []string) error {
 }
 
 func runClipDelete(args []string) error {
-	fs := flag.NewFlagSet("clip delete", flag.ExitOnError)
+	fs := flag.NewFlagSet("clip delete", flag.ContinueOnError)
 	g := addGlobalFlags(fs)
 	if err := parseFlags(fs, g, args); err != nil {
 		return err

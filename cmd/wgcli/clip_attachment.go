@@ -138,7 +138,7 @@ func getClipAttachment(g *globalFlags, id int64, out, transformName string, args
 }
 
 func runClipAttach(args []string) error {
-	fs := flag.NewFlagSet("clip attach", flag.ExitOnError)
+	fs := flag.NewFlagSet("clip attach", flag.ContinueOnError)
 	g := addGlobalFlags(fs)
 	transformName := fs.String("transform", "id", "transform to disguise the image bytes with")
 	key := fs.String("key", "", "transform key (hex), where applicable; random if omitted")
@@ -172,7 +172,7 @@ func runClipAttach(args []string) error {
 }
 
 func runClipGetAttachment(args []string) error {
-	fs := flag.NewFlagSet("clip get-attachment", flag.ExitOnError)
+	fs := flag.NewFlagSet("clip get-attachment", flag.ContinueOnError)
 	g := addGlobalFlags(fs)
 	out := fs.String("o", "", "output file (required)")
 	transformName := fs.String("transform", "id", "transform the server should disguise the bytes with")
@@ -209,7 +209,7 @@ func runClipGetAttachment(args []string) error {
 }
 
 func runClipDeleteAttachment(args []string) error {
-	fs := flag.NewFlagSet("clip delete-attachment", flag.ExitOnError)
+	fs := flag.NewFlagSet("clip delete-attachment", flag.ContinueOnError)
 	g := addGlobalFlags(fs)
 	if err := parseFlags(fs, g, args); err != nil {
 		return err
@@ -238,7 +238,7 @@ func runClipDeleteAttachment(args []string) error {
 }
 
 func runClipCaption(args []string) error {
-	fs := flag.NewFlagSet("clip caption", flag.ExitOnError)
+	fs := flag.NewFlagSet("clip caption", flag.ContinueOnError)
 	g := addGlobalFlags(fs)
 	if err := parseFlags(fs, g, args); err != nil {
 		return err

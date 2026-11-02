@@ -102,15 +102,15 @@ type uploadResult struct {
 
 // checkUpload compares the local file's hash with the one the server
 // computed over what it stored.
-func checkUpload(local, remote string) error {
+func checkUpload(local, remote string) (verified bool, err error) {
 	if remote == "" {
 		fmt.Fprintln(os.Stderr, "wgcli: not verified: the server sent no SHA-256 (older warpgate?)")
-		return nil
+		return false, nil
 	}
 	if local != remote {
-		return fmt.Errorf("verification failed: the server stored data with SHA-256 %s, the local file has %s (altered in transit); upload again", remote, local)
+		return false, fmt.Errorf("verification failed: the server stored data with SHA-256 %s, the local file has %s (altered in transit); upload again", remote, local)
 	}
-	return nil
+	return true, nil
 }
 
 // uploadFile uploads localPath as dir/name and verifies the stored hash.
@@ -126,8 +126,9 @@ func uploadFile(g *globalFlags, o xferOpts, localPath, dir, name string) (fileRe
 	default:
 		res, sum, err = uploadHTTP(g, o, localPath, dir, name)
 	}
+	var verified bool
 	if err == nil {
-		err = checkUpload(sum, res.SHA256)
+		verified, err = checkUpload(sum, res.SHA256)
 	}
 	if err != nil {
 		return fileResult{}, err
@@ -136,7 +137,7 @@ func uploadFile(g *globalFlags, o xferOpts, localPath, dir, name string) (fileRe
 	if fi, err := os.Stat(localPath); err == nil {
 		size = fi.Size()
 	}
-	return fileResult{Path: localPath, Name: res.Name, Bytes: size, SHA256: sum}, nil
+	return fileResult{Path: localPath, Name: res.Name, Bytes: size, SHA256: sum, Verified: verified}, nil
 }
 
 func uploadHTTP(g *globalFlags, o xferOpts, localPath, dir, name string) (uploadResult, string, error) {
@@ -252,17 +253,13 @@ func uploadWS(g *globalFlags, o xferOpts, localPath, dir, name string) (uploadRe
 	return uploadResult{Name: ack.Name, SHA256: ack.SHA256}, hex.EncodeToString(h.Sum(nil)), nil
 }
 
-func printUploadResult(g *globalFlags, localPath, name, sum string, elapsed time.Duration) {
-	var size int64
-	if fi, err := os.Stat(localPath); err == nil {
-		size = fi.Size()
-	}
-	g.report(map[string]any{"path": localPath, "name": name, "bytes": size, "sha256": sum, "seconds": elapsed.Seconds()},
-		"uploaded %s as %q (%d bytes) in %s", localPath, name, size, elapsed.Round(time.Millisecond))
+func printUploadResult(g *globalFlags, r fileResult, elapsed time.Duration) {
+	g.report(map[string]any{"path": r.Path, "name": r.Name, "bytes": r.Bytes, "sha256": r.SHA256, "verified": r.Verified, "seconds": elapsed.Seconds()},
+		"uploaded %s as %q (%d bytes) in %s, %s", r.Path, r.Name, r.Bytes, elapsed.Round(time.Millisecond), hashNote(r))
 }
 
 func runUpload(args []string) error {
-	fs := flag.NewFlagSet("upload", flag.ExitOnError)
+	fs := flag.NewFlagSet("upload", flag.ContinueOnError)
 	g := addGlobalFlags(fs)
 	remoteName := fs.String("remote-name", "", "name to store the file as on the server (one file only; default: the local base name)")
 	dir := fs.String("dir", "", "existing directory below the upload root to upload into (default: the upload root)")
@@ -331,6 +328,6 @@ func runUpload(args []string) error {
 	if err != nil {
 		return err
 	}
-	printUploadResult(g, r.Path, r.Name, r.SHA256, time.Since(start))
+	printUploadResult(g, r, time.Since(start))
 	return nil
 }

@@ -10,7 +10,7 @@ import (
 )
 
 func runMkdir(args []string) error {
-	fs := flag.NewFlagSet("mkdir", flag.ExitOnError)
+	fs := flag.NewFlagSet("mkdir", flag.ContinueOnError)
 	g := addGlobalFlags(fs)
 	if err := parseFlags(fs, g, args); err != nil {
 		return err
