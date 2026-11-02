@@ -55,6 +55,7 @@ export const state = deepSignal({
   authDeriving: null,
   authError: '',
   kdfSalt: '',
+  uploads: true,
   ulFlat: false,
   uploadEntries: [],
   uploadError: null,
@@ -183,7 +184,12 @@ function setAuthK(k) {
   if (onKeyChange) onKeyChange();
 }
 
-var saltPromise = null;
+var settingsPromise = null;
+
+// Resolves once /api/public/settings has been applied (or failed).
+export function serverSettingsLoaded() {
+  return settingsPromise;
+}
 
 // Derives K from the passphrase form's input; an empty passphrase means no
 // key (servers started with -no-auth).
@@ -197,7 +203,7 @@ export async function submitPassphrase() {
   }
   state.authDeriving = 0;
   try {
-    var salt = state.kdfSalt || (await saltPromise, state.kdfSalt);
+    var salt = state.kdfSalt || (await settingsPromise, state.kdfSalt);
     if (!salt) throw new Error('could not load the key salt from the server');
     var k = await deriveKey(passphrase, salt, function(p) {
       p = Math.floor(p * 20) / 20;
@@ -241,11 +247,12 @@ export function initStore(onAuthKeyChange) {
   });
 
   fetch(API_BASE + '/api/public/checkin').catch(function() {});
-  saltPromise = fetch(API_BASE + '/api/public/settings')
+  settingsPromise = fetch(API_BASE + '/api/public/settings')
     .then(function(res) { return res.ok ? res.json() : null; })
     .then(function(data) {
       if (!data) return;
       state.kdfSalt = /^[0-9a-f]+$/.test(data.kdfSalt || '') ? data.kdfSalt : '';
+      state.uploads = data.uploads !== false;
       state.ulFlat = !!data.ulFlat;
       state.wsFrameMinKB = Math.ceil(data.wsFrameMin / 1024);
       state.wsFrameMaxKB = Math.floor(data.wsFrameMax / 1024);

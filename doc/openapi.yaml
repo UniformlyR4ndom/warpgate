@@ -269,7 +269,7 @@ paths:
             application/json:
               schema:
                 type: object
-                required: [wsFrameMin, wsFrameMax, ulFlat, kdfSalt]
+                required: [wsFrameMin, wsFrameMax, uploads, ulFlat, kdfSalt]
                 properties:
                   wsFrameMin:
                     type: integer
@@ -279,6 +279,11 @@ paths:
                     type: integer
                     description: Maximum WebSocket frame size the server accepts, in bytes (the `-ws-frame-max` ceiling).
                     example: 16777216
+                  uploads:
+                    type: boolean
+                    description: |
+                      `-ul-root` is set, so the upload endpoints are served. The UI hides its Upload tab otherwise.
+                    example: true
                   ulFlat:
                     type: boolean
                     description: |
@@ -291,6 +296,7 @@ paths:
               example:
                 wsFrameMin: 1024
                 wsFrameMax: 16777216
+                uploads: true
                 ulFlat: false
                 kdfSalt: 83ebd22deef9e82ccebdd0060a31f8d0
 

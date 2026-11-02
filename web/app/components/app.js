@@ -1,6 +1,6 @@
 import { html, Fragment } from './html.js';
 import { settings, state } from '../store.js';
-import { TABS, setTab, refreshActive } from '../nav.js';
+import { visibleTabs, setTab, refreshActive } from '../nav.js';
 import { Panel } from './panel.js';
 import { DownloadTab } from './download.js';
 import { UploadTab } from './upload.js';
@@ -47,7 +47,7 @@ export function App() {
         ${settings.panel.open && html`<${Panel} />`}
         <main>
           <div class="tabs">
-            ${TABS.map((t) => html`
+            ${visibleTabs().map((t) => html`
               <button class="tab-btn ${state.tab === t.id ? 'active' : ''}" onClick=${() => setTab(t.id)}>${t.label}</button>`)}
           </div>
           ${state.tab === 'download'  && html`<${DownloadTab} />`}

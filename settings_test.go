@@ -32,3 +32,20 @@ func TestHandleSettings(t *testing.T) {
 		t.Fatalf("got %+v, want %+v", got, want)
 	}
 }
+
+func TestHandleSettingsUploads(t *testing.T) {
+	ts := newSimTestServer(t, Config{Root: t.TempDir(), UlRoot: t.TempDir(), UlFlat: true, NoAuth: true})
+
+	res, err := http.Get(ts.URL + "/api/public/settings")
+	if err != nil {
+		t.Fatalf("GET /api/public/settings: %v", err)
+	}
+	defer res.Body.Close()
+	var got settingsResponse
+	if err := json.NewDecoder(res.Body).Decode(&got); err != nil {
+		t.Fatalf("decoding response: %v", err)
+	}
+	if !got.Uploads || !got.UlFlat {
+		t.Fatalf("uploads = %v, ulFlat = %v, want both true", got.Uploads, got.UlFlat)
+	}
+}

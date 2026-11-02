@@ -9,7 +9,6 @@ import { encodeBytesForUpload, encodeForUpload, uploadFilename } from './transfo
 import { addTransfer, removeTransfer, makeTransferProgress, updateIfChanged } from './transfers.js';
 
 export async function loadUploadDir() {
-  state.uploadError = null;
   try {
     var encrypted = paramEncryptEnabled();
     var url = API_BASE + '/api/files/ul-list' + (encrypted ? '?e=1' : '');
@@ -23,6 +22,7 @@ export async function loadUploadDir() {
     }
     var data = (await decodeResponseJSON(res, encrypted)) || [];
     updateIfChanged(state, 'uploadEntries', data);
+    state.uploadError = null;
   } catch(err) {
     state.uploadEntries = [];
     state.uploadError = 'Failed to load upload directory (' + err.message + ')';

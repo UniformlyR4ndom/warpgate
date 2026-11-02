@@ -9,6 +9,7 @@ import (
 type settingsResponse struct {
 	WSFrameMin int    `json:"wsFrameMin"`
 	WSFrameMax int    `json:"wsFrameMax"`
+	Uploads    bool   `json:"uploads"`
 	UlFlat     bool   `json:"ulFlat"`
 	KDFSalt    string `json:"kdfSalt"`
 }
@@ -22,6 +23,7 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(settingsResponse{
 		WSFrameMin: wsFrameSizeMin,
 		WSFrameMax: s.cfg.WSFrameMax,
+		Uploads:    s.ulRoot != nil,
 		UlFlat:     s.cfg.UlFlat,
 		KDFSalt:    hex.EncodeToString(s.kdfSalt),
 	})

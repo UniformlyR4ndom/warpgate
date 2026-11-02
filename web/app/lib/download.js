@@ -15,7 +15,6 @@ const API_PREFIX = { dl: '/api/files/', ul: '/api/ul/' };
 
 export async function load(root) {
   var b = state.browse[root];
-  b.error = null;
   try {
     var encrypted = paramEncryptEnabled();
     var res = await apiFetch(API_BASE + API_PREFIX[root] + 'list', {
@@ -31,6 +30,7 @@ export async function load(root) {
     if (!res.ok) throw new Error('HTTP ' + res.status);
     var data = await decodeResponseJSON(res, encrypted);
     updateIfChanged(b, 'entries', data);
+    b.error = null;
   } catch(err) {
     b.error = 'Failed to load directory (' + err.message + ')';
   }

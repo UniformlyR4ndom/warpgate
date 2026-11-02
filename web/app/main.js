@@ -2,7 +2,7 @@ import { render } from './vendor/preact.module.js';
 import { effect } from './vendor/signals.module.js';
 import { html } from './components/html.js';
 import { settings } from './store.js';
-import { initStore } from './store.js';
+import { initStore, serverSettingsLoaded } from './store.js';
 import { load } from './lib/download.js';
 import { initOutbox } from './lib/outbox.js';
 import { refreshActive, onAuthKeyChange, restoreTab } from './nav.js';
@@ -26,6 +26,7 @@ var refreshTimer = null;
 async function boot() {
   await initStore(onAuthKeyChange);
   load('dl'); // initial download listing
+  await serverSettingsLoaded();
   restoreTab();
 
   // Auto-refresh: poll the active tab every second while enabled.

@@ -5,7 +5,7 @@ import { load } from './lib/download.js';
 import { refreshUpload } from './lib/upload.js';
 import { pollClipboard, resetClipSync } from './lib/clipboard.js';
 
-export const TABS = [
+const TABS = [
   { id: 'download',  label: 'Download' },
   { id: 'upload',    label: 'Upload' },
   { id: 'clipboard', label: 'Clipboard' },
@@ -14,6 +14,10 @@ export const TABS = [
 
 // Per browser tab, like the auth key: a reload keeps the tab, a new browser tab starts on Download.
 const TAB_STORAGE_KEY = 'warpgate-tab';
+
+export function visibleTabs() {
+  return TABS.filter((t) => t.id !== 'upload' || state.uploads);
+}
 
 export function refreshActive() {
   if (state.tab === 'download') load('dl');
@@ -30,7 +34,7 @@ export function setTab(t) {
 
 export function restoreTab() {
   var t = sessionStorage.getItem(TAB_STORAGE_KEY);
-  if (t && t !== 'download' && TABS.some((x) => x.id === t)) setTab(t);
+  if (t && t !== 'download' && visibleTabs().some((x) => x.id === t)) setTab(t);
 }
 
 // The new key may address a different server/DB: reload the download listing

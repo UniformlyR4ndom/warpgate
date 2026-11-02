@@ -57,7 +57,7 @@ accepted risks; update it when a security-relevant decision changes.
 | Method   | Path                    | Auth | Description |
 |----------|-------------------------|------|-------------|
 | GET      | `/api/public/checkin`   | No   | Logs the client IP (`clientIP`); called once on page load |
-| GET      | `/api/public/settings`  | No   | `{"wsFrameMin","wsFrameMax","ulFlat","kdfSalt"}` for UI clamping, the `-ul-flat` mode and key derivation |
+| GET      | `/api/public/settings`  | No   | `{"wsFrameMin","wsFrameMax","uploads","ulFlat","kdfSalt"}` for UI clamping, the Upload tab (hidden without `-ul-root`), the `-ul-flat` mode and key derivation |
 | POST     | `/api/files/list`       | Yes  | List a directory of the download root; body `{"path":"subdir"}` |
 | POST     | `/api/files/download`   | Yes  | Download a (chunk of a) file, transformed |
 | POST     | `/api/files/upload`     | Yes  | Upload a (chunk of a) file (needs `-ul-root`); multipart |
@@ -514,7 +514,7 @@ survives and `auto: true` regenerates.
   `"warpgate-auth-key"` entry.
 - `state` is not persisted (`browse` paths could go stale; `wsFrameMinKB`/`wsFrameMaxKB` come from
   `/api/public/settings`; `authShowKey` starts masked). Exception: `state.tab`, kept in
-  `sessionStorage["warpgate-tab"]` by `setTab` and reapplied by `restoreTab()` (unknown → Download).
+  `sessionStorage["warpgate-tab"]` by `setTab` and reapplied by `restoreTab()` (unknown or hidden → Download).
 
 ### Side panel
 
