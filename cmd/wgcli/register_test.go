@@ -51,3 +51,18 @@ func TestRegisterAndBlankPage(t *testing.T) {
 		t.Fatalf("after registration: %v", err)
 	}
 }
+
+func TestRegisterNotNeeded(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/public/settings" {
+			_, _ = w.Write([]byte(`{}`))
+			return
+		}
+		http.Redirect(w, r, "/ui/", http.StatusMovedPermanently)
+	}))
+	defer ts.Close()
+
+	if err := runRegister([]string{"-url", ts.URL}); err != nil {
+		t.Fatalf("register without a firewall: %v", err)
+	}
+}

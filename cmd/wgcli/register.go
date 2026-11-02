@@ -58,11 +58,27 @@ func runRegister(args []string) error {
 	}
 	resp.Body.Close()
 	if resp.StatusCode == http.StatusSeeOther {
-		g.report(map[string]any{"url": target}, "registered (or already admitted) at %s", target)
+		g.report(map[string]any{"url": target, "needed": true}, "registered (or already admitted) at %s", target)
+		return nil
+	}
+	if g.reachesServer() {
+		g.report(map[string]any{"url": target, "needed": false},
+			"no registration needed: this client already reaches the server at %s", g.url)
 		return nil
 	}
 	if isBlankPage(resp) {
 		return fmt.Errorf("not registered: wrong registration URL, or registration is closed (window expired or limit reached)")
 	}
 	return fmt.Errorf("not registered: unexpected response %s", resp.Status)
+}
+
+// reachesServer reports whether -url serves this client, i.e. there is no IP
+// firewall or it already admits the client.
+func (g *globalFlags) reachesServer() bool {
+	resp, err := g.httpClient().Get(strings.TrimRight(g.url, "/") + "/api/public/settings")
+	if err != nil {
+		return false
+	}
+	resp.Body.Close()
+	return resp.StatusCode == http.StatusOK
 }

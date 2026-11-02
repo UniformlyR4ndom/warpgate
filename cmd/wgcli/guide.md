@@ -29,6 +29,10 @@ export WGCLI_AUTH_K=$(WGCLI_AUTH_KEY='passphrase' wgcli derive-key)
 export WGCLI_JSON=1 WGCLI_PARAM_CRYPT=1
 ```
 
+IP firewall: optional on the server. When it's on, every request, `derive-key` included, fails with
+`server returned its blank page` until this machine's IP is registered: run `wgcli register` first,
+and again after a server restart. Running it when not needed is harmless.
+
 ## Transforms
 
 `-transform` on `download`, `upload` and the image commands of `clip`. Keys and IVs left out are
@@ -119,10 +123,11 @@ Deletes images, stopping at the first failure. JSON: `{"ids"}`.
 Sets an image caption; `""` clears it. JSON: `{"id","caption"}`.
 
 ### wgcli register [registration-url]
-Admits this machine's IP through the server's IP firewall. Without an argument it uses `-url`,
-which works when the server registers at its base URL; otherwise pass the registration URL the
-operator gave you. Succeeds also when already admitted. Admission is lost when the server restarts.
-JSON: `{"url"}`.
+Admits this machine's IP through the server's IP firewall; only needed when commands fail with
+`server returned its blank page`. Without an argument it uses `-url`, which works when the server
+registers at its base URL; otherwise pass the registration URL the operator gave you. Succeeds
+also when already admitted, or when the server has no firewall (`needed: false`). Admission is lost
+when the server restarts. JSON: `{"url","needed"}`.
 
 ### wgcli derive-key [-salt <hex>]
 Prints K for `-auth-key`, for `-auth-k`/`WGCLI_AUTH_K`. The salt is fetched from the server unless
