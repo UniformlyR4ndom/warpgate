@@ -19,6 +19,9 @@ import (
 	"warpgate/internal/transform"
 )
 
+// clipSourceCLI marks notes created by wgcli.
+const clipSourceCLI = "cli"
+
 // clipAttachmentMeta mirrors the server's AttachmentMeta (db.go).
 type clipAttachmentMeta struct {
 	ID      int64  `json:"id"`
@@ -79,7 +82,7 @@ func postClipNew(g *globalFlags, title string, data []byte) (id, ts int64, err e
 		Title  string `json:"title,omitempty"`
 		Data   string `json:"data"`
 		Source string `json:"source"`
-	}{title, base64.StdEncoding.EncodeToString(data), "cli"})
+	}{title, base64.StdEncoding.EncodeToString(data), clipSourceCLI})
 	if err != nil {
 		return 0, 0, err
 	}
@@ -483,7 +486,7 @@ func runClipDelete(args []string) error {
 
 func runClip(args []string) error {
 	if len(args) < 1 {
-		return fmt.Errorf("usage: wgcli clip <list|get|new|edit|delete|attach|get-attachment|delete-attachment|caption> [flags] [args...]")
+		return fmt.Errorf("usage: wgcli clip <list|get|new|edit|delete|attach|get-attachment|delete-attachment|caption|wait> [flags] [args...]")
 	}
 	sub, rest := args[0], args[1:]
 	switch sub {
@@ -505,6 +508,8 @@ func runClip(args []string) error {
 		return runClipDeleteAttachment(rest)
 	case "caption":
 		return runClipCaption(rest)
+	case "wait":
+		return runClipWait(rest)
 	default:
 		return fmt.Errorf("unknown clip subcommand %q", sub)
 	}

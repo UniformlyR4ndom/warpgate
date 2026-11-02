@@ -4,6 +4,7 @@ package main
 
 import (
 	_ "embed"
+	"errors"
 	"fmt"
 	"os"
 )
@@ -44,6 +45,8 @@ func main() {
 		err = runDeriveKey(args)
 	case "connect-info":
 		err = runConnectInfo(args)
+	case "wait-file":
+		err = runWaitFile(args)
 	case "guide":
 		fmt.Print(guide)
 		return
@@ -58,6 +61,9 @@ func main() {
 
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "wgcli:", err)
+		if errors.Is(err, errWaitTimeout) {
+			os.Exit(2)
+		}
 		os.Exit(1)
 	}
 }
@@ -88,8 +94,9 @@ Commands:
   download  [flags] <remote-path>              download, reversing the transform (-ul: from the upload directory)
   upload    [flags] <local-file>                upload, applying the transform (-dir: into a subdirectory)
   mkdir     [flags] <remote-dir>                create one directory in the upload directory
-  clip      list|get|new|edit|delete|attach|get-attachment|delete-attachment|caption
+  clip      list|get|new|edit|delete|attach|get-attachment|delete-attachment|caption|wait
             manage clipboard notes/images (newest first)
+  wait-file [flags] [path]                      wait for a file, or a new file in a directory (exit 2 on timeout)
   sim       download|upload [flags]             probe transport via a synthetic file/buffer (no filesystem I/O, no transform)
   register  [flags] [registration-url]          register this client's IP with the IP firewall (default URL: -url)
   derive-key [flags]                            print the key derived from -auth-key (for -auth-k / WGCLI_AUTH_K)

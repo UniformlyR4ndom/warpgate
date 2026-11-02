@@ -154,6 +154,23 @@ Deletes images, stopping at the first failure. JSON: `{"ids"}`.
 ### wgcli clip caption <attachment-id> <caption>
 Sets an image caption; `""` clears it. JSON: `{"id","caption"}`.
 
+### wgcli clip wait [flags]
+Waits until a note is created or edited, then prints the notes like `clip list`. Counts from now,
+or from `-since <rev>`; ignores notes written by wgcli unless `-any-source`. `-search`/`-scope` as
+in `clip list` wait for a specific note. `-timeout` (default 2m, `0` = indefinitely); on timeout it
+exits with status 2, prints `{"rev","notes":[]}` and says which `-since` continues without gaps.
+
+### wgcli wait-file [flags] [path]
+Waits for a file, by default in the download root (`-ul`: the upload directory, where the
+operator's uploads land). A directory path (or none, the root) waits for any new file or a new
+version of one in it; a file path waits until the file exists, with `-new` until a newer version
+than the present one arrives. Files appear only when completely uploaded. `-timeout` as in
+`clip wait` (status 2, prints `[]`). JSON: `[{"path","size","mtime","sha256"}]`.
+
+**Waiting for the operator** (`clip wait`, `wait-file`): the operator may take a while or change
+plans. Run waits in the background if your environment allows it, so you stay responsive;
+otherwise keep timeouts short and wait again. Server restarts during a wait are ridden out.
+
 ### wgcli register [registration-url]
 Admits this machine's IP through the server's IP firewall. Other commands do this by themselves;
 needed only for a registration URL wgcli doesn't know. Without an argument it uses the token's

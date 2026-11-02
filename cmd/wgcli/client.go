@@ -44,7 +44,6 @@ type globalFlags struct {
 	keyErr      error
 
 	regMu      sync.Mutex
-	regTried   bool
 	regErr     error
 	registered bool // this invocation registered the client's IP
 }

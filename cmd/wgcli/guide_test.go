@@ -15,6 +15,12 @@ import (
 const mainArgsEnv = "WGCLI_TEST_MAIN_ARGS"
 
 func TestMain(m *testing.M) {
+	// The tests must not pick up the developer's own wgcli settings.
+	for _, kv := range os.Environ() {
+		if name, _, _ := strings.Cut(kv, "="); strings.HasPrefix(name, "WGCLI_") && name != mainArgsEnv {
+			_ = os.Unsetenv(name)
+		}
+	}
 	if args, ok := os.LookupEnv(mainArgsEnv); ok {
 		os.Args = append([]string{"wgcli"}, strings.Fields(args)...)
 		main()

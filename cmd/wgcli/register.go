@@ -56,22 +56,24 @@ func (t blankPageTransport) RoundTrip(req *http.Request) (*http.Response, error)
 	return resp, err
 }
 
-// autoRegister registers this client with the IP firewall, at most once per
-// invocation; it returns errBlankPage, with the reason, if that fails.
+// autoRegister registers this client with the IP firewall; it returns
+// errBlankPage, with the reason, if that fails. A failure is final for the
+// invocation; a success may be repeated, since a server restart during a
+// long wait forgets it.
 func (g *globalFlags) autoRegister() error {
 	g.regMu.Lock()
 	defer g.regMu.Unlock()
-	if !g.regTried {
-		g.regTried = true
-		target := g.registrationURL()
-		if _, err := g.register(target); err != nil {
-			g.regErr = fmt.Errorf("%w; registering at %s failed: %v", errBlankPage, target, err)
-		} else {
-			g.registered = true
-			fmt.Fprintln(os.Stderr, "wgcli: registered this IP with the server's IP firewall")
-		}
+	if g.regErr != nil {
+		return g.regErr
 	}
-	return g.regErr
+	target := g.registrationURL()
+	if _, err := g.register(target); err != nil {
+		g.regErr = fmt.Errorf("%w; registering at %s failed: %v", errBlankPage, target, err)
+		return g.regErr
+	}
+	g.registered = true
+	fmt.Fprintln(os.Stderr, "wgcli: registered this IP with the server's IP firewall")
+	return nil
 }
 
 // runRegister does what the browser's registration page does: an empty form
