@@ -43,6 +43,14 @@ export WGCLI_JSON=1 WGCLI_PARAM_CRYPT=1
 
 Without a token, set `WGCLI_URL` instead, plus `WGCLI_INSECURE=1` for a self-signed certificate.
 
+Sizes (`-chunk-size`, `-frame-size`, `-total-size`) are bytes, or KiB/MiB with a `K`/`M` suffix.
+
+Transfer defaults: `WGCLI_BACKEND`, `WGCLI_FRAME_SIZE`, `WGCLI_CHUNK_SIZE` and
+`WGCLI_TRANSFORM` set `-backend`, `-frame-size`, `-chunk-size` and `-transform` in every command
+that has them. Use them for what the operator found to get through the proxy, e.g.
+`export WGCLI_BACKEND=ws WGCLI_FRAME_SIZE=64K`. `WGCLI_CHUNK_SIZE` also makes HTTP uploads
+chunked; WebSocket uploads ignore it.
+
 IP firewall: optional on the server. When it blocks this machine's IP (first contact, or after a
 server restart), every command registers the IP by itself and resends the refused request; stderr
 says `wgcli: registered this IP …`. That needs the token's registration URL, or a server that

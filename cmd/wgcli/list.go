@@ -12,8 +12,8 @@ import (
 // listEntry mirrors the server's listEntry (list.go); it can't be imported
 // directly since the server is package main.
 type listEntry struct {
-	Name  string `json:"name"`
-	Type  string `json:"type"`
+	Name   string `json:"name"`
+	Type   string `json:"type"`
 	Size   *int64 `json:"size,omitempty"`
 	MTime  *int64 `json:"mtime,omitempty"`
 	SHA256 string `json:"sha256,omitempty"`

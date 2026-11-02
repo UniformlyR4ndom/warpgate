@@ -1,4 +1,4 @@
-package main
+package bytesize
 
 import "testing"
 
@@ -22,22 +22,23 @@ func TestParseByteSize(t *testing.T) {
 		{"-1k", 0, true},
 		{"1.5M", 0, true},
 		{"abc", 0, true},
+		{"99999999999999M", 0, true},
 	}
 
 	for _, tt := range tests {
-		got, err := parseByteSize(tt.in)
+		got, err := Parse(tt.in)
 		if tt.wantErr {
 			if err == nil {
-				t.Errorf("parseByteSize(%q): expected error, got %d", tt.in, got)
+				t.Errorf("Parse(%q): expected error, got %d", tt.in, got)
 			}
 			continue
 		}
 		if err != nil {
-			t.Errorf("parseByteSize(%q): unexpected error: %v", tt.in, err)
+			t.Errorf("Parse(%q): unexpected error: %v", tt.in, err)
 			continue
 		}
 		if got != tt.want {
-			t.Errorf("parseByteSize(%q): got %d, want %d", tt.in, got, tt.want)
+			t.Errorf("Parse(%q): got %d, want %d", tt.in, got, tt.want)
 		}
 	}
 }

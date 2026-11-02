@@ -133,3 +133,41 @@ func TestHTTPClientRefusesRedirect(t *testing.T) {
 		t.Error("request reached the redirect target")
 	}
 }
+
+func TestTransferEnvDefaults(t *testing.T) {
+	t.Setenv("WGCLI_BACKEND", "ws")
+	t.Setenv("WGCLI_CHUNK_SIZE", "65536")
+	newFS := func() (*flag.FlagSet, *globalFlags, *string, *int64) {
+		fs := flag.NewFlagSet("test", flag.ContinueOnError)
+		g := addGlobalFlags(fs)
+		return fs, g, fs.String("backend", "http", ""), fs.Int64("chunk-size", 0, "")
+	}
+
+	fs, g, backend, chunk := newFS()
+	if err := parseFlags(fs, g, nil); err != nil {
+		t.Fatal(err)
+	}
+	if *backend != "ws" || *chunk != 65536 || !g.fromEnv["chunk-size"] {
+		t.Errorf("from env: backend %q, chunk %d, fromEnv %v", *backend, *chunk, g.fromEnv)
+	}
+
+	fs, g, backend, _ = newFS()
+	if err := parseFlags(fs, g, []string{"-backend", "http"}); err != nil {
+		t.Fatal(err)
+	}
+	if *backend != "http" || g.fromEnv["backend"] {
+		t.Errorf("explicit flag: backend %q, fromEnv %v", *backend, g.fromEnv)
+	}
+
+	t.Setenv("WGCLI_CHUNK_SIZE", "lots")
+	fs, g, _, _ = newFS()
+	if err := parseFlags(fs, g, nil); err == nil || !strings.Contains(err.Error(), "WGCLI_CHUNK_SIZE") {
+		t.Errorf("invalid value: err = %v", err)
+	}
+
+	fs = flag.NewFlagSet("test", flag.ContinueOnError)
+	g = addGlobalFlags(fs)
+	if err := parseFlags(fs, g, nil); err != nil {
+		t.Errorf("command without the flags: %v", err)
+	}
+}

@@ -77,6 +77,8 @@ parsing (for an argument starting with "-").
 Global flags fall back to environment variables when not given:
   WGCLI_URL, WGCLI_AUTH_KEY, WGCLI_AUTH_K, WGCLI_INSECURE, WGCLI_PARAM_CRYPT,
   WGCLI_CERT, WGCLI_CERT_KEY, WGCLI_JSON, WGCLI_CONNECT, WGCLI_HOST
+-backend, -frame-size, -chunk-size and -transform default to WGCLI_BACKEND,
+WGCLI_FRAME_SIZE, WGCLI_CHUNK_SIZE and WGCLI_TRANSFORM in every command.
 Transform keys/IVs left empty are generated randomly per invocation.
 
 Commands:

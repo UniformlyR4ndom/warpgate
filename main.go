@@ -10,6 +10,8 @@ import (
 	"net"
 	"strings"
 	"time"
+
+	"warpgate/internal/bytesize"
 )
 
 // wsFrameSizeMin and wsFrameSizeMax bound both the -ws-frame-max flag and
@@ -91,7 +93,7 @@ func main() {
 		}
 	}
 
-	wsFrameMax, err := parseByteSize(wsFrameMaxStr)
+	wsFrameMax, err := bytesize.Parse(wsFrameMaxStr)
 	if err != nil {
 		log.Fatalf("invalid -ws-frame-max %q: %v", wsFrameMaxStr, err)
 	}

@@ -270,8 +270,8 @@ func runUpload(args []string) error {
 	iv := fs.String("iv", "", "hex IV (aes-ctr, 16 bytes); random if omitted")
 	filename := fs.String("filename", "", "attachment filename embedded in the PDF (pdf transform only)")
 	backend := fs.String("backend", "http", "transport: http|ws")
-	frameSize := fs.Int64("frame-size", 0, "WS frame size in bytes (ws backend only; 0 = 1 MiB default)")
-	chunkSize := fs.Int64("chunk-size", 0, "chunk size in bytes for chunked upload via the continuation-key protocol (0 = one-shot; http backend only)")
+	frameSize := sizeFlag(fs, "frame-size", 0, "WS frame size in bytes (ws backend only; 0 = 1 MiB default)")
+	chunkSize := sizeFlag(fs, "chunk-size", 0, "chunk size in bytes for chunked upload via the continuation-key protocol (0 = one-shot; http backend only)")
 	if err := parseFlags(fs, g, args); err != nil {
 		return err
 	}
@@ -289,6 +289,9 @@ func runUpload(args []string) error {
 	}
 	if *chunkSize < 0 {
 		return fmt.Errorf("--chunk-size must not be negative")
+	}
+	if *chunkSize > 0 && *backend != "http" && g.fromEnv["chunk-size"] {
+		*chunkSize = 0 // WGCLI_CHUNK_SIZE doesn't apply to WS uploads
 	}
 	if *chunkSize > 0 && *backend != "http" {
 		return fmt.Errorf("--chunk-size requires --backend=http (no WS equivalent of chunked upload)")

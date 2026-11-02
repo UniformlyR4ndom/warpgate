@@ -46,8 +46,9 @@ binary. `cmd/wgcli` is a CLI client for the HTTP/WS API, for testing and scripte
 fall back to `WGCLI_*` env vars and may follow positional arguments; transform keys default to
 random). `wgcli guide` prints its usage guide (`cmd/wgcli/guide.md`, embedded; `guide_test.go`
 fails when a command or flag is missing from it or the guide names a flag that doesn't exist).
-`internal/transform`, `internal/authhash` and `internal/paramcrypt`
-are shared by server and `wgcli`, so the two can't drift apart.
+`internal/transform`, `internal/authhash`, `internal/paramcrypt`, `internal/connecttoken` and
+`internal/bytesize` (sizes with `K`/`M` suffix) are shared by server and `wgcli`, so the two can't
+drift apart.
 
 `doc/openapi.yaml` specifies the REST API. `doc/security.md` holds the threat model, defenses and
 accepted risks; update it when a security-relevant decision changes.

@@ -195,10 +195,10 @@ func simDownloadWS(g *globalFlags, totalSize, chunkSize, frameSize int64) error 
 func runSimDownload(args []string) error {
 	fs := flag.NewFlagSet("sim download", flag.ExitOnError)
 	g := addGlobalFlags(fs)
-	totalSize := fs.Int64("total-size", 0, "size in bytes of the synthetic file to download (required)")
-	chunkSize := fs.Int64("chunk-size", 4<<20, "chunk size in bytes for the download loop")
+	totalSize := sizeFlag(fs, "total-size", 0, "size in bytes of the synthetic file to download (required)")
+	chunkSize := sizeFlag(fs, "chunk-size", 4<<20, "chunk size in bytes for the download loop")
 	backend := fs.String("backend", "http", "transport: http|ws")
-	frameSize := fs.Int64("frame-size", 0, "WS frame size in bytes (ws backend only; 0 = server ceiling)")
+	frameSize := sizeFlag(fs, "frame-size", 0, "WS frame size in bytes (ws backend only; 0 = server ceiling)")
 	if err := parseFlags(fs, g, args); err != nil {
 		return err
 	}
@@ -404,10 +404,10 @@ func simUploadWS(g *globalFlags, totalSize, frameSize int64) error {
 func runSimUpload(args []string) error {
 	fs := flag.NewFlagSet("sim upload", flag.ExitOnError)
 	g := addGlobalFlags(fs)
-	totalSize := fs.Int64("total-size", 0, "size in bytes of the synthetic buffer to upload (required)")
-	chunkSize := fs.Int64("chunk-size", 0, "chunk size in bytes for chunked upload via the continuation-key protocol (0 = one-shot; http backend only)")
+	totalSize := sizeFlag(fs, "total-size", 0, "size in bytes of the synthetic buffer to upload (required)")
+	chunkSize := sizeFlag(fs, "chunk-size", 0, "chunk size in bytes for chunked upload via the continuation-key protocol (0 = one-shot; http backend only)")
 	backend := fs.String("backend", "http", "transport: http|ws")
-	frameSize := fs.Int64("frame-size", 0, "WS frame size in bytes (ws backend only; 0 = 1 MiB default)")
+	frameSize := sizeFlag(fs, "frame-size", 0, "WS frame size in bytes (ws backend only; 0 = 1 MiB default)")
 	if err := parseFlags(fs, g, args); err != nil {
 		return err
 	}
@@ -420,6 +420,9 @@ func runSimUpload(args []string) error {
 	}
 	if *backend != "http" && *backend != "ws" {
 		return fmt.Errorf("--backend must be http or ws")
+	}
+	if *chunkSize > 0 && *backend != "http" && g.fromEnv["chunk-size"] {
+		*chunkSize = 0 // WGCLI_CHUNK_SIZE doesn't apply to WS uploads
 	}
 	if *chunkSize > 0 && *backend != "http" {
 		return fmt.Errorf("--chunk-size requires --backend=http (no WS equivalent of chunked upload)")

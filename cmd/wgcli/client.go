@@ -16,6 +16,7 @@ import (
 	"sync"
 
 	"warpgate/internal/authhash"
+	"warpgate/internal/bytesize"
 	"warpgate/internal/connecttoken"
 	"warpgate/internal/paramcrypt"
 )
@@ -35,6 +36,8 @@ type globalFlags struct {
 	host       string
 	token      *connecttoken.Token
 	tlsConfig  *tls.Config
+
+	fromEnv map[string]bool // flags whose value came from the environment
 
 	keyResolved bool
 	k           []byte
@@ -59,6 +62,15 @@ var globalEnv = map[string]string{
 	"json":        "WGCLI_JSON",
 	"connect":     "WGCLI_CONNECT",
 	"host":        "WGCLI_HOST",
+}
+
+// transferEnv maps transfer flags to the environment variables that set
+// their default in every command that has them.
+var transferEnv = map[string]string{
+	"backend":    "WGCLI_BACKEND",
+	"frame-size": "WGCLI_FRAME_SIZE",
+	"chunk-size": "WGCLI_CHUNK_SIZE",
+	"transform":  "WGCLI_TRANSFORM",
 }
 
 func addGlobalFlags(fs *flag.FlagSet) *globalFlags {
@@ -98,15 +110,19 @@ func parseFlags(fs *flag.FlagSet, g *globalFlags, args []string) error {
 	fs.Parse(permuteArgs(fs, args))
 	set := map[string]bool{}
 	fs.Visit(func(f *flag.Flag) { set[f.Name] = true })
-	for name, env := range globalEnv {
-		v, ok := os.LookupEnv(env)
-		if set[name] || !ok {
-			continue
+	g.fromEnv = map[string]bool{}
+	for _, m := range []map[string]string{globalEnv, transferEnv} {
+		for name, env := range m {
+			v, ok := os.LookupEnv(env)
+			if set[name] || !ok || fs.Lookup(name) == nil {
+				continue
+			}
+			if err := fs.Set(name, v); err != nil {
+				return fmt.Errorf("%s=%q: %w", env, v, err)
+			}
+			set[name] = true
+			g.fromEnv[name] = true
 		}
-		if err := fs.Set(name, v); err != nil {
-			return fmt.Errorf("%s: %w", env, err)
-		}
-		set[name] = true
 	}
 	if (g.certFile == "") != (g.certKey == "") {
 		return fmt.Errorf("-cert and -cert-key must be given together")
@@ -318,4 +334,11 @@ func (g *globalFlags) newRequest(method, path string, body io.Reader) (*http.Req
 		req.Header.Set("X-Auth", token)
 	}
 	return req, nil
+}
+
+// sizeFlag defines a byte-count flag that also accepts K/M suffixes.
+func sizeFlag(fs *flag.FlagSet, name string, def int64, usage string) *int64 {
+	n := def
+	fs.Var(bytesize.Flag{N: &n}, name, usage+" (K/M suffix allowed)")
+	return &n
 }
