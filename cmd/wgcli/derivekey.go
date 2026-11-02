@@ -33,6 +33,9 @@ func runDeriveKey(args []string) error {
 	if err != nil {
 		return err
 	}
+	if err := g.checkKeyFP(k); err != nil {
+		return err
+	}
 	kHex := hex.EncodeToString(k)
 	g.report(map[string]string{"key": kHex, "fingerprint": authhash.Fingerprint(k)}, "%s", kHex)
 	return nil

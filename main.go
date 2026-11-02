@@ -33,6 +33,7 @@ type Config struct {
 	NoAuth     bool
 	WSFrameMax int
 	PathPrefix string // "" or "/<segment>", see normalizePathSegment
+	PublicURL  string
 
 	IPAllow        string
 	IPRegPath      string
@@ -69,6 +70,8 @@ func main() {
 		"maximum number of registered IPs (0 = unlimited); without -ip-reg-path, registration happens via the -path-prefix base path")
 	flag.DurationVar(&cfg.IPRegWindow, "ip-reg-window", 0,
 		"accept IP registrations only this long after startup, e.g. 15m (0 = unlimited); without -ip-reg-path, registration happens via the -path-prefix base path")
+	flag.StringVar(&cfg.PublicURL, "public-url", "",
+		"http(s)://host[:port] under which clients reach this server, for the connect token (default: the certificate's name, else the listen address)")
 	flag.StringVar(&cfg.TrustedProxies, "trusted-proxies", "",
 		"comma-separated IPs/CIDRs of reverse proxies whose X-Forwarded-For header determines the client IP")
 	flag.Parse()
@@ -81,6 +84,11 @@ func main() {
 
 	if _, _, err := net.SplitHostPort(cfg.Addr); err != nil {
 		log.Fatalf("invalid --listen address %q: %v", cfg.Addr, err)
+	}
+	if cfg.PublicURL != "" {
+		if _, err := parsePublicURL(cfg.PublicURL); err != nil {
+			log.Fatal(err)
+		}
 	}
 
 	wsFrameMax, err := parseByteSize(wsFrameMaxStr)
@@ -167,6 +175,7 @@ func main() {
 		}
 	}
 	log.Printf("WebSocket frame size ceiling: %d bytes", cfg.WSFrameMax)
+	logConnectToken(cfg, srv)
 	log.Fatal(srv.ListenAndServe())
 }
 

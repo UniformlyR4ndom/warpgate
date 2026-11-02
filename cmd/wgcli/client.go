@@ -1,7 +1,9 @@
 package main
 
 import (
+	"bytes"
 	"crypto/tls"
+	"crypto/x509"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -13,6 +15,7 @@ import (
 	"strings"
 
 	"warpgate/internal/authhash"
+	"warpgate/internal/connecttoken"
 	"warpgate/internal/paramcrypt"
 )
 
@@ -27,6 +30,9 @@ type globalFlags struct {
 	certFile   string
 	certKey    string
 	json       bool
+	connect    string
+	host       string
+	token      *connecttoken.Token
 	tlsConfig  *tls.Config
 
 	keyResolved bool
@@ -45,6 +51,8 @@ var globalEnv = map[string]string{
 	"cert":        "WGCLI_CERT",
 	"cert-key":    "WGCLI_CERT_KEY",
 	"json":        "WGCLI_JSON",
+	"connect":     "WGCLI_CONNECT",
+	"host":        "WGCLI_HOST",
 }
 
 func addGlobalFlags(fs *flag.FlagSet) *globalFlags {
@@ -57,6 +65,8 @@ func addGlobalFlags(fs *flag.FlagSet) *globalFlags {
 	fs.StringVar(&g.certFile, "cert", "", "PEM client certificate (chain) for servers requiring TLS client auth; needs -cert-key (env WGCLI_CERT)")
 	fs.StringVar(&g.certKey, "cert-key", "", "PEM private key for -cert (env WGCLI_CERT_KEY)")
 	fs.BoolVar(&g.json, "json", false, "print the result as one JSON document on stdout (env WGCLI_JSON)")
+	fs.StringVar(&g.connect, "connect", "", "connect token the server logs at startup; sets the URL and pins its certificate (env WGCLI_CONNECT)")
+	fs.StringVar(&g.host, "host", "", "host or host:port replacing the connect token's (env WGCLI_HOST)")
 	return g
 }
 
@@ -90,11 +100,15 @@ func parseFlags(fs *flag.FlagSet, g *globalFlags, args []string) error {
 		if err := fs.Set(name, v); err != nil {
 			return fmt.Errorf("%s: %w", env, err)
 		}
+		set[name] = true
 	}
 	if (g.certFile == "") != (g.certKey == "") {
 		return fmt.Errorf("-cert and -cert-key must be given together")
 	}
 	g.tlsConfig = &tls.Config{InsecureSkipVerify: g.insecure}
+	if err := g.applyConnectToken(set["url"]); err != nil {
+		return err
+	}
 	if g.certFile != "" {
 		cert, err := tls.LoadX509KeyPair(g.certFile, g.certKey)
 		if err != nil {
@@ -150,7 +164,62 @@ func (g *globalFlags) key() ([]byte, error) {
 	return g.k, g.keyErr
 }
 
+// applyConnectToken sets the URL and certificate pin from -connect.
+func (g *globalFlags) applyConnectToken(urlGiven bool) error {
+	if g.connect == "" {
+		if g.host != "" {
+			return errors.New("-host needs -connect")
+		}
+		return nil
+	}
+	if urlGiven {
+		return errors.New("-connect and -url are mutually exclusive (check WGCLI_URL and WGCLI_CONNECT)")
+	}
+	t, err := connecttoken.Decode(g.connect)
+	if err != nil {
+		return err
+	}
+	if g.url, err = t.BaseURL(g.host); err != nil {
+		return err
+	}
+	if t.ClientCert && g.certFile == "" {
+		return errors.New("the server requires a TLS client certificate: pass -cert and -cert-key")
+	}
+	if t.CertPin != nil {
+		pin := t.CertPin
+		g.tlsConfig.InsecureSkipVerify = true // the pin replaces CA verification
+		g.tlsConfig.VerifyPeerCertificate = func(rawCerts [][]byte, _ [][]*x509.Certificate) error {
+			if len(rawCerts) == 0 || !bytes.Equal(connecttoken.Pin(rawCerts[0]), pin) {
+				return errors.New("server certificate doesn't match the connect token (renewed? get a new token)")
+			}
+			return nil
+		}
+	}
+	g.token = &t
+	return nil
+}
+
 func (g *globalFlags) resolveKey() ([]byte, error) {
+	k, err := g.deriveKey()
+	if err != nil || k == nil {
+		return k, err
+	}
+	return k, g.checkKeyFP(k)
+}
+
+// checkKeyFP compares K with the connect token's key fingerprint, so a wrong
+// key fails here instead of counting toward the server's failure limit.
+func (g *globalFlags) checkKeyFP(k []byte) error {
+	if g.token == nil || g.token.KeyFP == nil {
+		return nil
+	}
+	if fp, want := authhash.Fingerprint(k), hex.EncodeToString(g.token.KeyFP); fp != want {
+		return fmt.Errorf("the auth key doesn't match the connect token (key ID %s, expected %s): wrong passphrase?", fp, want)
+	}
+	return nil
+}
+
+func (g *globalFlags) deriveKey() ([]byte, error) {
 	if g.authK != "" {
 		k, err := hex.DecodeString(g.authK)
 		if err != nil || len(k) != authhash.KeySize {

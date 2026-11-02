@@ -147,6 +147,21 @@ all routing, covering static files, API and WS upgrades.
   or only trusted hops leave the client unknown: the firewall blocks (fail closed), the check-in log
   marks the peer "client unknown".
 
+### Connect token
+
+`connect.go` logs at startup one alphanumeric token holding what a client needs besides the key:
+`internal/connecttoken` (shared with wgcli) encodes `wg1` + base58 of tagged fields (flags TLS /
+client cert required, host, port, path prefix, `-ip-reg-path`, the first 16 bytes of the leaf
+certificate's SHA-256, the 2-byte key fingerprint) plus a 4-byte SHA-256 checksum. Unknown tags are
+skipped. Host: `-public-url` (`http(s)://host[:port]`, no path; `http` drops TLS and pin), else
+the certificate's first non-wildcard DNS name or first IP (`certHost`), else a specific listen
+address, else none: wgcli then needs `-host`.
+
+wgcli `-connect`/`WGCLI_CONNECT` (excludes `-url`) sets the URL and pins the certificate
+(`VerifyPeerCertificate`, CA checks off); `checkKeyFP` rejects a key whose fingerprint differs
+before any request, so a wrong passphrase never reaches the failure limit. `register` defaults to
+the token's registration URL; `connect-info` decodes a token offline.
+
 ### Downloads
 
 `/api/files/download` body: `{"path","start","size","transform","args","contentType"}`.
@@ -665,5 +680,6 @@ test/push_to_wgclip_test.sh
 | `-ip-reg-path` | — | Registration path segment; enables the IP firewall |
 | `-ip-reg-max` | `0` | Max registered IPs (0 = unlimited); alone, registers via the base path (needs `-path-prefix`) |
 | `-ip-reg-window` | `0` | Registration only this long after startup (Go duration; 0 = unlimited) |
+| `-public-url` | — | `http(s)://host[:port]` clients use, for the connect token |
 | `-trusted-proxies` | — | IPs/CIDRs of reverse proxies whose `X-Forwarded-For` is trusted |
 | `-ws-frame-max` | `16M` | Max WS frame size a client may request; bytes or `K`/`M` suffix, `1K`–`256M` |

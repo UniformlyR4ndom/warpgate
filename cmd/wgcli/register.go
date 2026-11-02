@@ -42,6 +42,8 @@ func runRegister(args []string) error {
 	target := g.url
 	if fs.NArg() > 0 {
 		target = fs.Arg(0)
+	} else if g.token != nil && g.token.RegPath != "" {
+		target = g.token.RegistrationURL(g.url)
 	}
 	req, err := http.NewRequest(http.MethodPost, target, strings.NewReader(""))
 	if err != nil {

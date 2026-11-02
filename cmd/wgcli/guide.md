@@ -13,7 +13,9 @@ Global flags, accepted by every command; each falls back to its environment vari
 
 | Flag | Variable | Meaning |
 |------|----------|---------|
-| `-url` | `WGCLI_URL` | Base URL including the server's path prefix, e.g. `https://host:8443/pfx`; default `http://localhost:8080` |
+| `-connect` | `WGCLI_CONNECT` | Connect token (`wg1…`, from the server's startup log): sets the URL and registration URL, pins the server certificate, checks the key before use |
+| `-host` | `WGCLI_HOST` | Host or `host:port` replacing the token's; required when the token has none |
+| `-url` | `WGCLI_URL` | Without a token: base URL including the server's path prefix, e.g. `https://host:8443/pfx`; default `http://localhost:8080`. Excludes `-connect` |
 | `-auth-key` | `WGCLI_AUTH_KEY` | Passphrase; the key K is derived from it on every run (~0.25 s) |
 | `-auth-k` | `WGCLI_AUTH_K` | K in hex, from `derive-key`; overrides `-auth-key` |
 | `-param-crypt` | `WGCLI_PARAM_CRYPT` | Encrypt request parameters (paths, names, transform keys); needs a key |
@@ -21,13 +23,16 @@ Global flags, accepted by every command; each falls back to its environment vari
 | `-insecure` | `WGCLI_INSECURE` | Skip TLS certificate verification |
 | `-cert`, `-cert-key` | `WGCLI_CERT`, `WGCLI_CERT_KEY` | PEM client certificate and key, for servers requiring one |
 
-Booleans in variables: `1`/`true`/`0`/`false`. A flag beats its variable. Recommended:
+Booleans in variables: `1`/`true`/`0`/`false`. A flag beats its variable. Recommended (the token and
+passphrase come from the operator, separately; `wgcli connect-info` shows what a token contains):
 
 ```
-export WGCLI_URL=https://host:8443/pfx
+export WGCLI_CONNECT=wg1…
 export WGCLI_AUTH_K=$(WGCLI_AUTH_KEY='passphrase' wgcli derive-key)
 export WGCLI_JSON=1 WGCLI_PARAM_CRYPT=1
 ```
+
+Without a token, set `WGCLI_URL` instead, plus `WGCLI_INSECURE=1` for a self-signed certificate.
 
 IP firewall: optional on the server. When it's on, every request, `derive-key` included, fails with
 `server returned its blank page` until this machine's IP is registered: run `wgcli register` first,
@@ -124,10 +129,15 @@ Sets an image caption; `""` clears it. JSON: `{"id","caption"}`.
 
 ### wgcli register [registration-url]
 Admits this machine's IP through the server's IP firewall; only needed when commands fail with
-`server returned its blank page`. Without an argument it uses `-url`, which works when the server
-registers at its base URL; otherwise pass the registration URL the operator gave you. Succeeds
+`server returned its blank page`. Without an argument it uses the token's registration URL, else
+`-url` (right when the server registers at its base URL); otherwise pass the URL the operator gave you. Succeeds
 also when already admitted, or when the server has no firewall (`needed: false`). Admission is lost
 when the server restarts. JSON: `{"url","needed"}`.
+
+### wgcli connect-info [token]
+Shows what a connect token contains (default: `WGCLI_CONNECT`), without contacting the server.
+JSON: `{"url","host","port","tls","prefix","regPath","certPin","clientCert","keyId"}`; `url` is
+empty when the token has no host.
 
 ### wgcli derive-key [-salt <hex>]
 Prints K for `-auth-key`, for `-auth-k`/`WGCLI_AUTH_K`. The salt is fetched from the server unless
@@ -148,6 +158,8 @@ Errors go to stderr as `wgcli: <message>`, exit status 1; HTTP errors read `<sta
 
 | Message contains | Meaning | Action |
 |------------------|---------|--------|
+| `connect token is damaged` | Copy-paste error | Copy the whole token again |
+| `doesn't match the connect token` | Server certificate renewed, or wrong server; or (key) wrong passphrase | Ask the operator for a new token or the right passphrase |
 | `server returned its blank page` | Wrong path prefix in `-url`, or the IP firewall doesn't admit you | Check `-url`; run `wgcli register` |
 | `401 Unauthorized`, `unauthorized` | Wrong key | Fix the key; each failure counts toward the block below |
 | `429 Too Many Requests` | 10 wrong keys within 10 minutes from your IP | Every request is refused, even with the right key, until the oldest failure is 10 minutes old |

@@ -40,6 +40,8 @@ func main() {
 		err = runRegister(args)
 	case "derive-key":
 		err = runDeriveKey(args)
+	case "connect-info":
+		err = runConnectInfo(args)
 	case "guide":
 		fmt.Print(guide)
 		return
@@ -72,7 +74,7 @@ parsing (for an argument starting with "-").
 
 Global flags fall back to environment variables when not given:
   WGCLI_URL, WGCLI_AUTH_KEY, WGCLI_AUTH_K, WGCLI_INSECURE, WGCLI_PARAM_CRYPT,
-  WGCLI_CERT, WGCLI_CERT_KEY, WGCLI_JSON
+  WGCLI_CERT, WGCLI_CERT_KEY, WGCLI_JSON, WGCLI_CONNECT, WGCLI_HOST
 Transform keys/IVs left empty are generated randomly per invocation.
 
 Commands:
@@ -86,6 +88,7 @@ Commands:
   sim       download|upload [flags]             probe transport via a synthetic file/buffer (no filesystem I/O, no transform)
   register  [flags] [registration-url]          register this client's IP with the IP firewall (default URL: -url)
   derive-key [flags]                            print the key derived from -auth-key (for -auth-k / WGCLI_AUTH_K)
+  connect-info [token]                          decode a connect token (default: WGCLI_CONNECT)
   guide                                         full usage guide for scripts and agents (Markdown, stdout)
 
 Run "wgcli <command> -h" for command-specific flags.
