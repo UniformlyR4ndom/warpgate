@@ -309,7 +309,7 @@ func TestWSUploadRoundTrip(t *testing.T) {
 	if err := conn.ReadJSON(&final); err != nil {
 		t.Fatalf("reading final ack: %v", err)
 	}
-	if !final.OK || final.Name != "up.bin" {
+	if !final.OK || final.Name != "up.bin" || final.SHA256 != sha256Hex(content) {
 		t.Fatalf("unexpected final ack: %+v", final)
 	}
 

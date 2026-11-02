@@ -27,9 +27,11 @@ matching content signatures; they provide **neither confidentiality nor integrit
 
 - `aes-ctr` restarts its keystream from the same key and IV for every chunk and every request.
   An observer with known plaintext for one chunk can recover the same byte positions of another.
-- No transform authenticates the payload. Tampering in transit is not detected: a modified payload
-  may decode without error into modified file content (with `xor` and `aes-ctr`, flipping a bit of
-  the payload flips the same bit of the file).
+- No transform authenticates the payload: a modified payload may decode without error into modified
+  file content (with `xor` and `aes-ctr`, flipping a bit of the payload flips the same bit of the
+  file). wgcli detects this by comparing each transfer's SHA-256 with the server's; the hash itself
+  is protected only with parameter encryption, which authenticates responses. The browser doesn't
+  check yet.
 - Without parameter encryption, the transform keys travel in the request next to the payload.
 
 Parameter encryption hides keys, paths and filenames from an inspecting proxy and authenticates
@@ -107,6 +109,7 @@ Confidentiality is provided only by TLS, and only as far as no proxy intercepts 
 | `/api/public/settings` (no auth) tells anyone past the path prefix and IP firewall whether uploads are enabled (`uploads`, `ulFlat`), besides the WS frame limits and the KDF salt | The UI needs them before the key is set (to hide the Upload tab and derive the key). Uploading still requires authentication. |
 | The connect token holds the path prefix and registration path (admission secrets) and the key fingerprint, which lets its holder test passphrase guesses offline without capturing traffic | The token is handed to trusted clients like the passphrase, separately from it. Each guess costs a full scrypt run. The fingerprint has 16 bits: it rules out all but 1 in 65,536 wrong guesses, and confirming a remaining candidate still needs the server or captured traffic. |
 | The token pins the server certificate to 128 bits of its SHA-256; a renewed certificate needs a new token | 128 bits leave a second preimage out of reach. A TLS-terminating proxy between agent and server breaks the pin, which is not expected for agent connections. |
+| File hashes (`sha256` in upload responses, `list` with `hash`, the WS download ack) fingerprint content; a proxy could look them up in known-file databases without decoding the payload | They travel only in parameter-encrypted responses when parameter encryption is on. Without it, the transform keys travel in plaintext anyway, so the content itself is exposed already. |
 | `aes-ctr` keystream reuse; no payload integrity | Transforms are disguises, see above. |
 | `-no-auth` exposes all of the above to anyone who can reach the server | Explicit operator choice; combine with the IP firewall or mutual TLS. |
 | Hard links and bind mounts inside a served root are not detected | Only someone with local access to the host can create them, and the host is trusted. |

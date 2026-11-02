@@ -36,6 +36,9 @@ type wsAck struct {
 	Size  int64  `json:"size,omitempty"`
 	Name  string `json:"name,omitempty"`
 	Hash  string `json:"hash,omitempty"`
+	// SHA256 is a real file's hash: the uploaded one, or the one about to be
+	// downloaded (on request).
+	SHA256 string `json:"sha256,omitempty"`
 	// ChunkSize is sent once per chunk request, before its binary frames,
 	// giving the exact transformed byte length so the client knows how many
 	// bytes to read — needed because that length isn't always equal to the

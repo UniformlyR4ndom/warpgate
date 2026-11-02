@@ -136,8 +136,9 @@ func (s *Server) handleWSUpload(w http.ResponseWriter, r *http.Request) {
 	if _, err = raw.Seek(0, io.SeekStart); err == nil {
 		err = appendUploadChunk(s.ulRoot, outPath, transformer, raw)
 	}
+	var sum string
 	if err == nil {
-		err = s.publishUpload(outPath, filename)
+		sum, err = s.publishUpload(outPath, filename)
 	}
 	if err != nil {
 		log.Printf("ws upload: processing %q (transform %q): %v", filename, req.Transform, err)
@@ -145,7 +146,7 @@ func (s *Server) handleWSUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := s.writeWSOK(conn, encrypted, wsAck{OK: true, Name: filepath.ToSlash(filename)}); err != nil {
+	if err := s.writeWSOK(conn, encrypted, wsAck{OK: true, Name: filepath.ToSlash(filename), SHA256: sum}); err != nil {
 		return
 	}
 	writeWSClose(conn, websocket.CloseNormalClosure, "")

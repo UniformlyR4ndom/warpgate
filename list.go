@@ -10,13 +10,15 @@ import (
 
 type listRequest struct {
 	Path string `json:"path"`
+	Hash bool   `json:"hash"`
 }
 
 type listEntry struct {
-	Name  string `json:"name"`
-	Type  string `json:"type"`
-	Size  *int64 `json:"size,omitempty"`
-	MTime *int64 `json:"mtime,omitempty"`
+	Name   string `json:"name"`
+	Type   string `json:"type"`
+	Size   *int64 `json:"size,omitempty"`
+	MTime  *int64 `json:"mtime,omitempty"`
+	SHA256 string `json:"sha256,omitempty"`
 }
 
 // listDir lists the directory rel inside root. Symlinks are described by
@@ -85,7 +87,7 @@ func (s *Server) handleList(w http.ResponseWriter, r *http.Request, root *os.Roo
 		return
 	}
 
-	all, err := listDir(root, rel)
+	all, isFile, err := listPath(root, rel)
 	if err != nil {
 		if os.IsNotExist(err) {
 			http.Error(w, "path not found", http.StatusNotFound)
@@ -98,7 +100,44 @@ func (s *Server) handleList(w http.ResponseWriter, r *http.Request, root *os.Roo
 	}
 
 	entries := s.withoutUlTmp(root, rel, all)
+	if req.Hash {
+		hashEntries(root, rel, entries, isFile)
+	}
 	s.encodeParamsResponse(w, wasEncrypted, http.StatusOK, entries)
+}
+
+// listPath lists the directory rel, or, for a file, returns its one entry.
+func listPath(root *os.Root, rel string) (entries []listEntry, isFile bool, err error) {
+	info, err := root.Stat(rel)
+	if err != nil {
+		return nil, false, err
+	}
+	if info.IsDir() {
+		entries, err = listDir(root, rel)
+		return entries, false, err
+	}
+	size, mtime := info.Size(), info.ModTime().Unix()
+	return []listEntry{{Name: filepath.Base(rel), Type: "f", Size: &size, MTime: &mtime}}, true, nil
+}
+
+// hashEntries sets the SHA-256 of each file in entries, which describe rel
+// itself (isFile) or its contents. A file that can't be read keeps none.
+func hashEntries(root *os.Root, rel string, entries []listEntry, isFile bool) {
+	for i := range entries {
+		if entries[i].Type != "f" {
+			continue
+		}
+		p := filepath.Join(rel, entries[i].Name)
+		if isFile {
+			p = rel
+		}
+		sum, err := hashFile(root, p)
+		if err != nil {
+			log.Printf("list: hashing %s: %v", filepath.Join(root.Name(), p), err)
+			continue
+		}
+		entries[i].SHA256 = sum
+	}
 }
 
 // withoutUlTmp drops the upload temp directory from a listing of rel.

@@ -14,8 +14,9 @@ import (
 type listEntry struct {
 	Name  string `json:"name"`
 	Type  string `json:"type"`
-	Size  *int64 `json:"size,omitempty"`
-	MTime *int64 `json:"mtime,omitempty"`
+	Size   *int64 `json:"size,omitempty"`
+	MTime  *int64 `json:"mtime,omitempty"`
+	SHA256 string `json:"sha256,omitempty"`
 }
 
 func printEntries(g *globalFlags, entries []listEntry) {
@@ -46,7 +47,16 @@ func apiPrefix(ul bool) string {
 }
 
 func fetchList(g *globalFlags, prefix, dirPath string) ([]listEntry, error) {
-	body, err := g.encodeBody(map[string]string{"path": dirPath})
+	return fetchListing(g, prefix, dirPath, false)
+}
+
+// fetchListing lists p, a directory or a single file; with hash, file
+// entries carry their SHA-256.
+func fetchListing(g *globalFlags, prefix, p string, hash bool) ([]listEntry, error) {
+	body, err := g.encodeBody(struct {
+		Path string `json:"path"`
+		Hash bool   `json:"hash,omitempty"`
+	}{p, hash})
 	if err != nil {
 		return nil, err
 	}

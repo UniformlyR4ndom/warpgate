@@ -69,6 +69,12 @@ components:
           format: int64
           description: Last modification time (Unix seconds). Omitted if it couldn't be read.
           example: 1761735600
+        sha256:
+          type: string
+          description: |
+            Hex SHA-256 of the file's content. Only for files, and only when the request set
+            `hash`; omitted for a file that couldn't be read.
+          example: 9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08
 
     UploadResponse:
       type: object
@@ -84,6 +90,12 @@ components:
             Present only when more chunks are expected: absent on a plain one-shot upload, the
             final chunk's success response, and a completed-session replay ack. See the
             `/api/files/upload` chunked-upload description for the full protocol.
+        sha256:
+          type: string
+          description: |
+            Hex SHA-256 of the stored file. Present once the upload is complete: one-shot, final
+            chunk, and the completed-session replay ack.
+          example: 9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08
 
     SimUploadResponse:
       type: object
@@ -306,7 +318,9 @@ paths:
       summary: List directory contents
       description: |
         Returns the files and subdirectories at `path` within the download root.
-        Use an empty string for the root itself.
+        Use an empty string for the root itself. A `path` naming a file returns just that
+        file's entry. With `hash`, file entries carry their SHA-256; that reads every listed
+        file in full.
 
         The request body may alternatively be an opaque base64 string (encrypted control
         parameters) instead of the JSON shape below; the server auto-detects which was sent.
@@ -320,8 +334,12 @@ paths:
               properties:
                 path:
                   type: string
-                  description: Subdirectory path relative to the download root.
+                  description: Directory or file path relative to the download root.
                   default: ""
+                hash:
+                  type: boolean
+                  description: Add each file's `sha256` to its entry.
+                  default: false
             examples:
               root:
                 summary: List root

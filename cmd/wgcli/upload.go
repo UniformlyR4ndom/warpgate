@@ -2,6 +2,8 @@ package main
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -24,13 +26,13 @@ import (
 // first, so an inconsistent name would land a continuation chunk in the
 // wrong (or a brand-new) session instead of continuing the real one. dir
 // ("" = upload root) is resent for the same reason.
-func postUploadChunk(g *globalFlags, chunkData io.Reader, dir, name, transformName string, transformArgs json.RawMessage, continuationKey string, done bool) (respName, nextContinuationKey string, err error) {
+func postUploadChunk(g *globalFlags, chunkData io.Reader, dir, name, transformName string, transformArgs json.RawMessage, continuationKey string, done bool) (uploadResult, error) {
 	var body bytes.Buffer
 	mw := multipart.NewWriter(&body)
 
 	specPart, err := mw.CreateFormFile("transform", "transform.json")
 	if err != nil {
-		return "", "", err
+		return uploadResult{}, err
 	}
 	specBody, err := g.encodeBody(struct {
 		Transform       string          `json:"transform"`
@@ -43,56 +45,72 @@ func postUploadChunk(g *globalFlags, chunkData io.Reader, dir, name, transformNa
 		Done bool `json:"ul-done"`
 	}{transformName, transformArgs, dir, continuationKey, done})
 	if err != nil {
-		return "", "", err
+		return uploadResult{}, err
 	}
 	if _, err := specPart.Write(specBody); err != nil {
-		return "", "", err
+		return uploadResult{}, err
 	}
 
 	filePart, err := mw.CreateFormFile("file", name)
 	if err != nil {
-		return "", "", err
+		return uploadResult{}, err
 	}
 	if _, err := io.Copy(filePart, chunkData); err != nil {
-		return "", "", fmt.Errorf("writing encoded upload body: %w", err)
+		return uploadResult{}, fmt.Errorf("writing encoded upload body: %w", err)
 	}
 
 	if err := mw.Close(); err != nil {
-		return "", "", err
+		return uploadResult{}, err
 	}
 
 	req, err := g.newRequest(http.MethodPost, "/api/files/upload", &body)
 	if err != nil {
-		return "", "", err
+		return uploadResult{}, err
 	}
 	req.Header.Set("Content-Type", mw.FormDataContentType())
 
 	resp, err := g.httpClient().Do(req)
 	if err != nil {
-		return "", "", err
+		return uploadResult{}, err
 	}
 	defer resp.Body.Close()
 
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return "", "", err
+		return uploadResult{}, err
 	}
 
 	// The server answers a first-chunk request (whether or not it's also
 	// the final one) with 201, and every continuation-key request
 	// (final or not) with 200.
 	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
-		return "", "", fmt.Errorf("%s: %s", resp.Status, strings.TrimSpace(string(respBody)))
+		return uploadResult{}, fmt.Errorf("%s: %s", resp.Status, strings.TrimSpace(string(respBody)))
 	}
 
-	var result struct {
-		Name            string `json:"name"`
-		ContinuationKey string `json:"continuation-key"`
-	}
+	var result uploadResult
 	if err := g.decodeJSON(respBody, &result); err != nil {
-		return "", "", err
+		return uploadResult{}, err
 	}
-	return result.Name, result.ContinuationKey, nil
+	return result, nil
+}
+
+type uploadResult struct {
+	Name            string `json:"name"`
+	ContinuationKey string `json:"continuation-key"`
+	SHA256          string `json:"sha256"`
+}
+
+// checkUpload compares the local file's hash with the one the server
+// computed over what it stored.
+func checkUpload(local, remote string) error {
+	if remote == "" {
+		fmt.Fprintln(os.Stderr, "wgcli: not verified: the server sent no SHA-256 (older warpgate?)")
+		return nil
+	}
+	if local != remote {
+		return fmt.Errorf("verification failed: the server stored data with SHA-256 %s, the local file has %s (altered in transit); upload again", remote, local)
+	}
+	return nil
 }
 
 func uploadHTTP(g *globalFlags, localPath, dir, name string, transformName string, transformArgs json.RawMessage, transformer transform.Transformer) error {
@@ -102,17 +120,22 @@ func uploadHTTP(g *globalFlags, localPath, dir, name string, transformName strin
 	}
 	defer inFile.Close()
 
-	encoded, err := transformer.Transform(inFile)
+	h := sha256.New()
+	encoded, err := transformer.Transform(io.TeeReader(inFile, h))
 	if err != nil {
 		return fmt.Errorf("encoding upload: %w", err)
 	}
 
 	start := time.Now()
-	respName, _, err := postUploadChunk(g, encoded, dir, name, transformName, transformArgs, "", true)
+	res, err := postUploadChunk(g, encoded, dir, name, transformName, transformArgs, "", true)
 	if err != nil {
 		return err
 	}
-	printUploadResult(g, localPath, respName, time.Since(start))
+	sum := hex.EncodeToString(h.Sum(nil))
+	if err := checkUpload(sum, res.SHA256); err != nil {
+		return err
+	}
+	printUploadResult(g, localPath, res.Name, sum, time.Since(start))
 	return nil
 }
 
@@ -135,9 +158,11 @@ func uploadHTTPChunked(g *globalFlags, localPath, dir, name, transformName strin
 	}
 	defer f.Close()
 
+	h := sha256.New()
+	src := io.TeeReader(f, h)
 	start := time.Now()
 	var transferred int64
-	var continuationKey, respName string
+	var res uploadResult
 	for {
 		reqSize := chunkSize
 		if remaining := size - transferred; reqSize > remaining {
@@ -145,12 +170,12 @@ func uploadHTTPChunked(g *globalFlags, localPath, dir, name, transformName strin
 		}
 		done := transferred+reqSize >= size
 
-		encoded, err := transformer.Transform(io.LimitReader(f, reqSize))
+		encoded, err := transformer.Transform(io.LimitReader(src, reqSize))
 		if err != nil {
 			return fmt.Errorf("encoding chunk at offset %d: %w", transferred, err)
 		}
 
-		respName, continuationKey, err = postUploadChunk(g, encoded, dir, name, transformName, transformArgs, continuationKey, done)
+		res, err = postUploadChunk(g, encoded, dir, name, transformName, transformArgs, res.ContinuationKey, done)
 		if err != nil {
 			return fmt.Errorf("uploading chunk at offset %d: %w", transferred, err)
 		}
@@ -161,7 +186,11 @@ func uploadHTTPChunked(g *globalFlags, localPath, dir, name, transformName strin
 		}
 	}
 
-	printUploadResult(g, localPath, respName, time.Since(start))
+	sum := hex.EncodeToString(h.Sum(nil))
+	if err := checkUpload(sum, res.SHA256); err != nil {
+		return err
+	}
+	printUploadResult(g, localPath, res.Name, sum, time.Since(start))
 	return nil
 }
 
@@ -172,7 +201,8 @@ func uploadWS(g *globalFlags, localPath, dir, name string, transformName string,
 	}
 	defer inFile.Close()
 
-	encoded, err := transformer.Transform(inFile)
+	h := sha256.New()
+	encoded, err := transformer.Transform(io.TeeReader(inFile, h))
 	if err != nil {
 		return fmt.Errorf("encoding upload: %w", err)
 	}
@@ -213,16 +243,20 @@ func uploadWS(g *globalFlags, localPath, dir, name string, transformName string,
 	if err != nil {
 		return err
 	}
-	printUploadResult(g, localPath, ack.Name, time.Since(start))
+	sum := hex.EncodeToString(h.Sum(nil))
+	if err := checkUpload(sum, ack.SHA256); err != nil {
+		return err
+	}
+	printUploadResult(g, localPath, ack.Name, sum, time.Since(start))
 	return nil
 }
 
-func printUploadResult(g *globalFlags, localPath, name string, elapsed time.Duration) {
+func printUploadResult(g *globalFlags, localPath, name, sum string, elapsed time.Duration) {
 	var size int64
 	if fi, err := os.Stat(localPath); err == nil {
 		size = fi.Size()
 	}
-	g.report(map[string]any{"path": localPath, "name": name, "bytes": size, "seconds": elapsed.Seconds()},
+	g.report(map[string]any{"path": localPath, "name": name, "bytes": size, "sha256": sum, "seconds": elapsed.Seconds()},
 		"uploaded %s as %q (%d bytes) in %s", localPath, name, size, elapsed.Round(time.Millisecond))
 }
 

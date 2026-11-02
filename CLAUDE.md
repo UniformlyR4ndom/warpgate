@@ -60,7 +60,7 @@ accepted risks; update it when a security-relevant decision changes.
 |----------|-------------------------|------|-------------|
 | GET      | `/api/public/checkin`   | No   | Logs the client IP (`clientIP`); called once on page load |
 | GET      | `/api/public/settings`  | No   | `{"wsFrameMin","wsFrameMax","uploads","ulFlat","kdfSalt"}` for UI clamping, the Upload tab (hidden without `-ul-root`), the `-ul-flat` mode and key derivation |
-| POST     | `/api/files/list`       | Yes  | List a directory of the download root; body `{"path":"subdir"}` |
+| POST     | `/api/files/list`       | Yes  | List a directory of the download root, or one file; body `{"path":"subdir","hash":false}` (`hash`: add each file's `sha256`) |
 | POST     | `/api/files/download`   | Yes  | Download a (chunk of a) file, transformed |
 | POST     | `/api/files/upload`     | Yes  | Upload a (chunk of a) file (needs `-ul-root`); multipart |
 | GET      | `/api/files/ul-list`    | Yes  | Top level of the upload directory (the `-ul-flat` UI) |
@@ -171,6 +171,11 @@ the token's registration URL; `connect-info` decodes a token offline.
 (an optional `ContentType()` method) or `application/octet-stream`; `validContentType` (`download.go`) rejects control
 characters and > 255 bytes. HTTP only — the UI hides the setting for the WS backend.
 
+Verification (wgcli, on unless `-no-verify`): HTTP downloads get size and `sha256` from one `list`
+of the file path with `hash`, then hash what they write; on a mismatch they ask again to tell "changed
+on the server" from "altered in transit", and delete the output. WS downloads get `sha256` in the
+handshake ack, hashed from the file they are served from.
+
 ### Uploads
 
 Multipart with two parts:
@@ -187,6 +192,10 @@ an explicit `"ul-done":false` starts chunking.
 2. While `ul-done` isn't true, the response carries a fresh `continuation-key`.
 3. Later chunks send the previous key; their data is appended.
 4. The `ul-done: true` chunk renames the temp file over the target; no key in the response.
+
+Every completing response (one-shot, final chunk, completed replay, WS final ack) carries
+`sha256`: `publishUpload` hashes the temp file right before the rename; the session keeps it for
+replays. wgcli compares it with the local file and fails on a mismatch.
 
 `ul_session.go` (`sessionStore`, generic over the session payload) and `upload.go`
 (`handleUploadFirstChunk`, `handleUploadContinuation`) implement it:
@@ -257,8 +266,9 @@ among them) can drop the connection on large frames. So the client picks `frameS
 - Upload: all frames are spooled to a temp file and `Untransform` runs once on `{"done":true}`.
 
 **Download protocol:**
-1. C→S `{"auth","path","transform","args","frameSize"}`
-2. S→C `{"ok":true,"size":N}` (plaintext file size) or `{"ok":false,"error"}`
+1. C→S `{"auth","path","transform","args","frameSize","hash"}` (`hash` optional)
+2. S→C `{"ok":true,"size":N,"sha256"}` (plaintext file size; `sha256` of the open file, if `hash`)
+   or `{"ok":false,"error"}`
 3. C→S, one at a time: `{"start","size"}` for a chunk, or `{"done":true}`
 4. S→C `{"ok":true,"chunkSize":N}`: the *transformed* length, since `pdf`/`html-b64` output is longer
    than the input. Transforms implementing `transform.SizedTransformer` (`EncodedLen`: all but `pdf`)
@@ -271,7 +281,7 @@ among them) can drop the connection on large frames. So the client picks `frameS
 2. S→C `{"ok":true}` or error
 3. C→S binary messages of ≤ `frameSize` (transport pieces, not separately decodable)
 4. C→S `{"done":true}`
-5. S→C `{"ok":true,"name":"<dir/filename>"}`, normal close
+5. S→C `{"ok":true,"name":"<dir/filename>","sha256"}`, normal close
 6. Any error or disconnect: error message if possible, close; temp files deleted, target untouched
 
 ## Benchmark/Simulation Endpoints

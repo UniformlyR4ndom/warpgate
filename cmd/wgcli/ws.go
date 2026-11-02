@@ -17,6 +17,7 @@ type wsAck struct {
 	Size      int64  `json:"size,omitempty"`
 	Name      string `json:"name,omitempty"`
 	Hash      string `json:"hash,omitempty"`
+	SHA256    string `json:"sha256,omitempty"`
 	ChunkSize int64  `json:"chunkSize,omitempty"`
 }
 

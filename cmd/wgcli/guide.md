@@ -88,15 +88,17 @@ Downloads a file, reversing the transform; `-ul` reads from the upload directory
 overwritten; a failed download may leave it partial. `-chunk-size` (default 4 MiB) is the plaintext
 size per request. `-backend http|ws` picks the transport; `-frame-size` sets the WebSocket frame
 size in bytes (0 = server maximum). Transform flags: `-transform`, `-key`, `-iv`, `-password`.
-JSON: `{"path","out","bytes","seconds"}`.
+The result is compared with the server's SHA-256 of the file; on a mismatch `-o` is removed and the
+command fails. `-no-verify` skips the check. JSON: `{"path","out","bytes","sha256","seconds"}`.
 
 ### wgcli upload [flags] <local-file>
 Uploads into the upload directory, or into the existing subdirectory `-dir`. `-remote-name` sets
 the stored name (default: the local base name). **An existing file of that name is replaced
 without warning.** `-chunk-size <bytes>` splits the upload into sequential requests (HTTP only;
 default: one request). `-backend http|ws`; `-frame-size` (0 = 1 MiB). Transform flags:
-`-transform`, `-key`, `-iv`, `-filename`.
-JSON: `{"path","name","bytes","seconds"}`; `name` is the stored path.
+`-transform`, `-key`, `-iv`, `-filename`. The server's SHA-256 of the stored file is compared with
+the local file's; a mismatch fails the command. JSON: `{"path","name","bytes","sha256","seconds"}`;
+`name` is the stored path.
 
 ### wgcli mkdir <dir>
 Creates one directory in the upload directory; its parent must exist, at most 4 levels deep.
@@ -180,6 +182,7 @@ Errors go to stderr as `wgcli: <message>`, exit status 1; HTTP errors read `<sta
 | `server returned its blank page` | Wrong path prefix in `-url`, or the IP firewall blocks you and registering failed (reason follows) | Check `-url`; registration closed or full: ask the operator; unknown registration URL: `wgcli register <url>` |
 | `401 Unauthorized`, `unauthorized` | Wrong key | Fix the key; each failure counts toward the block below |
 | `429 Too Many Requests` | 10 wrong keys within 10 minutes from your IP | Every request is refused, even with the right key, until the oldest failure is 10 minutes old |
+| `verification failed` | The SHA-256 doesn't match: data altered in transit, or (download) the file changed on the server meanwhile | Transfer again; if it keeps failing, try another `-transform` or `-backend` |
 | `409 Conflict: upload already in progress` | Another upload to the same target is running | Retry later; never upload to one target in parallel |
 | `404 Not Found` on upload commands | The server has uploads disabled, or the directory doesn't exist | — |
 | connection refused / reset | Server down or restarting | Retry later |

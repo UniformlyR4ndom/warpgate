@@ -19,6 +19,7 @@ type wsDownloadRequest struct {
 	Transform string          `json:"transform"`
 	Args      json.RawMessage `json:"args"`
 	FrameSize int64           `json:"frameSize"`
+	Hash      bool            `json:"hash"`
 }
 
 // wsChunkRequest is sent by the client for each chunk it wants, or with
@@ -94,7 +95,16 @@ func (s *Server) handleWSDownload(w http.ResponseWriter, r *http.Request, root *
 		return
 	}
 
-	if err := s.writeWSOK(conn, encrypted, wsAck{OK: true, Size: info.Size()}); err != nil {
+	ack := wsAck{OK: true, Size: info.Size()}
+	if req.Hash {
+		// Hashes the open file, so it describes exactly the bytes served
+		// even if an upload replaces the file meanwhile.
+		if ack.SHA256, err = hashReader(io.NewSectionReader(f, 0, info.Size())); err != nil {
+			s.writeWSError(conn, encrypted, websocket.CloseInternalServerErr, "internal error")
+			return
+		}
+	}
+	if err := s.writeWSOK(conn, encrypted, ack); err != nil {
 		return
 	}
 

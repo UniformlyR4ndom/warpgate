@@ -25,6 +25,8 @@ type uploadResponse struct {
 	// plain one-shot upload, the final chunk's success response, and a
 	// completed-session replay ack.
 	ContinuationKey string `json:"continuation-key,omitempty"`
+	// SHA256 is the stored file's hash, set once the upload completed.
+	SHA256 string `json:"sha256,omitempty"`
 }
 
 // ulTmpDirName is the subdirectory of -ul-root holding uploads until they
@@ -38,6 +40,7 @@ const ulTmpDirName = ".warpgate-tmp"
 type ulSession struct {
 	ulSessionCore
 	tmpPath string
+	sha256  string // of the published file, for replays of the final chunk
 }
 
 // abortUploadSession deletes the temp file of an expired or failed,
@@ -175,14 +178,19 @@ func (s *Server) ulTarget(dir, clientName string) (string, int, error) {
 	return target, 0, nil
 }
 
-// publishUpload replaces filename with the finished temp file. Renaming
-// replaces a symlink at filename rather than writing through it.
-func (s *Server) publishUpload(tmpPath, filename string) error {
+// publishUpload replaces filename with the finished temp file and returns
+// its SHA-256. Renaming replaces a symlink at filename rather than writing
+// through it.
+func (s *Server) publishUpload(tmpPath, filename string) (string, error) {
+	sum, err := hashFile(s.ulRoot, tmpPath)
+	if err != nil {
+		return "", err
+	}
 	if err := s.ulRoot.Rename(tmpPath, filename); err != nil {
-		return err
+		return "", err
 	}
 	log.Printf("uploaded %q to %q", filename, filepath.Join(s.absUlRoot, filename))
-	return nil
+	return sum, nil
 }
 
 // appendUploadChunk untransforms one chunk and appends it to path inside root.
@@ -203,8 +211,8 @@ func appendUploadChunk(root *os.Root, path string, transformer transform.Transfo
 	return f.Close()
 }
 
-func (s *Server) writeUploadResponse(w http.ResponseWriter, encrypted bool, status int, filename, continuationKey string) {
-	s.encodeParamsResponse(w, encrypted, status, uploadResponse{Name: filepath.ToSlash(filename), ContinuationKey: continuationKey})
+func (s *Server) writeUploadResponse(w http.ResponseWriter, encrypted bool, status int, filename, continuationKey, sha256 string) {
+	s.encodeParamsResponse(w, encrypted, status, uploadResponse{Name: filepath.ToSlash(filename), ContinuationKey: continuationKey, SHA256: sha256})
 }
 
 // handleUpload serves both a plain one-shot upload (no continuation-key,
@@ -300,12 +308,12 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 	case ulKeyCompleted:
 		sess.expiresAt = time.Now().Add(ulSessionIdleExpiry)
 		s.uploadSessions.release(filename, false)
-		s.writeUploadResponse(w, wasEncrypted, http.StatusOK, filename, "")
+		s.writeUploadResponse(w, wasEncrypted, http.StatusOK, filename, "", sess.sha256)
 	case ulKeyPrevious:
 		nextKey := sess.currentKey
 		sess.expiresAt = time.Now().Add(ulSessionIdleExpiry)
 		s.uploadSessions.release(filename, false)
-		s.writeUploadResponse(w, wasEncrypted, http.StatusOK, filename, nextKey)
+		s.writeUploadResponse(w, wasEncrypted, http.StatusOK, filename, nextKey, "")
 	case ulKeyCurrent:
 		s.handleUploadContinuation(w, transformer, file, filename, sess, done, wasEncrypted)
 	default: // ulKeyUnrecognized
@@ -345,12 +353,13 @@ func (s *Server) handleUploadFirstChunk(w http.ResponseWriter, transformer trans
 	}
 
 	if done {
-		if err := s.publishUpload(tmpPath, filename); err != nil {
+		sum, err := s.publishUpload(tmpPath, filename)
+		if err != nil {
 			s.failUpload(w, filename, sess, err)
 			return
 		}
 		s.uploadSessions.release(filename, true)
-		s.writeUploadResponse(w, encrypted, http.StatusCreated, filename, "")
+		s.writeUploadResponse(w, encrypted, http.StatusCreated, filename, "", sum)
 		return
 	}
 
@@ -364,7 +373,7 @@ func (s *Server) handleUploadFirstChunk(w http.ResponseWriter, transformer trans
 	sess.previousKey = ""
 	sess.expiresAt = time.Now().Add(ulSessionIdleExpiry)
 	s.uploadSessions.release(filename, false)
-	s.writeUploadResponse(w, encrypted, http.StatusCreated, filename, key)
+	s.writeUploadResponse(w, encrypted, http.StatusCreated, filename, key, "")
 }
 
 // handleUploadContinuation handles a request whose continuation-key matched
@@ -376,16 +385,18 @@ func (s *Server) handleUploadContinuation(w http.ResponseWriter, transformer tra
 	}
 
 	if done {
-		if err := s.publishUpload(sess.tmpPath, filename); err != nil {
+		sum, err := s.publishUpload(sess.tmpPath, filename)
+		if err != nil {
 			s.failUpload(w, filename, sess, err)
 			return
 		}
 		sess.tmpPath = ""
+		sess.sha256 = sum
 		sess.completed = true
 		sess.previousKey = ""
 		sess.expiresAt = time.Now().Add(ulSessionIdleExpiry)
 		s.uploadSessions.release(filename, false)
-		s.writeUploadResponse(w, encrypted, http.StatusOK, filename, "")
+		s.writeUploadResponse(w, encrypted, http.StatusOK, filename, "", sum)
 		return
 	}
 
@@ -398,7 +409,7 @@ func (s *Server) handleUploadContinuation(w http.ResponseWriter, transformer tra
 	sess.currentKey = key
 	sess.expiresAt = time.Now().Add(ulSessionIdleExpiry)
 	s.uploadSessions.release(filename, false)
-	s.writeUploadResponse(w, encrypted, http.StatusOK, filename, key)
+	s.writeUploadResponse(w, encrypted, http.StatusOK, filename, key, "")
 }
 
 func (s *Server) handleUlList(w http.ResponseWriter, r *http.Request) {

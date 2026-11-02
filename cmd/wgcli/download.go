@@ -2,13 +2,14 @@ package main
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
-	"path"
 	"strings"
 	"time"
 
@@ -48,33 +49,52 @@ func fetchDownloadChunkHTTP(g *globalFlags, prefix, remotePath string, start, si
 	return io.ReadAll(resp.Body)
 }
 
-func downloadHTTP(g *globalFlags, prefix, remotePath, out string, transformName string, transformArgs json.RawMessage, transformer transform.Transformer, chunkSize int64) error {
-	dirPath := path.Dir(remotePath)
-	if dirPath == "." {
-		dirPath = ""
-	}
-	baseName := path.Base(remotePath)
-
-	entries, err := fetchList(g, prefix, dirPath)
+// fetchFileEntry looks up the file remotePath, with its SHA-256 if hash.
+func fetchFileEntry(g *globalFlags, prefix, remotePath string, hash bool) (listEntry, error) {
+	entries, err := fetchListing(g, prefix, remotePath, hash)
 	if err != nil {
-		return fmt.Errorf("listing %q to determine file size: %w", dirPath, err)
+		return listEntry{}, fmt.Errorf("looking up %q: %w", remotePath, err)
 	}
-	size := int64(-1)
-	for _, e := range entries {
-		if e.Name == baseName && e.Type == "f" && e.Size != nil {
-			size = *e.Size
-			break
+	if len(entries) != 1 || entries[0].Type != "f" || entries[0].Size == nil {
+		return listEntry{}, fmt.Errorf("%q is not a file", remotePath)
+	}
+	return entries[0], nil
+}
+
+// checkDownload compares the written file's hash with the server's and
+// removes the file on a mismatch. With recheck, it asks the server again to
+// tell a file changed meanwhile from data altered in transit.
+func checkDownload(g *globalFlags, prefix, remotePath, out, want, got string, recheck bool) error {
+	if want == "" {
+		fmt.Fprintln(os.Stderr, "wgcli: not verified: the server sent no SHA-256 (older warpgate?)")
+		return nil
+	}
+	if got == want {
+		return nil
+	}
+	_ = os.Remove(out)
+	if recheck {
+		if e, err := fetchFileEntry(g, prefix, remotePath, true); err == nil && e.SHA256 != want {
+			return fmt.Errorf("verification failed: %q changed on the server during the download; %s removed, download again", remotePath, out)
 		}
 	}
-	if size < 0 {
-		return fmt.Errorf("file %q not found under %q", baseName, dirPath)
+	return fmt.Errorf("verification failed: data altered in transit (SHA-256 %s, server has %s); %s removed", got, want, out)
+}
+
+func downloadHTTP(g *globalFlags, prefix, remotePath, out string, transformName string, transformArgs json.RawMessage, transformer transform.Transformer, chunkSize int64, verify bool) error {
+	entry, err := fetchFileEntry(g, prefix, remotePath, verify)
+	if err != nil {
+		return err
 	}
+	size := *entry.Size
 
 	f, err := os.Create(out)
 	if err != nil {
 		return err
 	}
 	defer f.Close()
+	h := sha256.New()
+	w := io.MultiWriter(f, h)
 
 	start := time.Now()
 	var transferred int64
@@ -93,7 +113,7 @@ func downloadHTTP(g *globalFlags, prefix, remotePath, out string, transformName 
 		if err != nil {
 			return fmt.Errorf("decoding chunk at offset %d: %w", transferred, err)
 		}
-		if _, err := io.Copy(f, reader); err != nil {
+		if _, err := io.Copy(w, reader); err != nil {
 			return fmt.Errorf("writing chunk at offset %d: %w", transferred, err)
 		}
 
@@ -104,11 +124,17 @@ func downloadHTTP(g *globalFlags, prefix, remotePath, out string, transformName 
 	if err := f.Close(); err != nil {
 		return err
 	}
-	printDownloadResult(g, remotePath, out, size, time.Since(start))
+	sum := hex.EncodeToString(h.Sum(nil))
+	if verify {
+		if err := checkDownload(g, prefix, remotePath, out, entry.SHA256, sum, true); err != nil {
+			return err
+		}
+	}
+	printDownloadResult(g, remotePath, out, size, sum, time.Since(start))
 	return nil
 }
 
-func downloadWS(g *globalFlags, prefix, remotePath, out string, transformName string, transformArgs json.RawMessage, transformer transform.Transformer, chunkSize, frameSize int64) error {
+func downloadWS(g *globalFlags, prefix, remotePath, out string, transformName string, transformArgs json.RawMessage, transformer transform.Transformer, chunkSize, frameSize int64, verify bool) error {
 	conn, err := g.dialWS(prefix + "ws/download")
 	if err != nil {
 		return err
@@ -121,7 +147,8 @@ func downloadWS(g *globalFlags, prefix, remotePath, out string, transformName st
 		Transform string          `json:"transform"`
 		Args      json.RawMessage `json:"args,omitempty"`
 		FrameSize int64           `json:"frameSize,omitempty"`
-	}{g.authToken(), remotePath, transformName, transformArgs, frameSize}); err != nil {
+		Hash      bool            `json:"hash,omitempty"`
+	}{g.authToken(), remotePath, transformName, transformArgs, frameSize, verify}); err != nil {
 		return fmt.Errorf("sending initial request: %w", err)
 	}
 
@@ -136,6 +163,8 @@ func downloadWS(g *globalFlags, prefix, remotePath, out string, transformName st
 		return err
 	}
 	defer f.Close()
+	h := sha256.New()
+	w := io.MultiWriter(f, h)
 
 	start := time.Now()
 	var transferred int64
@@ -177,7 +206,7 @@ func downloadWS(g *globalFlags, prefix, remotePath, out string, transformName st
 		if err != nil {
 			return fmt.Errorf("decoding chunk at offset %d: %w", transferred, err)
 		}
-		if _, err := io.Copy(f, reader); err != nil {
+		if _, err := io.Copy(w, reader); err != nil {
 			return fmt.Errorf("writing chunk at offset %d: %w", transferred, err)
 		}
 
@@ -188,13 +217,21 @@ func downloadWS(g *globalFlags, prefix, remotePath, out string, transformName st
 	if err := f.Close(); err != nil {
 		return err
 	}
-	printDownloadResult(g, remotePath, out, size, time.Since(start))
+	sum := hex.EncodeToString(h.Sum(nil))
+	if verify {
+		// The server hashed the file it served from, so a mismatch can only
+		// come from the transfer.
+		if err := checkDownload(g, prefix, remotePath, out, ack.SHA256, sum, false); err != nil {
+			return err
+		}
+	}
+	printDownloadResult(g, remotePath, out, size, sum, time.Since(start))
 	return nil
 }
 
-func printDownloadResult(g *globalFlags, remotePath, out string, size int64, elapsed time.Duration) {
+func printDownloadResult(g *globalFlags, remotePath, out string, size int64, sum string, elapsed time.Duration) {
 	throughput := float64(size) / 1e6 / elapsed.Seconds()
-	g.report(map[string]any{"path": remotePath, "out": out, "bytes": size, "seconds": elapsed.Seconds()},
+	g.report(map[string]any{"path": remotePath, "out": out, "bytes": size, "sha256": sum, "seconds": elapsed.Seconds()},
 		"downloaded %d bytes to %s in %s (%.2f MB/s)", size, out, elapsed.Round(time.Millisecond), throughput)
 }
 
@@ -210,6 +247,7 @@ func runDownload(args []string) error {
 	backend := fs.String("backend", "http", "transport: http|ws")
 	frameSize := fs.Int64("frame-size", 0, "WS frame size in bytes (ws backend only; 0 = server ceiling)")
 	ul := fs.Bool("ul", false, "download from the upload directory instead of the download root")
+	noVerify := fs.Bool("no-verify", false, "skip comparing the result's SHA-256 with the server's")
 	if err := parseFlags(fs, g, args); err != nil {
 		return err
 	}
@@ -238,7 +276,7 @@ func runDownload(args []string) error {
 	}
 
 	if *backend == "ws" {
-		return downloadWS(g, apiPrefix(*ul), remotePath, *out, *transformName, transformArgs, transformer, *chunkSize, *frameSize)
+		return downloadWS(g, apiPrefix(*ul), remotePath, *out, *transformName, transformArgs, transformer, *chunkSize, *frameSize, !*noVerify)
 	}
-	return downloadHTTP(g, apiPrefix(*ul), remotePath, *out, *transformName, transformArgs, transformer, *chunkSize)
+	return downloadHTTP(g, apiPrefix(*ul), remotePath, *out, *transformName, transformArgs, transformer, *chunkSize, !*noVerify)
 }

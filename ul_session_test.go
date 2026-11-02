@@ -121,6 +121,9 @@ func TestUploadChunkedRoundTrip(t *testing.T) {
 	if got.ContinuationKey != "" {
 		t.Fatalf("final chunk: expected no continuation-key, got %q", got.ContinuationKey)
 	}
+	if got.SHA256 != sha256Hex(want) {
+		t.Fatalf("final chunk: sha256 = %q, want %q", got.SHA256, sha256Hex(want))
+	}
 
 	gotContent, err := os.ReadFile(filepath.Join(ulRoot, "big.bin"))
 	if err != nil {
@@ -187,6 +190,9 @@ func TestUploadChunkedCompletedReplay(t *testing.T) {
 	}
 	if got.ContinuationKey != "" {
 		t.Fatalf("completed replay: expected no continuation-key, got %q", got.ContinuationKey)
+	}
+	if got.SHA256 != sha256Hex([]byte("aaabbb")) {
+		t.Fatalf("completed replay: sha256 = %q", got.SHA256)
 	}
 
 	gotContent, err := os.ReadFile(filepath.Join(ulRoot, "f.bin"))
@@ -395,7 +401,7 @@ func TestUlSweepExpired(t *testing.T) {
 	if err != nil {
 		t.Fatalf("createUlTemp: %v", err)
 	}
-	srv.uploadSessions.sessions["active.bin"] = &ulSession{ulSessionCore{currentKey: "k1", expiresAt: time.Now().Add(-time.Second)}, tmpPath}
+	srv.uploadSessions.sessions["active.bin"] = &ulSession{ulSessionCore: ulSessionCore{currentKey: "k1", expiresAt: time.Now().Add(-time.Second)}, tmpPath: tmpPath}
 
 	// A completed session past expiry: the file is done and correct, and
 	// must survive the sweep untouched.
