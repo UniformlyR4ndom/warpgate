@@ -43,9 +43,10 @@ export WGCLI_JSON=1 WGCLI_PARAM_CRYPT=1
 
 Without a token, set `WGCLI_URL` instead, plus `WGCLI_INSECURE=1` for a self-signed certificate.
 
-IP firewall: optional on the server. When it's on, every request, `derive-key` included, fails with
-`server returned its blank page` until this machine's IP is registered: `wgcli status` registers it,
-as does `wgcli register`. Needed again after a server restart; harmless when not needed.
+IP firewall: optional on the server. When it blocks this machine's IP (first contact, or after a
+server restart), every command registers the IP by itself and resends the refused request; stderr
+says `wgcli: registered this IP …`. That needs the token's registration URL, or a server that
+registers at its base URL; otherwise run `wgcli register <url>` with the URL the operator gave you.
 
 ## Transforms
 
@@ -144,9 +145,9 @@ Deletes images, stopping at the first failure. JSON: `{"ids"}`.
 Sets an image caption; `""` clears it. JSON: `{"id","caption"}`.
 
 ### wgcli register [registration-url]
-Admits this machine's IP through the server's IP firewall; only needed when commands fail with
-`server returned its blank page`. Without an argument it uses the token's registration URL, else
-`-url` (right when the server registers at its base URL); otherwise pass the URL the operator gave you. Succeeds
+Admits this machine's IP through the server's IP firewall. Other commands do this by themselves;
+needed only for a registration URL wgcli doesn't know. Without an argument it uses the token's
+registration URL, else `-url` (right when the server registers at its base URL). Succeeds
 also when already admitted, or when the server has no firewall (`needed: false`). Admission is lost
 when the server restarts. JSON: `{"url","needed"}`.
 
@@ -176,9 +177,9 @@ Errors go to stderr as `wgcli: <message>`, exit status 1; HTTP errors read `<sta
 |------------------|---------|--------|
 | `connect token is damaged` | Copy-paste error | Copy the whole token again |
 | `doesn't match the connect token` | Server certificate renewed, or wrong server; or (key) wrong passphrase | Ask the operator for a new token or the right passphrase |
-| `server returned its blank page` | Wrong path prefix in `-url`, or the IP firewall doesn't admit you | Check `-url`; run `wgcli register` |
+| `server returned its blank page` | Wrong path prefix in `-url`, or the IP firewall blocks you and registering failed (reason follows) | Check `-url`; registration closed or full: ask the operator; unknown registration URL: `wgcli register <url>` |
 | `401 Unauthorized`, `unauthorized` | Wrong key | Fix the key; each failure counts toward the block below |
 | `429 Too Many Requests` | 10 wrong keys within 10 minutes from your IP | Every request is refused, even with the right key, until the oldest failure is 10 minutes old |
 | `409 Conflict: upload already in progress` | Another upload to the same target is running | Retry later; never upload to one target in parallel |
 | `404 Not Found` on upload commands | The server has uploads disabled, or the directory doesn't exist | — |
-| connection refused / reset | Server down or restarting | Retry; after a restart run `wgcli register` again if needed |
+| connection refused / reset | Server down or restarting | Retry later |

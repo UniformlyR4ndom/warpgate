@@ -1,6 +1,7 @@
 package main
 
 import (
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -64,5 +65,34 @@ func TestRegisterNotNeeded(t *testing.T) {
 
 	if err := runRegister([]string{"-url", ts.URL}); err != nil {
 		t.Fatalf("register without a firewall: %v", err)
+	}
+}
+
+func TestAutoRegisterResendsRequest(t *testing.T) {
+	registered := false
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/" && r.Method == http.MethodPost:
+			registered = true
+			http.Redirect(w, r, "/", http.StatusSeeOther)
+		case registered:
+			_, _ = io.Copy(w, r.Body)
+		default:
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			w.WriteHeader(http.StatusOK)
+		}
+	}))
+	defer ts.Close()
+
+	g := &globalFlags{url: ts.URL}
+	req, _ := g.newRequest(http.MethodPost, "/api/clip/new", strings.NewReader("payload"))
+	resp, err := g.httpClient().Do(req)
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if string(body) != "payload" || !g.registered {
+		t.Fatalf("got body %q, registered %v", body, g.registered)
 	}
 }

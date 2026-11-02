@@ -39,18 +39,10 @@ func runStatus(args []string) error {
 	}
 
 	settings, err := g.fetchSettings()
-	if errors.Is(err, errBlankPage) {
-		target := g.registrationURL()
-		if _, err := g.register(target); err != nil {
-			return fmt.Errorf("the server's IP firewall blocks this client and registering at %s failed: %w", target, err)
-		}
-		out.Registered = true
-		settings, err = g.fetchSettings()
-	}
 	if err != nil {
 		return fmt.Errorf("reaching the server: %w", err)
 	}
-	out.Uploads, out.UlFlat = settings.Uploads, settings.UlFlat
+	out.Uploads, out.UlFlat, out.Registered = settings.Uploads, settings.UlFlat, g.registered
 
 	k, err := g.key()
 	if err != nil {

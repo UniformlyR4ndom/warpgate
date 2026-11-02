@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 
 	"warpgate/internal/authhash"
 	"warpgate/internal/connecttoken"
@@ -38,6 +39,11 @@ type globalFlags struct {
 	keyResolved bool
 	k           []byte
 	keyErr      error
+
+	regMu      sync.Mutex
+	regTried   bool
+	regErr     error
+	registered bool // this invocation registered the client's IP
 }
 
 // globalEnv maps each global flag to the environment variable used when the
@@ -279,11 +285,21 @@ func (g *globalFlags) authToken() string {
 	return authhash.Token(k)
 }
 
-// httpClient refuses to follow redirects: Go would resend X-Auth to any host,
-// and the server never redirects API requests.
+// httpClient registers with the IP firewall when it blocks (see
+// blankPageTransport).
 func (g *globalFlags) httpClient() *http.Client {
+	return g.client(true)
+}
+
+// client refuses to follow redirects: Go would resend X-Auth to any host, and
+// the server never redirects API requests.
+func (g *globalFlags) client(autoRegister bool) *http.Client {
+	t := blankPageTransport{base: &http.Transport{TLSClientConfig: g.tlsConfig}}
+	if autoRegister {
+		t.g = g
+	}
 	return &http.Client{
-		Transport: blankPageTransport{&http.Transport{TLSClientConfig: g.tlsConfig}},
+		Transport: t,
 		CheckRedirect: func(req *http.Request, _ []*http.Request) error {
 			return fmt.Errorf("refusing to follow redirect to %s", req.URL.Redacted())
 		},

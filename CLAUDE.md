@@ -138,8 +138,9 @@ all routing, covering static files, API and WS upgrades.
   POST, which 303 them to the UI.
 - `wgcli register [url]` (default `-url`) sends that POST without running a script and treats a
   `303` as success; otherwise, if `-url` serves it anyway (no firewall, or admitted), it reports
-  `needed: false` and succeeds too. `wgcli status` registers the same way when blocked. Other wgcli
-  commands report the blank page as an explanatory error.
+  `needed: false` and succeeds too. Every other wgcli command registers by itself when it gets the
+  blank page (`blankPageTransport`, `dialWS`: once per invocation, to the token's registration URL
+  or `-url`) and resends the refused request; only if that fails does it report the blank page.
 - `-ip-reg-max`/`-ip-reg-window` 0 = unlimited; the window counts from `NewServer`; registrations
   outlive it. State is in memory, lost on restart.
 - **Client IP** (`clientIP`, also used by the check-in log): the TCP peer, IPv4-mapped addresses

@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"net/http"
+	"os"
 	"strings"
 )
 
@@ -21,16 +22,56 @@ func isBlankPage(resp *http.Response) bool {
 }
 
 // blankPageTransport turns warpgate's blank page into an error, so commands
-// don't fail later with a confusing decode error.
-type blankPageTransport struct{ base http.RoundTripper }
+// don't fail later with a confusing decode error. With g set, it first
+// registers with the IP firewall and resends the request once: the firewall
+// refuses before any handler runs, so the refused request had no effect.
+type blankPageTransport struct {
+	base http.RoundTripper
+	g    *globalFlags
+}
 
 func (t blankPageTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	resp, err := t.base.RoundTrip(req)
+	if err != nil || !isBlankPage(resp) {
+		return resp, err
+	}
+	resp.Body.Close()
+	if t.g == nil || (req.Body != nil && req.Body != http.NoBody && req.GetBody == nil) {
+		return nil, errBlankPage
+	}
+	if err := t.g.autoRegister(); err != nil {
+		return nil, err
+	}
+	retry := req.Clone(req.Context())
+	if req.GetBody != nil {
+		if retry.Body, err = req.GetBody(); err != nil {
+			return nil, err
+		}
+	}
+	resp, err = t.base.RoundTrip(retry)
 	if err == nil && isBlankPage(resp) {
 		resp.Body.Close()
 		return nil, errBlankPage
 	}
 	return resp, err
+}
+
+// autoRegister registers this client with the IP firewall, at most once per
+// invocation; it returns errBlankPage, with the reason, if that fails.
+func (g *globalFlags) autoRegister() error {
+	g.regMu.Lock()
+	defer g.regMu.Unlock()
+	if !g.regTried {
+		g.regTried = true
+		target := g.registrationURL()
+		if _, err := g.register(target); err != nil {
+			g.regErr = fmt.Errorf("%w; registering at %s failed: %v", errBlankPage, target, err)
+		} else {
+			g.registered = true
+			fmt.Fprintln(os.Stderr, "wgcli: registered this IP with the server's IP firewall")
+		}
+	}
+	return g.regErr
 }
 
 // runRegister does what the browser's registration page does: an empty form
@@ -98,7 +139,7 @@ func (g *globalFlags) register(target string) (needed bool, err error) {
 // reachesServer reports whether -url serves this client, i.e. there is no IP
 // firewall or it already admits the client.
 func (g *globalFlags) reachesServer() bool {
-	resp, err := g.httpClient().Get(strings.TrimRight(g.url, "/") + "/api/public/settings")
+	resp, err := g.client(false).Get(strings.TrimRight(g.url, "/") + "/api/public/settings")
 	if err != nil {
 		return false
 	}
