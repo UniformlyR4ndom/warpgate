@@ -46,9 +46,9 @@ binary. `cmd/wgcli` is a CLI client for the HTTP/WS API, for testing and scripte
 fall back to `WGCLI_*` env vars and may follow positional arguments; transform keys default to
 random). `wgcli guide` prints its usage guide (`cmd/wgcli/guide.md`, embedded; `guide_test.go`
 fails when a command or flag is missing from it or the guide names a flag that doesn't exist).
-`internal/transform`, `internal/authhash`, `internal/paramcrypt`, `internal/connecttoken` and
-`internal/bytesize` (sizes with `K`/`M` suffix) are shared by server and `wgcli`, so the two can't
-drift apart.
+`internal/transform`, `internal/authhash`, `internal/paramcrypt`, `internal/connecttoken`,
+`internal/bytesize` (sizes with `K`/`M` suffix) and `internal/filename` (name rules) are shared by
+server and `wgcli`, so the two can't drift apart.
 
 `doc/openapi.yaml` specifies the REST API. `doc/security.md` holds the threat model, defenses and
 accepted risks; update it when a security-relevant decision changes.
@@ -224,9 +224,10 @@ the session and is returned as `name`. A directory at the target is a `409`.
 name exists, `404` without parent. At most `ulMkdirMaxDepth` (4) levels below `-ul-root` (creation
 only; deeper existing directories are usable). Deliberately no delete, rename or symlink endpoint.
 
-**Name rules** (`validName`, `path.go`) for files and created directories: not empty, `.` or `..`; no
-`/`, `\` or control characters; ≤ 255 bytes; not the temp-dir name. On Windows `validWindowsName`
-also rejects `:*?"<>|`, trailing dots/spaces and device names (`CON`, `NUL`, `COM1`, …, with any
+**Name rules** (`validName`, `path.go`, on top of `internal/filename.Valid`, which wgcli applies
+to downloaded names) for files and created directories: not empty, `.` or `..`; no `/`, `\` or
+control characters; ≤ 255 bytes; not the temp-dir name. On Windows `filename.ValidWindows` also
+rejects `:*?"<>|`, trailing dots/spaces and device names (`CON`, `NUL`, `COM1`, …, with any
 extension). Invalid → `400` before any data is stored.
 
 **Temp-file publication**: every upload is written to `<ul-root>/.warpgate-tmp/` (`ulTmpDirName`)

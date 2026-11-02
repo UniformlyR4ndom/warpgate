@@ -50,8 +50,12 @@ func TestDownloadVerify(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "altered in transit") {
 		t.Fatalf("altered download: err = %v", err)
 	}
-	if _, err := os.Stat(out); !os.IsNotExist(err) {
-		t.Errorf("altered download left %s behind", out)
+	// The failed download must leave the earlier, intact file alone.
+	if got, err := os.ReadFile(out); err != nil || string(got) != string(content) {
+		t.Errorf("after the altered download, %s = %q, %v", out, got, err)
+	}
+	if _, err := os.Stat(out + ".wgpart"); !os.IsNotExist(err) {
+		t.Errorf("altered download left %s.wgpart behind", out)
 	}
 	if err := runDownload([]string{"-url", alteringServer(t, content, true).URL, "-o", out, "-no-verify", "f.bin"}); err != nil {
 		t.Fatalf("-no-verify: %v", err)
@@ -66,5 +70,17 @@ func TestUploadVerify(t *testing.T) {
 	err := runUpload([]string{"-url", alteringServer(t, nil, false).URL, local})
 	if err == nil || !strings.Contains(err.Error(), "verification failed") {
 		t.Fatalf("wrong server hash: err = %v", err)
+	}
+}
+
+func TestDownloadDepthLimit(t *testing.T) {
+	// Every directory contains another: what a symlink loop looks like.
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`[{"name":"d","type":"d"}]`))
+	}))
+	defer ts.Close()
+	err := runDownload([]string{"-url", ts.URL, "-r", "-o", t.TempDir(), "d"})
+	if err == nil || !strings.Contains(err.Error(), "1 of 1 files failed") {
+		t.Fatalf("err = %v", err)
 	}
 }

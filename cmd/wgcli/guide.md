@@ -91,22 +91,34 @@ JSON: `[{"name","type":"f"|"d","size","mtime"}]`; `size` (bytes) only for files,
 Lists the top level of the upload directory; the only listing on servers with a flat upload
 directory, where `list -ul` fails. Same JSON as `list`.
 
-### wgcli download -o <local-file> [flags] <remote-path>
-Downloads a file, reversing the transform; `-ul` reads from the upload directory. `-o` is
-overwritten; a failed download may leave it partial. `-chunk-size` (default 4 MiB) is the plaintext
-size per request. `-backend http|ws` picks the transport; `-frame-size` sets the WebSocket frame
-size in bytes (0 = server maximum). Transform flags: `-transform`, `-key`, `-iv`, `-password`.
-The result is compared with the server's SHA-256 of the file; on a mismatch `-o` is removed and the
-command fails. `-no-verify` skips the check. JSON: `{"path","out","bytes","sha256","seconds"}`.
+### wgcli download -o <local> [flags] <remote-path>...
+Downloads files, reversing the transform; `-ul` reads from the upload directory. One file: `-o` is
+the local file. Several paths or `-r` (directories with their contents): `-o` is a directory, and
+each path lands in it under its own name (`download -r -o ./ev logs` gives `./ev/logs/…`). Files
+are written as `<name>.wgpart` and renamed only when complete and verified (SHA-256 against the
+server's; `-no-verify` skips that), so a failed download never leaves a partial or altered file.
+With several paths or `-r`, files that are identical locally are skipped (`-force`: download
+anyway), and names this system can't store fail. `-chunk-size` (default 4 MiB) is the plaintext
+size per request; `-backend http|ws`; `-frame-size` (0 = server maximum). Transform flags:
+`-transform`, `-key`, `-iv`, `-password`.
+JSON, one file: `{"path","out","bytes","sha256","seconds"}`; several (see "Transfer summary"):
+`{"transferred":[{"path","out","bytes","sha256"}],"skipped","failed","bytes","seconds"}`.
 
-### wgcli upload [flags] <local-file>
-Uploads into the upload directory, or into the existing subdirectory `-dir`. `-remote-name` sets
-the stored name (default: the local base name). **An existing file of that name is replaced
-without warning.** `-chunk-size <bytes>` splits the upload into sequential requests (HTTP only;
-default: one request). `-backend http|ws`; `-frame-size` (0 = 1 MiB). Transform flags:
-`-transform`, `-key`, `-iv`, `-filename`. The server's SHA-256 of the stored file is compared with
-the local file's; a mismatch fails the command. JSON: `{"path","name","bytes","sha256","seconds"}`;
-`name` is the stored path.
+### wgcli upload [flags] <local>...
+Uploads into the upload directory, or into its existing subdirectory `-dir`; each path lands there
+under its own name (`-remote-name` renames a single file). `-r` uploads directories with their
+contents, creating subdirectories (at most 4 levels below the upload root; checked before anything
+is sent); links to directories and special files are skipped. **An existing file of the same name
+is replaced without warning**, except that with several paths or `-r` identical files are skipped
+(`-force`: upload anyway). The server's SHA-256 of each stored file is compared with the local
+one. `-chunk-size` splits each file into sequential requests (HTTP only; default: one request);
+`-backend http|ws`; `-frame-size` (0 = 1 MiB). Transform flags: `-transform`, `-key`, `-iv`,
+`-filename`. JSON, one file: `{"path","name","bytes","sha256","seconds"}` (`name`: stored path);
+several: as for `download`, entries `{"path","name","bytes","sha256"}`.
+
+**Transfer summary** (several paths or `-r`): text output reports each file as it happens, then a
+line with the totals. Transfers continue past failures; the exit status is 1 if any file failed.
+`skipped` entries are `{"path","reason"}`, `failed` entries `{"path","error"}`.
 
 ### wgcli mkdir <dir>
 Creates one directory in the upload directory; its parent must exist, at most 4 levels deep.

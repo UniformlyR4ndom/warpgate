@@ -19,7 +19,15 @@ func runMkdir(args []string) error {
 		return fmt.Errorf("usage: wgcli mkdir [flags] <remote-dir>")
 	}
 	dir := fs.Arg(0)
+	if err := mkdirRemote(g, dir); err != nil {
+		return err
+	}
+	g.report(map[string]any{"path": dir}, "created %s", dir)
+	return nil
+}
 
+// mkdirRemote creates one directory in the upload directory.
+func mkdirRemote(g *globalFlags, dir string) error {
 	body, err := g.encodeBody(map[string]string{"path": dir})
 	if err != nil {
 		return err
@@ -39,6 +47,5 @@ func runMkdir(args []string) error {
 	if resp.StatusCode != http.StatusCreated {
 		return fmt.Errorf("%s: %s", resp.Status, strings.TrimSpace(string(respBody)))
 	}
-	g.report(map[string]any{"path": dir}, "created %s", dir)
 	return nil
 }
