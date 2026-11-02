@@ -1,11 +1,15 @@
-// wgcli is a command-line client for the warpgate API, mainly intended for
-// exercising/testing a running server without a browser.
+// wgcli is a command-line client for the warpgate API, for scripts, agents
+// and testing a running server without a browser.
 package main
 
 import (
+	_ "embed"
 	"fmt"
 	"os"
 )
+
+//go:embed guide.md
+var guide string
 
 func main() {
 	if len(os.Args) < 2 {
@@ -36,6 +40,9 @@ func main() {
 		err = runRegister(args)
 	case "derive-key":
 		err = runDeriveKey(args)
+	case "guide":
+		fmt.Print(guide)
+		return
 	case "-h", "--help", "help":
 		usage()
 		return
@@ -52,7 +59,10 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprint(os.Stderr, `wgcli - command-line client for the warpgate API
+	fmt.Fprint(os.Stderr, usageText)
+}
+
+const usageText = `wgcli - command-line client for the warpgate API
 
 Usage:
   wgcli <command> [flags] [args...]
@@ -62,7 +72,7 @@ parsing (for an argument starting with "-").
 
 Global flags fall back to environment variables when not given:
   WGCLI_URL, WGCLI_AUTH_KEY, WGCLI_AUTH_K, WGCLI_INSECURE, WGCLI_PARAM_CRYPT,
-  WGCLI_CERT, WGCLI_CERT_KEY
+  WGCLI_CERT, WGCLI_CERT_KEY, WGCLI_JSON
 Transform keys/IVs left empty are generated randomly per invocation.
 
 Commands:
@@ -76,7 +86,7 @@ Commands:
   sim       download|upload [flags]             probe transport via a synthetic file/buffer (no filesystem I/O, no transform)
   register  [flags] [registration-url]          register this client's IP with the IP firewall (default URL: -url)
   derive-key [flags]                            print the key derived from -auth-key (for -auth-k / WGCLI_AUTH_K)
+  guide                                         full usage guide for scripts and agents (Markdown, stdout)
 
 Run "wgcli <command> -h" for command-specific flags.
-`)
-}
+`

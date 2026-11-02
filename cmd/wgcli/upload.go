@@ -119,8 +119,8 @@ func uploadHTTP(g *globalFlags, localPath, dir, name string, transformName strin
 // uploadHTTPChunked splits localPath into chunkSize-byte plaintext pieces,
 // each transformed independently (transformer.Transform is stateless per
 // call — see CLAUDE.md's "Transform System"), and sends them one at a time
-// via the continuation-key protocol described in CLAUDE.md's "/api/files/
-// upload multipart form" section. HTTP only — there is no WS equivalent of
+// via the continuation-key protocol described in CLAUDE.md's "Uploads"
+// section. HTTP only — there is no WS equivalent of
 // chunked upload.
 func uploadHTTPChunked(g *globalFlags, localPath, dir, name, transformName string, transformArgs json.RawMessage, transformer transform.Transformer, chunkSize int64) error {
 	info, err := os.Stat(localPath)

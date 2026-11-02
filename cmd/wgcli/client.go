@@ -50,10 +50,10 @@ var globalEnv = map[string]string{
 func addGlobalFlags(fs *flag.FlagSet) *globalFlags {
 	g := &globalFlags{}
 	fs.StringVar(&g.url, "url", "http://localhost:8080", "warpgate server base URL (env WGCLI_URL)")
-	fs.StringVar(&g.authKey, "auth-key", "", "auth passphrase; the key is derived with the server's salt, taking about a second (env WGCLI_AUTH_KEY)")
+	fs.StringVar(&g.authKey, "auth-key", "", "auth passphrase; the key is derived with the server's salt, taking about a quarter second (env WGCLI_AUTH_KEY)")
 	fs.StringVar(&g.authK, "auth-k", "", "derived key as printed by \"wgcli derive-key\"; overrides -auth-key (env WGCLI_AUTH_K)")
 	fs.BoolVar(&g.insecure, "insecure", false, "skip TLS certificate verification (self-signed test certs) (env WGCLI_INSECURE)")
-	fs.BoolVar(&g.paramCrypt, "param-crypt", false, "encrypt request control-parameter JSON (and decrypt matching responses) using a key derived from -auth-key; see CLAUDE.md's Parameter Encryption section (env WGCLI_PARAM_CRYPT)")
+	fs.BoolVar(&g.paramCrypt, "param-crypt", false, "encrypt request parameters (paths, names, transform keys; not file data) and decrypt the matching responses, with keys derived from the auth key (env WGCLI_PARAM_CRYPT)")
 	fs.StringVar(&g.certFile, "cert", "", "PEM client certificate (chain) for servers requiring TLS client auth; needs -cert-key (env WGCLI_CERT)")
 	fs.StringVar(&g.certKey, "cert-key", "", "PEM private key for -cert (env WGCLI_CERT_KEY)")
 	fs.BoolVar(&g.json, "json", false, "print the result as one JSON document on stdout (env WGCLI_JSON)")
