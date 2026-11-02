@@ -9,6 +9,15 @@ wgcli applies or reverses. The server also keeps a clipboard of text notes with 
 
 ## Setup
 
+The operator gives you two things, separately: a **connect token** and the **passphrase**. The token
+(`wg1` followed by letters and digits, printed by the server at startup) describes the server
+except for the key: its address and path prefix, its IP registration URL, a pin of its TLS
+certificate, whether it requires a client certificate, and a fingerprint of the key. With a token,
+wgcli needs no other connection settings, trusts only that server's certificate, and rejects a
+wrong passphrase before contacting the server. The token is optional: without one, the operator
+gives you the URL (and a registration URL, if any) instead. Keep the token as secret as the
+passphrase. `wgcli connect-info` shows what a token contains.
+
 Global flags, accepted by every command; each falls back to its environment variable:
 
 | Flag | Variable | Meaning |
@@ -23,8 +32,7 @@ Global flags, accepted by every command; each falls back to its environment vari
 | `-insecure` | `WGCLI_INSECURE` | Skip TLS certificate verification |
 | `-cert`, `-cert-key` | `WGCLI_CERT`, `WGCLI_CERT_KEY` | PEM client certificate and key, for servers requiring one |
 
-Booleans in variables: `1`/`true`/`0`/`false`. A flag beats its variable. Recommended (the token and
-passphrase come from the operator, separately; `wgcli connect-info` shows what a token contains):
+Booleans in variables: `1`/`true`/`0`/`false`. A flag beats its variable. Recommended:
 
 ```
 export WGCLI_CONNECT=wg1…
