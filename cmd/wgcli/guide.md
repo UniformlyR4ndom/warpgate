@@ -35,16 +35,17 @@ Global flags, accepted by every command; each falls back to its environment vari
 Booleans in variables: `1`/`true`/`0`/`false`. A flag beats its variable. Recommended:
 
 ```
-export WGCLI_CONNECT=wg1…
-export WGCLI_AUTH_K=$(WGCLI_AUTH_KEY='passphrase' wgcli derive-key)
+export WGCLI_CONNECT=wg1… WGCLI_AUTH_KEY='passphrase'
+wgcli status        # registers with the IP firewall if needed, checks the key
+export WGCLI_AUTH_K=$(wgcli derive-key); unset WGCLI_AUTH_KEY
 export WGCLI_JSON=1 WGCLI_PARAM_CRYPT=1
 ```
 
 Without a token, set `WGCLI_URL` instead, plus `WGCLI_INSECURE=1` for a self-signed certificate.
 
 IP firewall: optional on the server. When it's on, every request, `derive-key` included, fails with
-`server returned its blank page` until this machine's IP is registered: run `wgcli register` first,
-and again after a server restart. Running it when not needed is harmless.
+`server returned its blank page` until this machine's IP is registered: `wgcli status` registers it,
+as does `wgcli register`. Needed again after a server restart; harmless when not needed.
 
 ## Transforms
 
@@ -65,6 +66,13 @@ protection: its keys travel with the request unless `-param-crypt` is on.
 
 Paths are relative to the root the command works on and use `/`. Text output is meant for people;
 use `-json` when parsing. JSON fields that are empty and optional are left out.
+
+### wgcli status
+Checks the connection and stops at the first problem, with a message saying what to fix: reaches
+the server (registering with its IP firewall if that blocks), reads what it offers, and makes one
+authenticated request. Run it first, and whenever commands fail unexpectedly.
+JSON: `{"url","tls","pinned","registered","uploads","ulFlat","auth":"ok"|"disabled","keyId"}`;
+`registered` is true when this run registered the IP.
 
 ### wgcli list [-ul] [dir]
 Lists a directory of the download root (`-ul`: of the upload directory).

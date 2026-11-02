@@ -13,6 +13,8 @@ import (
 const blankPageHint = "server returned its blank page: -url has the wrong path prefix, or the IP firewall " +
 	"doesn't admit this client (see \"wgcli register\")"
 
+var errBlankPage = errors.New(blankPageHint)
+
 func isBlankPage(resp *http.Response) bool {
 	return resp.StatusCode == http.StatusOK && resp.ContentLength == 0 &&
 		resp.Header.Get("Content-Type") == "text/html; charset=utf-8"
@@ -26,7 +28,7 @@ func (t blankPageTransport) RoundTrip(req *http.Request) (*http.Response, error)
 	resp, err := t.base.RoundTrip(req)
 	if err == nil && isBlankPage(resp) {
 		resp.Body.Close()
-		return nil, errors.New(blankPageHint)
+		return nil, errBlankPage
 	}
 	return resp, err
 }
@@ -39,15 +41,37 @@ func runRegister(args []string) error {
 	if err := parseFlags(fs, g, args); err != nil {
 		return err
 	}
-	target := g.url
+	target := g.registrationURL()
 	if fs.NArg() > 0 {
 		target = fs.Arg(0)
-	} else if g.token != nil && g.token.RegPath != "" {
-		target = g.token.RegistrationURL(g.url)
 	}
-	req, err := http.NewRequest(http.MethodPost, target, strings.NewReader(""))
+	needed, err := g.register(target)
 	if err != nil {
 		return err
+	}
+	if needed {
+		g.report(map[string]any{"url": target, "needed": true}, "registered (or already admitted) at %s", target)
+	} else {
+		g.report(map[string]any{"url": target, "needed": false},
+			"no registration needed: this client already reaches the server at %s", g.url)
+	}
+	return nil
+}
+
+// registrationURL is the token's registration URL, else -url.
+func (g *globalFlags) registrationURL() string {
+	if g.token != nil && g.token.RegPath != "" {
+		return g.token.RegistrationURL(g.url)
+	}
+	return g.url
+}
+
+// register POSTs to target; needed is false when the client reaches the
+// server without registering.
+func (g *globalFlags) register(target string) (needed bool, err error) {
+	req, err := http.NewRequest(http.MethodPost, target, strings.NewReader(""))
+	if err != nil {
+		return false, err
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	client := &http.Client{
@@ -56,22 +80,19 @@ func runRegister(args []string) error {
 	}
 	resp, err := client.Do(req)
 	if err != nil {
-		return err
+		return false, err
 	}
 	resp.Body.Close()
 	if resp.StatusCode == http.StatusSeeOther {
-		g.report(map[string]any{"url": target, "needed": true}, "registered (or already admitted) at %s", target)
-		return nil
+		return true, nil
 	}
 	if g.reachesServer() {
-		g.report(map[string]any{"url": target, "needed": false},
-			"no registration needed: this client already reaches the server at %s", g.url)
-		return nil
+		return false, nil
 	}
 	if isBlankPage(resp) {
-		return fmt.Errorf("not registered: wrong registration URL, or registration is closed (window expired or limit reached)")
+		return false, fmt.Errorf("not registered: wrong registration URL, or registration is closed (window expired or limit reached)")
 	}
-	return fmt.Errorf("not registered: unexpected response %s", resp.Status)
+	return false, fmt.Errorf("not registered: unexpected response %s", resp.Status)
 }
 
 // reachesServer reports whether -url serves this client, i.e. there is no IP

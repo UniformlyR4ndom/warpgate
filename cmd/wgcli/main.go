@@ -22,6 +22,8 @@ func main() {
 
 	var err error
 	switch cmd {
+	case "status":
+		err = runStatus(args)
 	case "list":
 		err = runList(args)
 	case "ul-list":
@@ -78,6 +80,7 @@ Global flags fall back to environment variables when not given:
 Transform keys/IVs left empty are generated randomly per invocation.
 
 Commands:
+  status    [flags]                            check the connection: reachable (registers if blocked), uploads, key
   list      [flags] [remote-dir]              list files/directories (-ul: in the upload directory)
   ul-list   [flags]                            list the top level of the upload directory (works with -ul-flat)
   download  [flags] <remote-path>              download, reversing the transform (-ul: from the upload directory)
