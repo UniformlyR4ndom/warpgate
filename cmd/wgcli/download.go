@@ -10,6 +10,8 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -304,8 +306,12 @@ func runDownload(args []string) error {
 	if fs.NArg() > 1 || *recursive {
 		return downloadMany(g, o, fs.Args(), *out, *recursive, *force)
 	}
+	dst := *out
+	if fi, err := os.Stat(dst); err == nil && fi.IsDir() {
+		dst = filepath.Join(dst, path.Base(path.Clean("/"+fs.Arg(0))))
+	}
 	start := time.Now()
-	r, err := downloadFile(g, o, fs.Arg(0), *out, nil)
+	r, err := downloadFile(g, o, fs.Arg(0), dst, nil)
 	if err != nil {
 		return err
 	}

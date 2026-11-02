@@ -7,6 +7,21 @@ wgcli applies or reverses. The server also keeps a clipboard of text notes with 
 `wgcli <command> [flags] [args]`. Flags may follow arguments; `--` ends flags (for text starting with
 `-`). `clip` and `sim` take their subcommand next: `wgcli clip new …`, not `wgcli clip -json new`.
 
+## Typical workflow
+
+```
+. ./wg.env && wgcli status                    # settings from a file, see Setup
+wgcli list evidence                           # look around
+wgcli download -r -o ./loot evidence          # fetch, verified
+wgcli upload -r ./results                     # send, verified
+wgcli clip new "please paste …"               # ask the operator; note "since" and "ts"
+wgcli clip wait -since <since>                # wait for the reply note (in the background)
+wgcli clip get -raw <id> > reply.txt          # its text
+wgcli wait-file -ul -since <ts>               # or wait for an uploaded file, then download -ul it
+```
+
+Details: "Asking the operator for something" below the clipboard commands.
+
 ## Setup
 
 The operator gives you two things, separately: a **connect token** and the **passphrase**. The token
@@ -32,18 +47,18 @@ Global flags, accepted by every command; each falls back to its environment vari
 | `-insecure` | `WGCLI_INSECURE` | Skip TLS certificate verification |
 | `-cert`, `-cert-key` | `WGCLI_CERT`, `WGCLI_CERT_KEY` | PEM client certificate and key, for servers requiring one |
 
-Booleans in variables: `1`/`true`/`0`/`false`. A flag beats its variable. Recommended:
+Booleans in variables: `1`/`true`/`0`/`false`. A flag beats its variable. Keep the settings in a
+file and source it before each command (shell state often doesn't persist between commands):
 
 ```
-export WGCLI_CONNECT=wg1… WGCLI_AUTH_KEY='passphrase'
-wgcli status        # registers with the IP firewall if needed, checks the key
-export WGCLI_AUTH_K=$(wgcli derive-key); unset WGCLI_AUTH_KEY
-export WGCLI_JSON=1 WGCLI_PARAM_CRYPT=1
+printf "export WGCLI_CONNECT=%s WGCLI_AUTH_KEY=%s\n" 'wg1…' "'passphrase'" > wg.env
+. ./wg.env && wgcli status    # registers with the IP firewall if needed, checks the key
+# replace the passphrase with the derived key (saves the derivation on every call):
+. ./wg.env && printf "export WGCLI_CONNECT=%s WGCLI_AUTH_K=%s WGCLI_JSON=1 WGCLI_PARAM_CRYPT=1\n" \
+    "$WGCLI_CONNECT" "$(wgcli derive-key)" > wg.env
 ```
 
 Without a token, set `WGCLI_URL` instead, plus `WGCLI_INSECURE=1` for a self-signed certificate.
-If your shell state doesn't persist between commands, put the `export` lines in a file and source
-it before each command.
 
 Sizes (`-chunk-size`, `-frame-size`, `-total-size`) are bytes, or KiB/MiB with a `K`/`M` suffix.
 
@@ -95,7 +110,7 @@ directory, where `list -ul` fails. Same JSON as `list`.
 
 ### wgcli download -o <local> [flags] <remote-path>...
 Downloads files, reversing the transform; `-ul` reads from the upload directory. One file: `-o` is
-the local file. Several paths or `-r` (directories with their contents): `-o` is a directory, and
+the local file, or an existing directory to put it in under its own name. Several paths or `-r` (directories with their contents): `-o` is a directory, and
 each path lands in it under its own name (`download -r -o ./ev logs` gives `./ev/logs/…`). Files
 are written as `<name>.wgpart` and renamed only when complete and verified (SHA-256 against the
 server's; `-no-verify` skips that), so a failed download never leaves a partial or altered file.
@@ -138,8 +153,9 @@ pass the previous `rev` as `-since`. Deletions aren't listed: `ids` (all live no
 when something was deleted since `rev`. `reset: true` means `-since` was ahead of the server (new
 database): all notes are returned.
 
-### wgcli clip get [-brief] <id>...
-The given notes in the given order; same JSON as `clip list`. An unknown id is an error.
+### wgcli clip get [-brief|-raw] <id>...
+The given notes in the given order; same JSON as `clip list`. An unknown id is an error. `-raw`
+prints only the text of one note, unchanged, e.g. to save a reply: `clip get -raw 7 > reply.txt`.
 
 ### wgcli clip new [flags] [text]
 Creates a note. Text from the argument or `-f <file>` (`-f /dev/stdin` for a pipe); `-title`

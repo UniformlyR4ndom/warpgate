@@ -313,11 +313,15 @@ func runClipGet(args []string) error {
 	fs := flag.NewFlagSet("clip get", flag.ContinueOnError)
 	g := addGlobalFlags(fs)
 	brief := fs.Bool("brief", false, "one line per note, without the text")
+	raw := fs.Bool("raw", false, "print only the note's text, unchanged (one id; ignores -json)")
 	if err := parseFlags(fs, g, args); err != nil {
 		return err
 	}
 	if fs.NArg() < 1 {
 		return fmt.Errorf("usage: wgcli clip get [flags] <id> [<id>...]")
+	}
+	if *raw && fs.NArg() != 1 {
+		return fmt.Errorf("-raw takes exactly one note id")
 	}
 	state, err := fetchClipState(g, 0)
 	if err != nil {
@@ -338,6 +342,14 @@ func runClipGet(args []string) error {
 			return fmt.Errorf("note %d not found", id)
 		}
 		notes = append(notes, n)
+	}
+	if *raw {
+		data, err := base64.StdEncoding.DecodeString(notes[0].Data)
+		if err != nil {
+			return fmt.Errorf("decoding note %d: %w", notes[0].ID, err)
+		}
+		_, err = os.Stdout.Write(data)
+		return err
 	}
 	state.Ids = nil
 	return printClipNotes(g, state, notes, *brief)
