@@ -65,7 +65,7 @@ async function fetchChunkHTTP(prefix, path, start, size, onProgress) {
     method:  'POST',
     headers: jsonHeaders(),
     body:    encodeBody(body),
-  });
+  }, true);
   assertOk(res);
   var buffer = await readBodyWithProgress(res, onProgress);
   return decrypt(buffer, s.password, s.htmlB64Key);

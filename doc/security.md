@@ -64,6 +64,10 @@ Confidentiality is provided only by TLS, and only as far as no proxy intercepts 
 - IP firewall (`-ip-allow`, registration URL): unadmitted clients get the same blank page. Behind
   `-trusted-proxies`, a request whose client cannot be determined is blocked (fail closed).
 - A registration URL is an admission secret, not an identity: anyone who learns it can claim a slot.
+- In base-path registration mode, an open UI tab whose API requests are refused re-registers its
+  IP by itself (once per refused request) while registration is open, e.g. after a server restart.
+  So any tab still open on another machine can claim a slot then; accepted, as the operator
+  controls the few tabs that exist.
 
 **Filesystem**
 - All file access goes through `os.Root` handles; symlinks leaving a root are refused and left

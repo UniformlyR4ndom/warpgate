@@ -157,7 +157,7 @@ export async function ensureAttachment(att) {
         transform: settings.transform.type,
         args:      buildTransformArgs(s.password, s.htmlB64Key),
       }),
-    });
+    }, true);
     if (!res.ok) throw new Error('HTTP ' + res.status);
     var bytes = await decrypt(await res.arrayBuffer(), s.password, s.htmlB64Key);
     state.clipImages[att.id] = URL.createObjectURL(new Blob([bytes], { type: att.mime }));

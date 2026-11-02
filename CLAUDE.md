@@ -124,7 +124,10 @@ all routing, covering static files, API and WS upgrades.
 - **Registration URL**: `-ip-reg-path <segment>`, or the base path (`<prefix>`/`<prefix>/`) when only
   `-ip-reg-max`/`-ip-reg-window` are set — then `-path-prefix` is required, since a bare `/` would
   let internet noise claim the slots. In base-path mode the UI URL is the registration URL, so
-  reloading the UI after a restart re-registers.
+  reloading the UI after a restart re-registers. An open tab does so itself: `apiFetch` (`lib/api.js`)
+  recognizes the blank response (empty `200 text/html; charset=utf-8`; not for the raw-byte download
+  calls, where it can be genuine) and POSTs to the base path (`reRegister`, `303` = admitted). The
+  refused request still fails; the next one (e.g. the next auto-refresh poll) succeeds.
 - While registration is open (window not expired, `len(registered) < regMax`), GET returns
   `regPageHTML`, which auto-submits an empty form POST; only the POST registers, then 303s to
   `<prefix>/`. So link scanners that only GET can't consume slots. The page's inline script is
