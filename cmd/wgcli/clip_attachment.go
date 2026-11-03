@@ -13,8 +13,13 @@ import (
 	"strconv"
 	"strings"
 
+	"warpgate/internal/bytesize"
 	"warpgate/internal/transform"
 )
+
+// clipAttachmentMaxBytes mirrors the server's per-image limit, for the
+// warning only; the server enforces it.
+const clipAttachmentMaxBytes = 20 << 20
 
 // mimeForExt is a tiny image-extension → MIME map; wgcli's attachment command
 // is a test tool, so it covers the common cases rather than sniffing content.
@@ -35,11 +40,29 @@ func mimeForExt(name string) string {
 	}
 }
 
+// warnAttachmentSize notes, on stderr, that an image is sent as a single
+// request (unlike chunked file uploads): when it is over the server's limit,
+// or over a configured WGCLI_CHUNK_SIZE that wouldn't apply here.
+func warnAttachmentSize(path string, size int) {
+	if size > clipAttachmentMaxBytes {
+		fmt.Fprintf(os.Stderr, "wgcli: %s (%d bytes) exceeds the %d-byte server limit for image attachments\n", path, size, clipAttachmentMaxBytes)
+		return
+	}
+	v, ok := os.LookupEnv(transferEnv["chunk-size"])
+	if !ok {
+		return
+	}
+	if chunk, err := bytesize.Parse(v); err == nil && chunk > 0 && int64(size) > chunk {
+		fmt.Fprintf(os.Stderr, "wgcli: %s (%d bytes) is sent in one request; image attachments aren't chunked (server limit %d MiB)\n", path, size, clipAttachmentMaxBytes>>20)
+	}
+}
+
 func postClipAttachment(g *globalFlags, noteID int64, localPath, caption, transformName string, args json.RawMessage, t transform.Transformer) (clipAttachmentMeta, error) {
 	raw, err := os.ReadFile(localPath)
 	if err != nil {
 		return clipAttachmentMeta{}, err
 	}
+	warnAttachmentSize(localPath, len(raw))
 	encoded, err := t.Transform(bytes.NewReader(raw))
 	if err != nil {
 		return clipAttachmentMeta{}, fmt.Errorf("encoding attachment: %w", err)

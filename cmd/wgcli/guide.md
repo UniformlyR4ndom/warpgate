@@ -168,6 +168,8 @@ Creates a note. Text from the argument or `-f <file>` (`-f /dev/stdin` for a pip
 optional. `-attach <image>` (repeatable; png, jpg, gif, webp, bmp, by extension) adds images, each
 optionally followed by `-caption <text>`; with images the text is optional. `-transform`, `-key`,
 `-iv` disguise the image bytes. If an image fails, the note exists and the error names its id.
+Each image is sent in one request (≤ 20 MiB); attachments are never chunked, so a small
+`WGCLI_CHUNK_SIZE` doesn't apply to them (wgcli warns when an image is larger).
 JSON: `{"id","ts","since","attachments"}`: pass `since` to `clip wait -since` and `ts` to
 `wait-file -since` to catch the reply to this note however quickly it comes (see below). `since`
 is the clipboard's revision before this note (it counts every change; 0 on an empty clipboard),
@@ -191,8 +193,8 @@ it); without `-title` the title stays. JSON: `{"id"}`.
 Deletes a note and its images. JSON: `{"id"}`.
 
 ### wgcli clip attach [flags] <note-id> <image>
-Adds an image to a note; `-caption`, and `-transform`/`-key`/`-iv` as for `clip new`.
-JSON: `{"id","mime","size","caption"}`.
+Adds an image to a note; `-caption`, and `-transform`/`-key`/`-iv` as for `clip new`. Sent in one
+request (≤ 20 MiB; not chunked). JSON: `{"id","mime","size","caption"}`.
 
 ### wgcli clip get-attachment -o <file> [flags] <attachment-id>
 Saves an image; `-transform`/`-key`/`-iv` choose the disguise on the way down.
