@@ -1,8 +1,7 @@
 # wgcli guide
 
-wgcli is the client for a warpgate server: a file server for getting files through content-inspecting
-web proxies. Transfers can be disguised by a *transform* (encrypted bytes, a PDF, an HTML page) that
-wgcli applies or reverses. The server also keeps a clipboard of text notes with images.
+wgcli is the client for a warpgate server: a file server with additional capabilities like a clipboard
+for sharing notes.
 
 `wgcli [global flags] <command> [flags] [args]`. Flags may follow arguments; `--` ends flags (for text
 starting with `-`). Only global flags may precede the command. `clip` and `sim` take their subcommand
