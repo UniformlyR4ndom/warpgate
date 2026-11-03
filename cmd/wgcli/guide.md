@@ -28,8 +28,11 @@ The operator gives you two things, separately: a **connect token** and the **pas
 (`wg1` followed by letters and digits, printed by the server at startup) describes the server
 except for the key: its address and path prefix, its IP registration URL, a pin of its TLS
 certificate, whether it requires a client certificate, and a fingerprint of the key. With a token,
-wgcli needs no other connection settings, trusts only that server's certificate, and rejects a
-wrong passphrase before contacting the server. The token is optional: without one, the operator
+wgcli needs no other connection settings, trusts only that server's certificate, and checks the key
+against the token's fingerprint before sending any authenticated request, so a wrong passphrase
+never counts toward the server's failure limit. (Turning a passphrase into K still fetches a salt
+from the server; a key passed with `-auth-k` is checked with no server contact at all.) The token
+is optional: without one, the operator
 gives you the URL (and a registration URL, if any) instead. Keep the token as secret as the
 passphrase. `wgcli connect-info` shows what a token contains.
 
@@ -37,7 +40,7 @@ Global flags, accepted by every command; each falls back to its environment vari
 
 | Flag | Variable | Meaning |
 |------|----------|---------|
-| `-connect` | `WGCLI_CONNECT` | Connect token (`wg1…`, from the server's startup log): sets the URL and registration URL, pins the server certificate, checks the key before use |
+| `-connect` | `WGCLI_CONNECT` | Connect token (`wg1…`, from the server's startup log): sets the URL and registration URL, pins the server certificate, checks the key against its fingerprint |
 | `-host` | `WGCLI_HOST` | Host or `host:port` replacing the token's; required when the token has none |
 | `-url` | `WGCLI_URL` | Without a token: base URL including the server's path prefix, e.g. `https://host:8443/pfx`; default `http://localhost:8080`. Excludes `-connect` |
 | `-auth-key` | `WGCLI_AUTH_KEY` | Passphrase; the key K is derived from it on every run (~0.25 s) |
