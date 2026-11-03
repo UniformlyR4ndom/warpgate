@@ -2,10 +2,12 @@ package main
 
 import (
 	"bytes"
+	"cmp"
 	"flag"
 	"fmt"
 	"io"
 	"net/http"
+	"path"
 	"strings"
 )
 
@@ -97,6 +99,7 @@ func runList(args []string) error {
 	g := addGlobalFlags(fs)
 	ul := fs.Bool("ul", false, "list the upload directory instead of the download root")
 	hash := fs.Bool("hash", false, "add each file's SHA-256, computed by the server")
+	recursive := fs.Bool("r", false, "list the whole tree below the directory, one entry per line with its path from the root")
 	if err := parseFlags(fs, g, args); err != nil {
 		return err
 	}
@@ -106,11 +109,61 @@ func runList(args []string) error {
 		dirPath = fs.Arg(0)
 	}
 
-	entries, err := fetchListing(g, apiPrefix(*ul), dirPath, *hash)
+	var entries []listEntry
+	var err error
+	if *recursive {
+		entries, err = listTree(g, apiPrefix(*ul), dirPath, *hash)
+	} else {
+		entries, err = fetchListing(g, apiPrefix(*ul), dirPath, *hash)
+	}
 	if err != nil {
 		return err
 	}
 
 	printEntries(g, entries)
 	return nil
+}
+
+// listTree lists everything below p (a directory, or one file), each entry
+// named by its path from the root.
+func listTree(g *globalFlags, prefix, p string, hash bool) ([]listEntry, error) {
+	p = path.Clean("/" + p)[1:]
+	if p != "" {
+		e, err := lookupRemote(g, prefix, p)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", p, err)
+		}
+		if e.Type != "d" {
+			entries, err := fetchListing(g, prefix, p, hash)
+			for i := range entries {
+				entries[i].Name = p
+			}
+			return entries, err
+		}
+	}
+	out := []listEntry{}
+	var walk func(dir string, depth int) error
+	walk = func(dir string, depth int) error {
+		if depth > maxRemoteDepth {
+			return fmt.Errorf("%s: more than %d directory levels (a symlink loop on the server?)", dir, maxRemoteDepth)
+		}
+		entries, err := fetchListing(g, prefix, dir, hash)
+		if err != nil {
+			return fmt.Errorf("%s: %w", cmp.Or(dir, "/"), err)
+		}
+		for _, e := range entries {
+			e.Name = path.Join(dir, e.Name)
+			out = append(out, e)
+			if e.Type == "d" {
+				if err := walk(e.Name, depth+1); err != nil {
+					return err
+				}
+			}
+		}
+		return nil
+	}
+	if err := walk(p, 0); err != nil {
+		return nil, err
+	}
+	return out, nil
 }

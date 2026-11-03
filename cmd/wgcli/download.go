@@ -308,8 +308,13 @@ func runDownload(args []string) error {
 		return downloadMany(g, o, fs.Args(), *out, *recursive, *force, *parents)
 	}
 	dst := *out
-	if fi, err := g.local.Stat(dst); err == nil && fi.IsDir() {
+	if fi, err := g.local.Stat(dst); (err == nil && fi.IsDir()) || strings.HasSuffix(dst, "/") {
 		dst = filepath.Join(dst, path.Base(path.Clean("/"+fs.Arg(0))))
+	}
+	if d := filepath.Dir(dst); d != "." {
+		if err := g.local.MkdirAll(d, 0o755); err != nil {
+			return err
+		}
 	}
 	start := time.Now()
 	r, err := downloadFile(g, o, fs.Arg(0), dst, nil)

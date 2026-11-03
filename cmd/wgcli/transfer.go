@@ -42,14 +42,10 @@ type fileResult struct {
 
 // hashNote describes r's hash for text output.
 func hashNote(r fileResult) string {
-	short := r.SHA256
-	if len(short) > 16 {
-		short = short[:16] + "…"
-	}
 	if r.Verified {
-		return "SHA-256 " + short + " verified"
+		return "SHA-256 " + r.SHA256 + " verified"
 	}
-	return "SHA-256 " + short + " (not verified)"
+	return "SHA-256 " + r.SHA256 + " (not verified)"
 }
 
 type xferNote struct {

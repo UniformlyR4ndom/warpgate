@@ -54,15 +54,17 @@ Global flags, accepted by every command; each falls back to its environment vari
 | `-root` | `WGCLI_ROOT` | Local working directory, which must exist: every local path a command takes (uploads, `-f`, `-attach`, downloads, `-o`) stays within it. Relative paths are relative to it, not to the current directory; an absolute path under it works too; a path leading outside it fails. Excludes `-no-root` |
 | `-no-root` | `WGCLI_NO_ROOT` | Read and write files anywhere, opting out of the `-root` requirement; relative paths are relative to the current directory |
 
-A working directory is **required** for local file access: reading or writing a local file (the
-local paths of `download` and `upload`, `-f` and `-attach` of the `clip` commands, `-o` of
-`clip get-attachment`) fails unless `-root` is set, or `-no-root` is given to run unconfined on
-purpose. Everything else, including text given as an argument, works either way. `-cert`/`-cert-key`
-are read wherever they are. Set `-root`
-to the one directory an agent works in (e.g. a project folder), and a stray absolute or `../`
-path can't read or clobber files elsewhere by accident. It is a guard against mistakes, not a sandbox
-for a hostile client. Booleans in variables: `1`/`true`/`0`/`false`. A flag beats its variable. Keep the settings in a
-file and source it before each command (shell state often doesn't persist between commands):
+- **A working directory is required for local files.** Reading or writing one (the local paths of
+  `download` and `upload`, `-f`/`-attach` of the `clip` commands, `-o` of `clip get-attachment`)
+  fails unless `-root` is set, or `-no-root` is given to run unconfined on purpose. Everything else,
+  including text given as an argument, works either way.
+- Set `-root` to the one directory you work in (e.g. a project folder): then a stray absolute or
+  `../` path can't read or clobber files elsewhere by accident. It guards against mistakes; it is no
+  sandbox. `-cert`/`-cert-key` are read wherever they are.
+- Booleans in variables: `1`/`true`/`0`/`false`. A flag beats its variable.
+
+Keep the settings in a file and source it before each command (shell state often doesn't persist
+between commands):
 
 ```
 # run in the directory you work in; WGCLI_ROOT confines local files to it
@@ -119,9 +121,11 @@ JSON: `{"url","tls","pinned","registered","uploads","ulFlat","auth":"ok"|"disabl
 "transfer":{"transform","backend","frameSize","chunkSize","paramCrypt"}}`; `registered` is true when
 this run registered the IP; a size of 0 means the command's own default.
 
-### wgcli list [-ul] [-hash] [path]
-Lists a directory of the download root (`-ul`: of the upload directory), or one file. `-hash` adds
-each file's SHA-256 as the server computes it, without downloading (reads every file listed).
+### wgcli list [-ul] [-r] [-hash] [path]
+Lists a directory of the download root (`-ul`: of the upload directory), or one file. `-r` lists
+the whole tree below it, each entry named by its path from the root (`logs/web/access.log`, ready
+for `download`). `-hash` adds each file's SHA-256 as the server computes it, without downloading
+(reads every file listed).
 JSON: `[{"name","type":"f"|"d","size","mtime","sha256"}]`; `size` (bytes) only for files, `mtime` in
 Unix seconds, `sha256` only with `-hash`.
 
@@ -130,8 +134,9 @@ Lists the top level of the upload directory; the only listing on servers with a 
 directory, where `list -ul` fails. Same JSON as `list`.
 
 ### wgcli download -o <local> [flags] <remote-path>...
-Downloads files, reversing the transform; `-ul` reads from the upload directory. One file: `-o` is
-the local file, or an existing directory to put it in under its own name. Several paths or `-r` (directories with their contents): `-o` is a directory, and
+Downloads files, reversing the transform; `-ul` reads from the upload directory. Missing local
+directories are created. One file: `-o` is the local file, or a directory (existing, or ending in
+`/`) to put it in under its own name. Several paths or `-r` (directories with their contents): `-o` is a directory, and
 each path lands in it under its own name (`download -r -o ./ev logs` gives `./ev/logs/…`). Files
 are written as `<name>.wgpart` and renamed only when complete and verified (SHA-256 against the
 server's; `-no-verify` skips that), so a failed download never leaves a partial or altered file.
@@ -201,7 +206,8 @@ Posts a note (same content flags as `clip new`: text or `-f`, `-title`, `-attach
 thread `since` yourself. It waits from the revision just before the note, so a reply can't be
 missed however fast it comes; it ignores its own note unless `-any-source`, and `-search`/`-scope`
 (as in `clip list`) restrict what counts as the reply. On a reply it prints the note(s) like
-`clip list`. `-timeout` (default `2m`; `90s`, `5m`, or plain seconds; `0` = indefinitely): on
+`clip list` on stdout, exit status 0; stderr says `posted note <id>; waiting…` right away, so don't
+take output on stderr for the end. `-timeout` (default `2m`; `90s`, `5m`, or plain seconds; `0` = indefinitely): on
 timeout it exits with status 2 and prints the `clip wait -since` that resumes the wait without a
 gap, so the posted note isn't lost.
 
@@ -238,7 +244,8 @@ Waits for a file, by default in the download root (`-ul`: the upload directory, 
 operator's uploads land). **Without a path or with a directory, any new file counts**, so you
 needn't know its name; with a file path, that file (`-new`: only a newer version than the present
 one). `-since <unix-time>` counts every file modified from then on as new, including ones that
-arrived before the wait started. Files appear only when completely uploaded. `-timeout` as in
+arrived before the wait started, and your own uploads: to wait for the operator's file after
+uploading into the same directory yourself, give its path, or a `-since` after your upload. Files appear only when completely uploaded. `-timeout` as in
 `clip wait` (status 2, prints `[]`). JSON: `[{"path","size","mtime","sha256"}]`.
 
 **Asking the operator for something:**
