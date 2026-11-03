@@ -147,6 +147,28 @@ func parseFlags(fs *flag.FlagSet, g *globalFlags, args []string) error {
 // errHelpShown ends wgcli with status 0 after -h printed the flags.
 var errHelpShown = errors.New("help shown")
 
+// printHelp prints a command's own flags, then one line naming the global
+// flags (documented in full in the guide's Setup section), so the command's
+// flags aren't buried under the shared ones.
+func printHelp(fs *flag.FlagSet) {
+	fmt.Fprintf(os.Stderr, "Usage of %s:\n", fs.Name())
+	own := flag.NewFlagSet(fs.Name(), flag.ContinueOnError)
+	own.SetOutput(os.Stderr)
+	var globals []string
+	fs.VisitAll(func(f *flag.Flag) {
+		if globalEnv[f.Name] != "" {
+			globals = append(globals, "-"+f.Name)
+			return
+		}
+		own.Var(f.Value, f.Name, f.Usage)
+		own.Lookup(f.Name).DefValue = f.DefValue
+	})
+	own.PrintDefaults()
+	if len(globals) > 0 {
+		fmt.Fprintf(os.Stderr, "Global flags: %s (fall back to WGCLI_*; see \"wgcli guide\").\n", strings.Join(globals, " "))
+	}
+}
+
 // parseArgs parses args, allowing flags after positional arguments. A bad
 // flag is reported in one line, not with the whole flag list, which -h
 // prints.
@@ -155,8 +177,7 @@ func parseArgs(fs *flag.FlagSet, args []string) error {
 	err := fs.Parse(permuteArgs(fs, args))
 	fs.SetOutput(os.Stderr)
 	if errors.Is(err, flag.ErrHelp) {
-		fmt.Fprintf(os.Stderr, "Usage of %s:\n", fs.Name())
-		fs.PrintDefaults()
+		printHelp(fs)
 		return errHelpShown
 	}
 	if err != nil {

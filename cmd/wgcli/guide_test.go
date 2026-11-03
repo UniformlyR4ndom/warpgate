@@ -42,9 +42,6 @@ func commandFlags(t *testing.T, cmd string) []string {
 	for _, m := range regexp.MustCompile(`(?m)^  -(\S+)`).FindAllStringSubmatch(string(out), -1) {
 		names = append(names, m[1])
 	}
-	if len(names) == 0 {
-		t.Fatalf("wgcli %s -h printed no flags:\n%s", cmd, out)
-	}
 	return names
 }
 
@@ -122,7 +119,7 @@ func TestGuideMatchesFlags(t *testing.T) {
 			}
 		}
 		for _, m := range backticked.FindAllStringSubmatch(sec, -1) {
-			if !slices.Contains(flags, m[1]) {
+			if !slices.Contains(flags, m[1]) && !slices.Contains(global, m[1]) {
 				t.Errorf("guide section %q mentions -%s, which %q doesn't have", cmd, m[1], cmd)
 			}
 		}
