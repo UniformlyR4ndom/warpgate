@@ -97,7 +97,7 @@ Commands:
   ul-list   [flags]                            list the top level of the upload directory (works with -ul-flat)
   download  [flags] <remote-path>              download, reversing the transform (-ul: from the upload directory)
   upload    [flags] <local-file>                upload, applying the transform (-dir: into a subdirectory)
-  mkdir     [flags] <remote-dir>                create one directory in the upload directory
+  mkdir     [flags] <remote-dir>                create a directory in the upload directory (-p: with parents)
   clip      list|get|new|ask|edit|delete|attach|get-attachment|delete-attachment|caption|wait
             manage clipboard notes/images (newest first; "ask" posts a note and waits for a reply)
   wait-file [flags] [path]                      wait for a file, or a new file in a directory (exit 2 on timeout)

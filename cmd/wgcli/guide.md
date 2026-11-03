@@ -142,9 +142,11 @@ stored path); several: as for `download`, entries `{"path","name","bytes","sha25
 line with the totals. Transfers continue past failures; the exit status is 1 if any file failed.
 `skipped` entries are `{"path","reason"}`, `failed` entries `{"path","error"}`.
 
-### wgcli mkdir <dir>
+### wgcli mkdir [flags] <dir>
 Creates one directory in the upload directory; its parent must exist, at most 4 levels deep.
-JSON: `{"path"}`.
+`-p` creates missing parents too (shallowest first) and treats an existing directory as success,
+like `mkdir -p`; the 4-level limit still applies to each level. JSON: `{"path","created"}` with
+`-p` (`created` lists the directories actually made, empty if all existed), else `{"path"}`.
 
 ### wgcli clip list [flags]
 Notes, newest first. `-since <rev>`: only notes created or edited after that revision.
