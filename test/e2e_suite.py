@@ -142,8 +142,10 @@ def generate_test_file(path: Path, size: int) -> None:
 
 
 def run_cli(binary: Path, args: list[str], timeout: float = 300) -> subprocess.CompletedProcess:
+    # Local files live in temp dirs outside any one root.
+    env = {**os.environ, "WGCLI_NO_ROOT": "1"}
     return subprocess.run(
-        [str(binary), *args], capture_output=True, text=True, timeout=timeout
+        [str(binary), *args], capture_output=True, text=True, timeout=timeout, env=env
     )
 
 
