@@ -11,6 +11,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -121,12 +122,62 @@ type dlItem struct {
 	entry         listEntry
 }
 
+// dropLocalCollisions fails every item whose local path is also the target
+// of a different remote path (two downloads would overwrite each other) and
+// returns the rest; -parents avoids the clash by keeping the directories.
+func dropLocalCollisions(sum *xferSummary, items []dlItem) []dlItem {
+	remotes := map[string]map[string]bool{}
+	var order []string
+	for _, it := range items {
+		if remotes[it.local] == nil {
+			remotes[it.local] = map[string]bool{}
+			order = append(order, it.local)
+		}
+		remotes[it.local][it.remote] = true
+	}
+	dropped := map[string]bool{}
+	for _, local := range order {
+		if len(remotes[local]) < 2 {
+			continue
+		}
+		dropped[local] = true
+		names := make([]string, 0, len(remotes[local]))
+		for r := range remotes[local] {
+			names = append(names, r)
+		}
+		slices.Sort(names)
+		for _, r := range names {
+			sum.fail(r, fmt.Errorf("maps to the same local file %q as another path (use -parents to keep their directories)", local))
+		}
+	}
+	if len(dropped) == 0 {
+		return items
+	}
+	kept := make([]dlItem, 0, len(items))
+	for _, it := range items {
+		if !dropped[it.local] {
+			kept = append(kept, it)
+		}
+	}
+	return kept
+}
+
 // downloadMany puts each argument into outDir under its own name;
-// directories need recursive.
-func downloadMany(g *globalFlags, o xferOpts, args []string, outDir string, recursive, force bool) error {
+// directories need recursive. With parents, each file keeps its full remote
+// directory path under outDir instead.
+func downloadMany(g *globalFlags, o xferOpts, args []string, outDir string, recursive, force, parents bool) error {
 	sum := newSummary(g, o)
 	var dirs []string
 	var items []dlItem
+
+	// localFor maps a remote path to its local destination: the full remote
+	// path under outDir with -parents, else just the base name.
+	localFor := func(remote string) string {
+		if parents {
+			return filepath.Join(outDir, filepath.FromSlash(remote))
+		}
+		return filepath.Join(outDir, path.Base(remote))
+	}
 
 	var walk func(remoteDir, localDir string, depth int)
 	walk = func(remoteDir, localDir string, depth int) {
@@ -169,7 +220,7 @@ func downloadMany(g *globalFlags, o xferOpts, args []string, outDir string, recu
 			sum.fail(remote, err)
 			continue
 		}
-		local := filepath.Join(outDir, path.Base(remote))
+		local := localFor(remote)
 		switch {
 		case e.Type == "f":
 			items = append(items, dlItem{remote, local, e})
@@ -180,6 +231,11 @@ func downloadMany(g *globalFlags, o xferOpts, args []string, outDir string, recu
 		}
 	}
 
+	items = dropLocalCollisions(sum, items)
+
+	for _, it := range items {
+		dirs = append(dirs, filepath.Dir(it.local))
+	}
 	for _, d := range dirs {
 		if err := os.MkdirAll(d, 0o755); err != nil {
 			sum.fail(d, err)

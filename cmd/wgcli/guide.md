@@ -121,6 +121,9 @@ the local file, or an existing directory to put it in under its own name. Severa
 each path lands in it under its own name (`download -r -o ./ev logs` gives `./ev/logs/…`). Files
 are written as `<name>.wgpart` and renamed only when complete and verified (SHA-256 against the
 server's; `-no-verify` skips that), so a failed download never leaves a partial or altered file.
+When two paths would land on the same local file (e.g. `a/x` and `b/x`), both fail instead of one
+silently overwriting the other; `-parents` keeps each file's full remote directory path under `-o`
+(`a/x` to `<o>/a/x`), which both avoids the clash and mirrors the server's layout.
 With several paths or `-r`, files that are identical locally are skipped (`-force`: download
 anyway), and names this system can't store fail. `-chunk-size` (default 4 MiB) is the plaintext
 size per request; `-backend http|ws`; `-frame-size` (0 = server maximum). Transform flags:

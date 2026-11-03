@@ -263,6 +263,7 @@ func runDownload(args []string) error {
 	g := addGlobalFlags(fs)
 	out := fs.String("o", "", "local output file; with several paths or -r, the directory receiving them (required)")
 	recursive := fs.Bool("r", false, "download directories with their contents")
+	parents := fs.Bool("parents", false, "keep each file's remote directory path under -o (a/x to <o>/a/x), instead of placing every file directly in -o")
 	force := fs.Bool("force", false, "with several paths or -r: also download files that are unchanged locally")
 	transformName := fs.String("transform", "id", "transform: id|xor|aes-ctr|pdf|html-b64")
 	key := fs.String("key", "", "hex key (xor, aes-ctr, html-b64); random if omitted")
@@ -303,8 +304,8 @@ func runDownload(args []string) error {
 		chunkSize: *chunkSize, frameSize: *frameSize, ws: *backend == "ws", verify: !*noVerify,
 	}
 
-	if fs.NArg() > 1 || *recursive {
-		return downloadMany(g, o, fs.Args(), *out, *recursive, *force)
+	if fs.NArg() > 1 || *recursive || *parents {
+		return downloadMany(g, o, fs.Args(), *out, *recursive, *force, *parents)
 	}
 	dst := *out
 	if fi, err := os.Stat(dst); err == nil && fi.IsDir() {
