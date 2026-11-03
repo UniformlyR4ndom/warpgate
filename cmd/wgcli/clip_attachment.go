@@ -58,7 +58,7 @@ func warnAttachmentSize(path string, size int) {
 }
 
 func postClipAttachment(g *globalFlags, noteID int64, localPath, caption, transformName string, args json.RawMessage, t transform.Transformer) (clipAttachmentMeta, error) {
-	raw, err := os.ReadFile(localPath)
+	raw, err := g.local.ReadFile(localPath)
 	if err != nil {
 		return clipAttachmentMeta{}, err
 	}
@@ -148,7 +148,7 @@ func getClipAttachment(g *globalFlags, id int64, out, transformName string, args
 	if err != nil {
 		return fmt.Errorf("decoding attachment: %w", err)
 	}
-	f, err := os.Create(out)
+	f, err := g.local.Create(out)
 	if err != nil {
 		return err
 	}
@@ -224,7 +224,7 @@ func runClipGetAttachment(args []string) error {
 		return err
 	}
 	var size int64
-	if fi, err := os.Stat(*out); err == nil {
+	if fi, err := g.local.Stat(*out); err == nil {
 		size = fi.Size()
 	}
 	g.report(map[string]any{"id": id, "out": *out, "bytes": size}, "wrote attachment %d (%d bytes) to %s", id, size, *out)

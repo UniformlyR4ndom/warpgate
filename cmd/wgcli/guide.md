@@ -49,8 +49,16 @@ Global flags, accepted by every command; each falls back to its environment vari
 | `-json` | `WGCLI_JSON` | Print the result as one JSON document on stdout |
 | `-insecure` | `WGCLI_INSECURE` | Skip TLS certificate verification |
 | `-cert`, `-cert-key` | `WGCLI_CERT`, `WGCLI_CERT_KEY` | PEM client certificate and key, for servers requiring one |
+| `-root` | `WGCLI_ROOT` | Local working directory: every file wgcli reads (uploads, `-f`, images) or writes (downloads, `-o`) stays within it. A path leading outside it fails; an absolute path under it works, as a convenience |
+| `-no-root` | `WGCLI_NO_ROOT` | Read and write files anywhere, opting out of the `-root` requirement |
 
-Booleans in variables: `1`/`true`/`0`/`false`. A flag beats its variable. Keep the settings in a
+A working directory is **required** for local file access: a command that reads or writes a local
+file (`download`, `upload`, `clip -f`/`-attach`, saving an attachment) fails unless `-root` is set,
+or `-no-root` is given to run unconfined on purpose. Commands that touch no local file (`status`,
+`list`, inline `clip new`, `wait-file`, `sim`, `register`, `derive-key`) work either way. Set `-root`
+to the one directory an agent works in (e.g. an engagement folder), and a stray absolute or `../`
+path can't read or clobber files elsewhere by accident. It is a guard against mistakes, not a sandbox
+for a hostile client. Booleans in variables: `1`/`true`/`0`/`false`. A flag beats its variable. Keep the settings in a
 file and source it before each command (shell state often doesn't persist between commands):
 
 ```

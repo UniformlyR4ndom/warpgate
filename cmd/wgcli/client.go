@@ -35,6 +35,9 @@ type globalFlags struct {
 	json       bool
 	connect    string
 	host       string
+	root       string
+	noRoot     bool
+	local      *localFS
 	token      *connecttoken.Token
 	tlsConfig  *tls.Config
 
@@ -63,6 +66,8 @@ var globalEnv = map[string]string{
 	"json":        "WGCLI_JSON",
 	"connect":     "WGCLI_CONNECT",
 	"host":        "WGCLI_HOST",
+	"root":        "WGCLI_ROOT",
+	"no-root":     "WGCLI_NO_ROOT",
 }
 
 // transferEnv maps transfer flags to the environment variables that set
@@ -86,6 +91,8 @@ func addGlobalFlags(fs *flag.FlagSet) *globalFlags {
 	fs.BoolVar(&g.json, "json", false, "print the result as one JSON document on stdout (env WGCLI_JSON)")
 	fs.StringVar(&g.connect, "connect", "", "connect token the server logs at startup; sets the URL and pins its certificate (env WGCLI_CONNECT)")
 	fs.StringVar(&g.host, "host", "", "host or host:port replacing the connect token's (env WGCLI_HOST)")
+	fs.StringVar(&g.root, "root", "", "local working directory; every file wgcli reads or writes stays within it, required for local file access (env WGCLI_ROOT)")
+	fs.BoolVar(&g.noRoot, "no-root", false, "read and write files anywhere, opting out of the -root requirement (env WGCLI_NO_ROOT)")
 	return g
 }
 
@@ -126,6 +133,10 @@ func parseFlags(fs *flag.FlagSet, g *globalFlags, args []string) error {
 			set[name] = true
 			g.fromEnv[name] = true
 		}
+	}
+	var err error
+	if g.local, err = openLocalFS(g.root, g.noRoot); err != nil {
+		return err
 	}
 	if (g.certFile == "") != (g.certKey == "") {
 		return fmt.Errorf("-cert and -cert-key must be given together")

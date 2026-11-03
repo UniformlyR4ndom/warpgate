@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
-	"os"
 	"path"
 	"path/filepath"
 	"slices"
@@ -237,21 +236,21 @@ func downloadMany(g *globalFlags, o xferOpts, args []string, outDir string, recu
 		dirs = append(dirs, filepath.Dir(it.local))
 	}
 	for _, d := range dirs {
-		if err := os.MkdirAll(d, 0o755); err != nil {
+		if err := g.local.MkdirAll(d, 0o755); err != nil {
 			sum.fail(d, err)
 		}
 	}
 	for _, it := range items {
 		entry := &it.entry
 		if !force {
-			if fi, err := os.Stat(it.local); err == nil && fi.Mode().IsRegular() && fi.Size() == *it.entry.Size {
+			if fi, err := g.local.Stat(it.local); err == nil && fi.Mode().IsRegular() && fi.Size() == *it.entry.Size {
 				remote, err := fetchFileEntry(g, o.prefix, it.remote, true)
 				if err != nil {
 					sum.fail(it.remote, err)
 					continue
 				}
-				if local, err := hashLocal(it.local); err == nil && local == remote.SHA256 {
-					_ = os.Remove(it.local + ".wgpart") // left by a killed earlier run
+				if local, err := hashLocal(g.local, it.local); err == nil && local == remote.SHA256 {
+					_ = g.local.Remove(it.local + ".wgpart") // left by a killed earlier run
 					sum.skip(it.remote, "unchanged")
 					continue
 				}
@@ -314,7 +313,7 @@ func uploadMany(g *globalFlags, o xferOpts, args []string, remoteDir string, rec
 	var dirs []string // remote directories, parents first
 	var items []ulItem
 	for _, arg := range args {
-		fi, err := os.Stat(arg)
+		fi, err := g.local.Stat(arg)
 		if err != nil {
 			sum.fail(arg, err)
 			continue
@@ -332,7 +331,7 @@ func uploadMany(g *globalFlags, o xferOpts, args []string, remoteDir string, rec
 		default:
 			top := path.Join(remoteDir, base)
 			dirs = append(dirs, top)
-			err := filepath.WalkDir(arg, func(p string, d fs.DirEntry, err error) error {
+			err := g.local.WalkDir(arg, func(p string, d fs.DirEntry, err error) error {
 				if err != nil {
 					sum.fail(p, err)
 					return nil
@@ -346,7 +345,7 @@ func uploadMany(g *globalFlags, o xferOpts, args []string, remoteDir string, rec
 					dirs = append(dirs, remote)
 					return nil
 				}
-				fi, err := os.Stat(p) // follows symlinks
+				fi, err := g.local.Stat(p) // follows symlinks
 				switch {
 				case err != nil:
 					sum.fail(p, err)
@@ -417,7 +416,7 @@ func uploadMany(g *globalFlags, o xferOpts, args []string, remoteDir string, rec
 			if e, ok := remoteEntries[it.dir][it.name]; ok && e.Type == "f" && e.Size != nil && *e.Size == it.size {
 				remote, err := fetchFileEntry(g, "/api/ul/", p, true)
 				if err == nil {
-					if local, err := hashLocal(it.local); err == nil && local == remote.SHA256 {
+					if local, err := hashLocal(g.local, it.local); err == nil && local == remote.SHA256 {
 						sum.skip(it.local, "unchanged")
 						continue
 					}
@@ -444,8 +443,8 @@ func failedParent(failed map[string]error, p string) error {
 	return nil
 }
 
-func hashLocal(p string) (string, error) {
-	f, err := os.Open(p)
+func hashLocal(l *localFS, p string) (string, error) {
+	f, err := l.Open(p)
 	if err != nil {
 		return "", err
 	}

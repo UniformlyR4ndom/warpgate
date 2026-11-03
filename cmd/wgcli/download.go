@@ -96,10 +96,10 @@ func downloadFile(g *globalFlags, o xferOpts, remotePath, out string, entry *lis
 		size, sum, verified, err = downloadHTTP(g, o, remotePath, tmp, entry)
 	}
 	if err == nil {
-		err = os.Rename(tmp, out)
+		err = g.local.Rename(tmp, out)
 	}
 	if err != nil {
-		_ = os.Remove(tmp)
+		_ = g.local.Remove(tmp)
 		return fileResult{}, err
 	}
 	return fileResult{Path: remotePath, Out: out, Bytes: size, SHA256: sum, Verified: verified}, nil
@@ -115,7 +115,7 @@ func downloadHTTP(g *globalFlags, o xferOpts, remotePath, dst string, entry *lis
 	}
 	size = *entry.Size
 
-	f, err := os.Create(dst)
+	f, err := g.local.Create(dst)
 	if err != nil {
 		return 0, "", false, err
 	}
@@ -183,7 +183,7 @@ func downloadWS(g *globalFlags, o xferOpts, remotePath, dst string) (size int64,
 	}
 	size = ack.Size
 
-	f, err := os.Create(dst)
+	f, err := g.local.Create(dst)
 	if err != nil {
 		return 0, "", false, err
 	}
@@ -308,7 +308,7 @@ func runDownload(args []string) error {
 		return downloadMany(g, o, fs.Args(), *out, *recursive, *force, *parents)
 	}
 	dst := *out
-	if fi, err := os.Stat(dst); err == nil && fi.IsDir() {
+	if fi, err := g.local.Stat(dst); err == nil && fi.IsDir() {
 		dst = filepath.Join(dst, path.Base(path.Clean("/"+fs.Arg(0))))
 	}
 	start := time.Now()

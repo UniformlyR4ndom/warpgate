@@ -134,14 +134,14 @@ func uploadFile(g *globalFlags, o xferOpts, localPath, dir, name string) (fileRe
 		return fileResult{}, err
 	}
 	var size int64
-	if fi, err := os.Stat(localPath); err == nil {
+	if fi, err := g.local.Stat(localPath); err == nil {
 		size = fi.Size()
 	}
 	return fileResult{Path: localPath, Name: res.Name, Bytes: size, SHA256: sum, Verified: verified}, nil
 }
 
 func uploadHTTP(g *globalFlags, o xferOpts, localPath, dir, name string) (uploadResult, string, error) {
-	inFile, err := os.Open(localPath)
+	inFile, err := g.local.Open(localPath)
 	if err != nil {
 		return uploadResult{}, "", err
 	}
@@ -163,13 +163,13 @@ func uploadHTTP(g *globalFlags, o xferOpts, localPath, dir, name string) (upload
 // section. HTTP only — there is no WS equivalent of
 // chunked upload.
 func uploadHTTPChunked(g *globalFlags, o xferOpts, localPath, dir, name string) (uploadResult, string, error) {
-	info, err := os.Stat(localPath)
+	info, err := g.local.Stat(localPath)
 	if err != nil {
 		return uploadResult{}, "", err
 	}
 	size := info.Size()
 
-	f, err := os.Open(localPath)
+	f, err := g.local.Open(localPath)
 	if err != nil {
 		return uploadResult{}, "", err
 	}
@@ -207,7 +207,7 @@ func uploadHTTPChunked(g *globalFlags, o xferOpts, localPath, dir, name string) 
 
 func uploadWS(g *globalFlags, o xferOpts, localPath, dir, name string) (uploadResult, string, error) {
 	fail := func(err error) (uploadResult, string, error) { return uploadResult{}, "", err }
-	inFile, err := os.Open(localPath)
+	inFile, err := g.local.Open(localPath)
 	if err != nil {
 		return fail(err)
 	}
@@ -316,7 +316,7 @@ func runUpload(args []string) error {
 		return uploadMany(g, o, fs.Args(), *dir, *recursive, *force)
 	}
 	localPath := fs.Arg(0)
-	if fi, err := os.Stat(localPath); err == nil && fi.IsDir() {
+	if fi, err := g.local.Stat(localPath); err == nil && fi.IsDir() {
 		return fmt.Errorf("%s is a directory (use -r)", localPath)
 	}
 	name := *remoteName

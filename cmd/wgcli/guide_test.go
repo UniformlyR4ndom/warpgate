@@ -21,6 +21,9 @@ func TestMain(m *testing.M) {
 			_ = os.Unsetenv(name)
 		}
 	}
+	// The command tests operate on files in temp dirs, outside any one root;
+	// they opt out of the working-directory requirement like an unconfined run.
+	_ = os.Setenv("WGCLI_NO_ROOT", "1")
 	if args, ok := os.LookupEnv(mainArgsEnv); ok {
 		os.Args = append([]string{"wgcli"}, strings.Fields(args)...)
 		main()

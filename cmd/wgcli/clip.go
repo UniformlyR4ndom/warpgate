@@ -160,9 +160,9 @@ func sendClipJSON(g *globalFlags, method, path string, v any) error {
 
 // clipTextArg resolves a note's content either from -f <file> or from the
 // positional argument at argIndex.
-func clipTextArg(fs *flag.FlagSet, file string, argIndex int) ([]byte, error) {
+func clipTextArg(g *globalFlags, fs *flag.FlagSet, file string, argIndex int) ([]byte, error) {
 	if file != "" {
-		return os.ReadFile(file)
+		return g.local.ReadFile(file)
 	}
 	if fs.NArg() <= argIndex {
 		return nil, fmt.Errorf("provide note text as an argument or use -f <file>")
@@ -420,7 +420,7 @@ func createClipNote(g *globalFlags, fs *flag.FlagSet, nf *clipNoteFlags) (clipNo
 	var data []byte
 	if len(images) == 0 || *nf.file != "" || fs.NArg() > 0 {
 		var err error
-		if data, err = clipTextArg(fs, *nf.file, 0); err != nil {
+		if data, err = clipTextArg(g, fs, *nf.file, 0); err != nil {
 			return res, err
 		}
 	}
@@ -428,7 +428,7 @@ func createClipNote(g *globalFlags, fs *flag.FlagSet, nf *clipNoteFlags) (clipNo
 		if mimeForExt(img.path) == "application/octet-stream" {
 			return res, fmt.Errorf("%s: unsupported image type (png, jpg, gif, webp, bmp)", img.path)
 		}
-		if _, err := os.Stat(img.path); err != nil {
+		if _, err := g.local.Stat(img.path); err != nil {
 			return res, err
 		}
 	}
@@ -542,7 +542,7 @@ func runClipEdit(args []string) error {
 	if err != nil {
 		return fmt.Errorf("invalid note id %q: %w", fs.Arg(0), err)
 	}
-	data, err := clipTextArg(fs, *file, 1)
+	data, err := clipTextArg(g, fs, *file, 1)
 	if err != nil {
 		return err
 	}
