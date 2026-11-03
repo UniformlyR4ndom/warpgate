@@ -33,6 +33,10 @@ func printEntries(g *globalFlags, entries []listEntry) {
 		if e.Size != nil {
 			size = *e.Size
 		}
+		if e.SHA256 != "" {
+			fmt.Printf("%-40s %d %s\n", e.Name, size, e.SHA256)
+			continue
+		}
 		fmt.Printf("%-40s %d\n", e.Name, size)
 	}
 }
@@ -92,6 +96,7 @@ func runList(args []string) error {
 	fs := flag.NewFlagSet("list", flag.ContinueOnError)
 	g := addGlobalFlags(fs)
 	ul := fs.Bool("ul", false, "list the upload directory instead of the download root")
+	hash := fs.Bool("hash", false, "add each file's SHA-256, computed by the server")
 	if err := parseFlags(fs, g, args); err != nil {
 		return err
 	}
@@ -101,7 +106,7 @@ func runList(args []string) error {
 		dirPath = fs.Arg(0)
 	}
 
-	entries, err := fetchList(g, apiPrefix(*ul), dirPath)
+	entries, err := fetchListing(g, apiPrefix(*ul), dirPath, *hash)
 	if err != nil {
 		return err
 	}

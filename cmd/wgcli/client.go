@@ -171,8 +171,14 @@ func printHelp(fs *flag.FlagSet) {
 			globals = append(globals, "-"+f.Name)
 			return
 		}
-		own.Var(f.Value, f.Name, f.Usage)
-		own.Lookup(f.Name).DefValue = f.DefValue
+		def, usage := f.DefValue, f.Usage
+		if env := transferEnv[f.Name]; env != "" {
+			if v, ok := os.LookupEnv(env); ok {
+				def, usage = v, usage+" (env "+env+")"
+			}
+		}
+		own.Var(f.Value, f.Name, usage)
+		own.Lookup(f.Name).DefValue = def
 	})
 	own.PrintDefaults()
 	if len(globals) > 0 {

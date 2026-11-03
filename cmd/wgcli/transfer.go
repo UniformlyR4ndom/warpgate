@@ -1,6 +1,7 @@
 package main
 
 import (
+	"cmp"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -79,7 +80,11 @@ func (s *xferSummary) done(label string, r fileResult) {
 	s.Transferred = append(s.Transferred, r)
 	s.Bytes += r.Bytes
 	if !s.g.json {
-		fmt.Printf("%-12s %s (%d bytes, %s)\n", label, r.Path, r.Bytes, hashNote(r))
+		p := r.Path
+		if dest := cmp.Or(r.Name, r.Out); dest != "" {
+			p += " -> " + dest
+		}
+		fmt.Printf("%-12s %s (%d bytes, %s)\n", label, p, r.Bytes, hashNote(r))
 	}
 }
 

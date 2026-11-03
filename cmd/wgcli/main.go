@@ -5,8 +5,11 @@ package main
 import (
 	_ "embed"
 	"errors"
+	"flag"
 	"fmt"
 	"os"
+	"slices"
+	"strings"
 )
 
 //go:embed guide.md
@@ -18,10 +21,18 @@ func main() {
 		os.Exit(1)
 	}
 
-	cmd := os.Args[1]
-	args := os.Args[2:]
+	all, err := hoistGlobalFlags(os.Args[1:])
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "wgcli:", err)
+		os.Exit(1)
+	}
+	if len(all) == 0 {
+		usage()
+		os.Exit(1)
+	}
+	cmd := all[0]
+	args := all[1:]
 
-	var err error
 	switch cmd {
 	case "status":
 		err = runStatus(args)
@@ -72,6 +83,44 @@ func main() {
 	}
 }
 
+// hoistGlobalFlags moves global flags given before the command to just after
+// it (after the subcommand for clip and sim), where the command parses them.
+func hoistGlobalFlags(args []string) ([]string, error) {
+	globals := flag.NewFlagSet("wgcli", flag.ContinueOnError)
+	addGlobalFlags(globals)
+	var lead []string
+	i := 0
+	for ; i < len(args); i++ {
+		a := args[i]
+		if len(a) < 2 || a[0] != '-' || a == "--" || a == "-h" || a == "--help" {
+			break
+		}
+		name, _, hasValue := strings.Cut(strings.TrimLeft(a, "-"), "=")
+		f := globals.Lookup(name)
+		if f == nil {
+			return nil, fmt.Errorf("%s before the command is not a global flag; command flags go after the command, e.g. \"wgcli download %s …\"", a, a)
+		}
+		lead = append(lead, a)
+		if bf, ok := f.Value.(interface{ IsBoolFlag() bool }); hasValue || (ok && bf.IsBoolFlag()) {
+			continue
+		}
+		if i+1 == len(args) {
+			return nil, fmt.Errorf("flag needs an argument: %s", a)
+		}
+		i++
+		lead = append(lead, args[i])
+	}
+	rest := args[i:]
+	if len(lead) == 0 || len(rest) == 0 {
+		return rest, nil
+	}
+	at := 1
+	if (rest[0] == "clip" || rest[0] == "sim") && len(rest) > 1 {
+		at = 2
+	}
+	return slices.Concat(rest[:at], lead, rest[at:]), nil
+}
+
 func usage() {
 	fmt.Fprint(os.Stderr, usageText)
 }
@@ -79,10 +128,11 @@ func usage() {
 const usageText = `wgcli - command-line client for the warpgate API
 
 Usage:
-  wgcli <command> [flags] [args...]
+  wgcli [global flags] <command> [flags] [args...]
 
 Flags may come before or after positional arguments; "--" ends flag
-parsing (for an argument starting with "-").
+parsing (for an argument starting with "-"). Only global flags may
+precede the command.
 
 Global flags fall back to environment variables when not given:
   WGCLI_URL, WGCLI_AUTH_KEY, WGCLI_AUTH_K, WGCLI_INSECURE, WGCLI_PARAM_CRYPT,

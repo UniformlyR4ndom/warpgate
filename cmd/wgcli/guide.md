@@ -4,15 +4,17 @@ wgcli is the client for a warpgate server: a file server for getting files throu
 web proxies. Transfers can be disguised by a *transform* (encrypted bytes, a PDF, an HTML page) that
 wgcli applies or reverses. The server also keeps a clipboard of text notes with images.
 
-`wgcli <command> [flags] [args]`. Flags may follow arguments; `--` ends flags (for text starting with
-`-`). `clip` and `sim` take their subcommand next: `wgcli clip new …`, not `wgcli clip -json new`.
+`wgcli [global flags] <command> [flags] [args]`. Flags may follow arguments; `--` ends flags (for text
+starting with `-`). Only global flags may precede the command. `clip` and `sim` take their subcommand
+next: `wgcli clip new …`, not `wgcli clip -json new`. `wgcli <command> -h` lists the command's flags,
+with the defaults your `WGCLI_*` variables set.
 
 ## Typical workflow
 
 ```
 . ./wg.env && wgcli status                    # settings incl. WGCLI_ROOT, see Setup
-wgcli list evidence                           # look around
-wgcli download -r -o ./loot evidence          # fetch, verified
+wgcli list data                               # look around
+wgcli download -r -o ./collected data         # fetch, verified
 wgcli upload -r ./results                     # send, verified
 wgcli clip new "please paste …"               # ask the operator; note "since" and "ts"
 wgcli clip wait -since <since>                # wait for the reply note (in the background)
@@ -57,7 +59,7 @@ local paths of `download` and `upload`, `-f` and `-attach` of the `clip` command
 `clip get-attachment`) fails unless `-root` is set, or `-no-root` is given to run unconfined on
 purpose. Everything else, including text given as an argument, works either way. `-cert`/`-cert-key`
 are read wherever they are. Set `-root`
-to the one directory an agent works in (e.g. an engagement folder), and a stray absolute or `../`
+to the one directory an agent works in (e.g. a project folder), and a stray absolute or `../`
 path can't read or clobber files elsewhere by accident. It is a guard against mistakes, not a sandbox
 for a hostile client. Booleans in variables: `1`/`true`/`0`/`false`. A flag beats its variable. Keep the settings in a
 file and source it before each command (shell state often doesn't persist between commands):
@@ -117,9 +119,11 @@ JSON: `{"url","tls","pinned","registered","uploads","ulFlat","auth":"ok"|"disabl
 "transfer":{"transform","backend","frameSize","chunkSize","paramCrypt"}}`; `registered` is true when
 this run registered the IP; a size of 0 means the command's own default.
 
-### wgcli list [-ul] [dir]
-Lists a directory of the download root (`-ul`: of the upload directory).
-JSON: `[{"name","type":"f"|"d","size","mtime"}]`; `size` (bytes) only for files, `mtime` in Unix seconds.
+### wgcli list [-ul] [-hash] [path]
+Lists a directory of the download root (`-ul`: of the upload directory), or one file. `-hash` adds
+each file's SHA-256 as the server computes it, without downloading (reads every file listed).
+JSON: `[{"name","type":"f"|"d","size","mtime","sha256"}]`; `size` (bytes) only for files, `mtime` in
+Unix seconds, `sha256` only with `-hash`.
 
 ### wgcli ul-list
 Lists the top level of the upload directory; the only listing on servers with a flat upload
