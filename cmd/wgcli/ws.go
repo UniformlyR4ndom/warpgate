@@ -110,7 +110,7 @@ func readWSAck(conn *websocket.Conn, g *globalFlags) (wsAck, error) {
 // CLAUDE.md's WebSocket Transport / Upload protocol).
 func writeWSBinaryFrames(conn *websocket.Conn, r io.Reader, frameSize int64) error {
 	if frameSize <= 0 {
-		frameSize = 1 << 20
+		frameSize = defaultWSFrameSize
 	}
 	buf := make([]byte, frameSize)
 	for {

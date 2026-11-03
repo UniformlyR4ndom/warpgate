@@ -14,21 +14,28 @@ import (
 // listEntry mirrors the server's listEntry (list.go); it can't be imported
 // directly since the server is package main.
 type listEntry struct {
-	Name   string `json:"name"`
+	Name string `json:"name"`
+	// Path is Name's root-relative path, filled in by the client so a listing
+	// result feeds straight into download/upload; the server sends only Name.
+	Path   string `json:"path,omitempty"`
 	Type   string `json:"type"`
 	Size   *int64 `json:"size,omitempty"`
 	MTime  *int64 `json:"mtime,omitempty"`
 	SHA256 string `json:"sha256,omitempty"`
 }
 
-func printEntries(g *globalFlags, entries []listEntry) {
+func printEntries(g *globalFlags, entries []listEntry, showPath bool) {
 	if g.json {
 		printJSON(entries)
 		return
 	}
 	for _, e := range entries {
+		label := e.Name
+		if showPath && e.Path != "" {
+			label = e.Path
+		}
 		if e.Type == "d" {
-			fmt.Printf("%-40s <dir>\n", e.Name+"/")
+			fmt.Printf("%-40s <dir>\n", label+"/")
 			continue
 		}
 		size := int64(0)
@@ -36,10 +43,10 @@ func printEntries(g *globalFlags, entries []listEntry) {
 			size = *e.Size
 		}
 		if e.SHA256 != "" {
-			fmt.Printf("%-40s %d %s\n", e.Name, size, e.SHA256)
+			fmt.Printf("%-40s %d %s\n", label, size, e.SHA256)
 			continue
 		}
-		fmt.Printf("%-40s %d\n", e.Name, size)
+		fmt.Printf("%-40s %d\n", label, size)
 	}
 }
 
@@ -115,17 +122,34 @@ func runList(args []string) error {
 		entries, err = listTree(g, apiPrefix(*ul), dirPath, *hash)
 	} else {
 		entries, err = fetchListing(g, apiPrefix(*ul), dirPath, *hash)
+		if err == nil {
+			annotateListPaths(entries, dirPath)
+		}
 	}
 	if err != nil {
 		return err
 	}
 
-	printEntries(g, entries)
+	printEntries(g, entries, *recursive)
 	return nil
 }
 
-// listTree lists everything below p (a directory, or one file), each entry
-// named by its path from the root.
+// annotateListPaths fills each entry's root-relative Path. Listing a single
+// file returns that file as the only entry (Name is its base name), so its
+// Path is the queried path; a directory's entries are its children.
+func annotateListPaths(entries []listEntry, queried string) {
+	q := path.Clean("/" + queried)[1:]
+	if q != "" && len(entries) == 1 && entries[0].Type != "d" && entries[0].Name == path.Base(q) {
+		entries[0].Path = q
+		return
+	}
+	for i := range entries {
+		entries[i].Path = path.Join(q, entries[i].Name)
+	}
+}
+
+// listTree lists everything below p (a directory, or one file); each entry
+// keeps its base Name and carries its root-relative Path.
 func listTree(g *globalFlags, prefix, p string, hash bool) ([]listEntry, error) {
 	p = path.Clean("/" + p)[1:]
 	if p != "" {
@@ -136,7 +160,7 @@ func listTree(g *globalFlags, prefix, p string, hash bool) ([]listEntry, error) 
 		if e.Type != "d" {
 			entries, err := fetchListing(g, prefix, p, hash)
 			for i := range entries {
-				entries[i].Name = p
+				entries[i].Path = p
 			}
 			return entries, err
 		}
@@ -152,10 +176,10 @@ func listTree(g *globalFlags, prefix, p string, hash bool) ([]listEntry, error) 
 			return fmt.Errorf("%s: %w", cmp.Or(dir, "/"), err)
 		}
 		for _, e := range entries {
-			e.Name = path.Join(dir, e.Name)
+			e.Path = path.Join(dir, e.Name)
 			out = append(out, e)
 			if e.Type == "d" {
-				if err := walk(e.Name, depth+1); err != nil {
+				if err := walk(e.Path, depth+1); err != nil {
 					return err
 				}
 			}

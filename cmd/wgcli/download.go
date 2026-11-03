@@ -269,7 +269,7 @@ func runDownload(args []string) error {
 	key := fs.String("key", "", "hex key (xor, aes-ctr, html-b64); random if omitted")
 	iv := fs.String("iv", "", "hex IV (aes-ctr, 16 bytes); random if omitted")
 	password := fs.String("password", "", "PDF password (pdf transform; only if the file was encrypted)")
-	chunkSize := sizeFlag(fs, "chunk-size", 4<<20, "chunk size in bytes for the download loop")
+	chunkSize := sizeFlag(fs, "chunk-size", defaultDownloadChunkSize, "chunk size in bytes for the download loop")
 	backend := fs.String("backend", "http", "transport: http|ws")
 	frameSize := sizeFlag(fs, "frame-size", 0, "WS frame size in bytes (ws backend only; 0 = server ceiling)")
 	ul := fs.Bool("ul", false, "download from the upload directory instead of the download root")

@@ -11,13 +11,11 @@ with the defaults your `WGCLI_*` variables set.
 ## Typical workflow
 
 ```
-. ./wg.env && wgcli status                    # settings incl. WGCLI_ROOT, see Setup
-wgcli list data                               # look around
+. ./wg.env && wgcli status                    # check key + resolved settings (incl. WGCLI_ROOT); see Setup
+wgcli list -r data                            # look around; each entry's "path" feeds download
 wgcli download -r -o ./collected data         # fetch, verified
-wgcli upload -r ./results                     # send, verified
-wgcli clip new "please paste …"               # ask the operator; note "since" and "ts"
-wgcli clip wait -since <since>                # wait for the reply note (in the background)
-wgcli clip get -raw <id> > reply.txt          # its text
+wgcli upload -r -p -dir results/2026 ./out    # send into a (new) dir, verified
+wgcli clip ask -reply-out reply.txt "paste …" # post a note, wait, save the reply — one step
 wgcli wait-file -ul -since <ts>               # or wait for an uploaded file, then download -ul it
 ```
 
@@ -113,20 +111,24 @@ use `-json` when parsing. JSON fields that are empty and optional are left out.
 ### wgcli status
 Checks the connection and stops at the first problem, with a message saying what to fix: reaches
 the server (registering with its IP firewall if that blocks), reads what it offers, and makes one
-authenticated request. Run it first, and whenever commands fail unexpectedly. It also shows the
-transfer defaults from the `WGCLI_*` variables (transform, backend, sizes, parameter encryption),
-so you can confirm what transfers will use; invalid values are reported.
+authenticated request. Run it first, and whenever commands fail unexpectedly. It also resolves the
+transfer defaults from the `WGCLI_*` variables (transform, backend, the download and upload chunk
+sizes, the WS frame size, parameter encryption), so you can confirm what transfers will use;
+invalid values are reported.
 JSON: `{"url","tls","pinned","registered","uploads","ulFlat","auth":"ok"|"disabled","keyId",
-"transfer":{"transform","backend","frameSize","chunkSize","paramCrypt"}}`; `registered` is true when
-this run registered the IP; a size of 0 means the command's own default.
+"transfer":{"transform","backend","paramCrypt","downloadChunkSize","uploadChunkSize","frameSize","chunkSource","frameSource"}}`.
+`registered` is true when this run registered the IP. `uploadChunkSize` 0 means one request per
+file; `frameSize` 0 means the server's maximum (download) or 1 MiB (upload); `chunkSource` and
+`frameSource` are `env` or `default`.
 
 ### wgcli list [-ul] [-r] [-hash] [path]
 Lists a directory of the download root (`-ul`: of the upload directory), or one file. `-r` lists
-the whole tree below it, each entry named by its path from the root (`logs/web/access.log`, ready
-for `download`). `-hash` adds each file's SHA-256 as the server computes it, without downloading
-(reads every file listed).
-JSON: `[{"name","type":"f"|"d","size","mtime","sha256"}]`; `size` (bytes) only for files, `mtime` in
-Unix seconds, `sha256` only with `-hash`.
+the whole tree below it. Every entry carries a root-relative `path` (`logs/web/access.log`, ready
+for `download`) next to its base `name`; `-r` text output shows the path, a plain listing the name.
+`-hash` adds each file's SHA-256 as the server computes it, without downloading (reads every file
+listed).
+JSON: `[{"name","path","type":"f"|"d","size","mtime","sha256"}]`; `path` is root-relative, `size`
+(bytes) only for files, `mtime` in Unix seconds, `sha256` only with `-hash`.
 
 ### wgcli ul-list
 Lists the top level of the upload directory; the only listing on servers with a flat upload
@@ -136,7 +138,8 @@ directory, where `list -ul` fails. Same JSON as `list`.
 Downloads files, reversing the transform; `-ul` reads from the upload directory. Missing local
 directories are created. One file: `-o` is the local file, or a directory (existing, or ending in
 `/`) to put it in under its own name. Several paths or `-r` (directories with their contents): `-o` is a directory, and
-each path lands in it under its own name (`download -r -o ./ev logs` gives `./ev/logs/…`). Files
+each path lands in it under its own name (`download -r -o ./c docs logs` gives `./c/docs/…` and
+`./c/logs/…`). Files
 are written as `<name>.wgpart` and renamed only when complete and verified (SHA-256 against the
 server's; `-no-verify` skips that), so a failed download never leaves a partial or altered file.
 When two paths would land on the same local file (e.g. `a/x` and `b/x`), both fail instead of one
@@ -156,7 +159,8 @@ under its own name (`-remote-name` renames a single file). `-dir` must already e
 is given, which creates it and any missing parents first, like `mkdir -p` (still at most 4 levels
 below the upload root). `-r` uploads directories with their contents, creating subdirectories (at
 most 4 levels below the upload root; checked before anything is sent); links to directories and
-special files are skipped. **An existing file of the same name
+special files are skipped. Example: `upload -r -p -dir results/2026 ./report` gives
+`results/2026/report/…` on the server. **An existing file of the same name
 is replaced without warning**, except that with several paths or `-r` identical files are skipped
 (`-force`: upload anyway). The server's SHA-256 of each stored file is compared with the local
 one. `-chunk-size` splits each file into sequential requests (HTTP only; default: one request);
@@ -208,9 +212,10 @@ thread `since` yourself. It waits from the revision just before the note, so a r
 missed however fast it comes; it ignores its own note unless `-any-source`, and `-search`/`-scope`
 (as in `clip list`) restrict what counts as the reply. On a reply it prints the note(s) like
 `clip list` on stdout, exit status 0; stderr says `posted note <id>; waiting…` right away, so don't
-take output on stderr for the end. `-timeout` (default `2m`; `90s`, `5m`, or plain seconds; `0` = indefinitely): on
-timeout it exits with status 2 and prints the `clip wait -since` that resumes the wait without a
-gap, so the posted note isn't lost.
+take output on stderr for the end. `-reply-out <file>` also writes the reply's text to a local file
+(the newest match if several), sparing a follow-up `clip get -raw`. `-timeout` (default `2m`; `90s`,
+`5m`, or plain seconds; `0` = indefinitely): on timeout it exits with status 2 and prints the
+`clip wait -since` that resumes the wait without a gap, so the posted note isn't lost.
 
 ### wgcli clip edit [flags] <id> [text]
 Replaces a note's text (argument or `-f <file>`). `-title` replaces the title (`-title ""` clears

@@ -34,15 +34,28 @@ type statusOut struct {
 type transferSettings struct {
 	Transform  string `json:"transform"`
 	Backend    string `json:"backend"`
-	FrameSize  int64  `json:"frameSize"` // 0: the server's maximum (download) or 1 MiB (upload)
-	ChunkSize  int64  `json:"chunkSize"` // 0: each command's default
 	ParamCrypt bool   `json:"paramCrypt"`
+	// DownloadChunkSize and UploadChunkSize are the bytes per request each loop
+	// uses with no -chunk-size flag; upload 0 means the whole file in one request.
+	DownloadChunkSize int64 `json:"downloadChunkSize"`
+	UploadChunkSize   int64 `json:"uploadChunkSize"`
+	// FrameSize is the WS frame size (ws backend only); 0 means the server's
+	// maximum for downloads and 1 MiB for uploads.
+	FrameSize int64 `json:"frameSize"`
+	// ChunkSource and FrameSource are "env" when WGCLI_CHUNK_SIZE /
+	// WGCLI_FRAME_SIZE set the value, else "default".
+	ChunkSource string `json:"chunkSource"`
+	FrameSource string `json:"frameSource"`
 }
 
-// envTransferSettings reports the transfer defaults set by WGCLI_* variables,
-// rejecting values the transfer commands would reject.
+// envTransferSettings resolves the transfer defaults, applying WGCLI_* variables
+// over the built-in ones and rejecting values the transfer commands would reject.
 func envTransferSettings(g *globalFlags) (transferSettings, error) {
-	t := transferSettings{Transform: "id", Backend: "http"}
+	t := transferSettings{
+		Transform: "id", Backend: "http",
+		DownloadChunkSize: defaultDownloadChunkSize,
+		ChunkSource:       "default", FrameSource: "default",
+	}
 	_, t.ParamCrypt = g.paramKeys()
 	if v, ok := os.LookupEnv(transferEnv["transform"]); ok {
 		if _, err := buildTransformArgs(v, "", "", "", ""); err != nil {
@@ -56,32 +69,52 @@ func envTransferSettings(g *globalFlags) (transferSettings, error) {
 		}
 		t.Backend = v
 	}
-	for name, dst := range map[string]*int64{"frame-size": &t.FrameSize, "chunk-size": &t.ChunkSize} {
-		if v, ok := os.LookupEnv(transferEnv[name]); ok {
-			n, err := bytesize.Parse(v)
-			if err != nil {
-				return t, fmt.Errorf("%s=%q: %w", transferEnv[name], v, err)
-			}
-			*dst = n
+	if v, ok := os.LookupEnv(transferEnv["chunk-size"]); ok {
+		n, err := bytesize.Parse(v)
+		if err != nil {
+			return t, fmt.Errorf("%s=%q: %w", transferEnv["chunk-size"], v, err)
 		}
+		t.DownloadChunkSize, t.UploadChunkSize, t.ChunkSource = n, n, "env"
+	}
+	if v, ok := os.LookupEnv(transferEnv["frame-size"]); ok {
+		n, err := bytesize.Parse(v)
+		if err != nil {
+			return t, fmt.Errorf("%s=%q: %w", transferEnv["frame-size"], v, err)
+		}
+		t.FrameSize, t.FrameSource = n, "env"
 	}
 	return t, nil
 }
 
+// humanSize renders a byte count as a whole MiB/KiB where it divides evenly,
+// else plain bytes.
+func humanSize(n int64) string {
+	switch {
+	case n != 0 && n%(1<<20) == 0:
+		return fmt.Sprintf("%d MiB", n/(1<<20))
+	case n != 0 && n%(1<<10) == 0:
+		return fmt.Sprintf("%d KiB", n/(1<<10))
+	default:
+		return fmt.Sprintf("%d B", n)
+	}
+}
+
 func (t transferSettings) String() string {
-	frame, chunk := "default", "default"
-	if t.FrameSize > 0 {
-		frame = fmt.Sprint(t.FrameSize)
-	}
-	if t.ChunkSize > 0 {
-		chunk = fmt.Sprint(t.ChunkSize)
-	}
 	pc := "off"
 	if t.ParamCrypt {
 		pc = "on"
 	}
-	return fmt.Sprintf("transform %s, backend %s, frame size %s, chunk size %s, parameter encryption %s",
-		t.Transform, t.Backend, frame, chunk, pc)
+	upload := "one request per file"
+	if t.UploadChunkSize > 0 {
+		upload = humanSize(t.UploadChunkSize) + " chunks"
+	}
+	frame := "server max (download) / 1 MiB (upload)"
+	if t.FrameSize > 0 {
+		frame = humanSize(t.FrameSize)
+	}
+	return fmt.Sprintf("transform %s, backend %s, parameter encryption %s\n"+
+		"          download %s chunks, upload %s (chunk size: %s); WS frame %s (frame size: %s)",
+		t.Transform, t.Backend, pc, humanSize(t.DownloadChunkSize), upload, t.ChunkSource, frame, t.FrameSource)
 }
 
 // runStatus reports first the local configuration (server URL, transport,

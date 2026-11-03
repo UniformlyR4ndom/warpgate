@@ -49,7 +49,8 @@ func runUlList(args []string) error {
 	if err != nil {
 		return err
 	}
+	annotateListPaths(entries, "")
 
-	printEntries(g, entries)
+	printEntries(g, entries, false)
 	return nil
 }

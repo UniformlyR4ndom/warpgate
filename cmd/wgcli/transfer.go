@@ -19,6 +19,14 @@ import (
 	"warpgate/internal/transform"
 )
 
+// defaultDownloadChunkSize is the download loop's -chunk-size when no flag or
+// WGCLI_CHUNK_SIZE overrides it; defaultWSFrameSize is the WS frame size used
+// when none is requested.
+const (
+	defaultDownloadChunkSize = 4 << 20
+	defaultWSFrameSize       = 1 << 20
+)
+
 // xferOpts are the settings every file of a transfer shares.
 type xferOpts struct {
 	prefix        string // /api/files/ or /api/ul/ (downloads)

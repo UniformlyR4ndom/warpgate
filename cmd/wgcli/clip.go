@@ -11,6 +11,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -491,6 +492,7 @@ func runClipAsk(args []string) error {
 	search := fs.String("search", "", "treat only notes containing this as the reply (case-insensitive)")
 	scope := fs.String("scope", "all", "where -search looks: all|title|content (content includes image captions)")
 	anySource := fs.Bool("any-source", false, "also treat wgcli's own notes (source cli) as a reply")
+	replyOut := fs.String("reply-out", "", "on a reply, also write its text to this local file (the newest match if several)")
 	if err := parseFlags(fs, g, args); err != nil {
 		return err
 	}
@@ -516,7 +518,35 @@ func runClipAsk(args []string) error {
 	slices.SortFunc(found, func(a, b clipNoteMeta) int {
 		return cmp.Or(cmp.Compare(b.TS, a.TS), cmp.Compare(b.ID, a.ID))
 	})
+	if *replyOut != "" && len(found) > 0 {
+		if err := writeReplyFile(g, *replyOut, found[0]); err != nil {
+			return err
+		}
+	}
 	return printClipNotes(g, last, found, false)
+}
+
+// writeReplyFile writes a reply note's decoded text to a local file, within
+// the working directory.
+func writeReplyFile(g *globalFlags, name string, note clipNoteMeta) error {
+	data, err := base64.StdEncoding.DecodeString(note.Data)
+	if err != nil {
+		return fmt.Errorf("decoding note %d: %w", note.ID, err)
+	}
+	if d := filepath.Dir(name); d != "." {
+		if err := g.local.MkdirAll(d, 0o755); err != nil {
+			return err
+		}
+	}
+	f, err := g.local.Create(name)
+	if err != nil {
+		return err
+	}
+	if _, err := f.Write(data); err != nil {
+		_ = f.Close()
+		return err
+	}
+	return f.Close()
 }
 
 func runClipEdit(args []string) error {
