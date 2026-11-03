@@ -10,7 +10,7 @@ wgcli applies or reverses. The server also keeps a clipboard of text notes with 
 ## Typical workflow
 
 ```
-. ./wg.env && wgcli status                    # settings from a file, see Setup
+. ./wg.env && wgcli status                    # settings incl. WGCLI_ROOT, see Setup
 wgcli list evidence                           # look around
 wgcli download -r -o ./loot evidence          # fetch, verified
 wgcli upload -r ./results                     # send, verified
@@ -49,24 +49,26 @@ Global flags, accepted by every command; each falls back to its environment vari
 | `-json` | `WGCLI_JSON` | Print the result as one JSON document on stdout |
 | `-insecure` | `WGCLI_INSECURE` | Skip TLS certificate verification |
 | `-cert`, `-cert-key` | `WGCLI_CERT`, `WGCLI_CERT_KEY` | PEM client certificate and key, for servers requiring one |
-| `-root` | `WGCLI_ROOT` | Local working directory: every file wgcli reads (uploads, `-f`, images) or writes (downloads, `-o`) stays within it. A path leading outside it fails; an absolute path under it works, as a convenience |
-| `-no-root` | `WGCLI_NO_ROOT` | Read and write files anywhere, opting out of the `-root` requirement |
+| `-root` | `WGCLI_ROOT` | Local working directory, which must exist: every local path a command takes (uploads, `-f`, `-attach`, downloads, `-o`) stays within it. Relative paths are relative to it, not to the current directory; an absolute path under it works too; a path leading outside it fails. Excludes `-no-root` |
+| `-no-root` | `WGCLI_NO_ROOT` | Read and write files anywhere, opting out of the `-root` requirement; relative paths are relative to the current directory |
 
-A working directory is **required** for local file access: a command that reads or writes a local
-file (`download`, `upload`, `clip -f`/`-attach`, saving an attachment) fails unless `-root` is set,
-or `-no-root` is given to run unconfined on purpose. Commands that touch no local file (`status`,
-`list`, inline `clip new`, `wait-file`, `sim`, `register`, `derive-key`) work either way. Set `-root`
+A working directory is **required** for local file access: reading or writing a local file (the
+local paths of `download` and `upload`, `-f` and `-attach` of the `clip` commands, `-o` of
+`clip get-attachment`) fails unless `-root` is set, or `-no-root` is given to run unconfined on
+purpose. Everything else, including text given as an argument, works either way. `-cert`/`-cert-key`
+are read wherever they are. Set `-root`
 to the one directory an agent works in (e.g. an engagement folder), and a stray absolute or `../`
 path can't read or clobber files elsewhere by accident. It is a guard against mistakes, not a sandbox
 for a hostile client. Booleans in variables: `1`/`true`/`0`/`false`. A flag beats its variable. Keep the settings in a
 file and source it before each command (shell state often doesn't persist between commands):
 
 ```
-printf "export WGCLI_CONNECT=%s WGCLI_AUTH_KEY=%s\n" 'wg1…' "'passphrase'" > wg.env
+# run in the directory you work in; WGCLI_ROOT confines local files to it
+printf "export WGCLI_CONNECT=%s WGCLI_AUTH_KEY=%s WGCLI_ROOT=%s\n" 'wg1…' "'passphrase'" "$PWD" > wg.env
 . ./wg.env && wgcli status    # registers with the IP firewall if needed, checks the key
 # replace the passphrase with the derived key (saves the derivation on every call):
-. ./wg.env && printf "export WGCLI_CONNECT=%s WGCLI_AUTH_K=%s WGCLI_JSON=1 WGCLI_PARAM_CRYPT=1\n" \
-    "$WGCLI_CONNECT" "$(wgcli derive-key)" > wg.env
+. ./wg.env && printf "export WGCLI_CONNECT=%s WGCLI_AUTH_K=%s WGCLI_ROOT=%s WGCLI_JSON=1 WGCLI_PARAM_CRYPT=1\n" \
+    "$WGCLI_CONNECT" "$(wgcli derive-key)" "$WGCLI_ROOT" > wg.env
 ```
 
 Without a token, set `WGCLI_URL` instead, plus `WGCLI_INSECURE=1` for a self-signed certificate.
@@ -279,6 +281,8 @@ only that a wait timed out. HTTP errors read `<status>: <server text>`.
 
 | Message contains | Meaning | Action |
 |------------------|---------|--------|
+| `local file access needs a working directory` | Neither `-root` nor `-no-root` given | Set `WGCLI_ROOT` to the directory you work in |
+| `is outside the working directory` | A local path (absolute, or climbing out with `../`) leads outside `-root` | Use a path inside the root; ask the operator before resorting to `-no-root` |
 | `connect token is damaged` | Copy-paste error | Copy the whole token again |
 | `doesn't match the connect token` | Server certificate renewed, or wrong server; or (key) wrong passphrase | Ask the operator for a new token or the right passphrase |
 | `server returned its blank page` | Wrong path prefix in `-url`, or the IP firewall blocks you and registering failed (reason follows) | Check `-url`; registration closed or full: ask the operator; unknown registration URL: `wgcli register <url>` |
