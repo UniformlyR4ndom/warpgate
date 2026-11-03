@@ -64,10 +64,33 @@ func runClipWait(args []string) error {
 		return fmt.Errorf("-scope must be all, title or content")
 	}
 
-	rev := *since
+	found, last, rev, err := pollClipReply(g, *since, *timeout, *search, *scope, *anySource)
+	if errors.Is(err, errWaitTimeout) {
+		if last != nil {
+			last.Reset = false
+			_ = printClipNotes(g, last, nil, false)
+		}
+		return fmt.Errorf("%w after %s; continue with -since %d", errWaitTimeout, *timeout, rev)
+	}
+	if err != nil {
+		return err
+	}
+	slices.SortFunc(found, func(a, b clipNoteMeta) int {
+		return cmp.Or(cmp.Compare(b.TS, a.TS), cmp.Compare(b.ID, a.ID))
+	})
+	return printClipNotes(g, last, found, false)
+}
+
+// pollClipReply waits from revision start (negative: from the clipboard's
+// current revision) until a note is created or edited, skipping wgcli's own
+// notes unless anySource and, with search, requiring a match in scope. It
+// returns the matching notes, the last state seen (for a timeout printout)
+// and the revision reached.
+func pollClipReply(g *globalFlags, start int64, timeout time.Duration, search, scope string, anySource bool) ([]clipNoteMeta, *clipStateResponse, int64, error) {
+	rev := start
 	var last *clipStateResponse
 	var found []clipNoteMeta
-	err := pollUntil(*timeout, func() (bool, error) {
+	err := pollUntil(timeout, func() (bool, error) {
 		if rev < 0 {
 			state, err := fetchClipState(g, 0)
 			if err != nil {
@@ -87,12 +110,12 @@ func runClipWait(args []string) error {
 			return false, nil
 		}
 		for _, n := range state.Changed {
-			if n.Source == clipSourceCLI && !*anySource {
+			if n.Source == clipSourceCLI && !anySource {
 				continue
 			}
-			if *search != "" {
+			if search != "" {
 				data, err := base64.StdEncoding.DecodeString(n.Data)
-				if err != nil || !clipMatches(n, string(data), *search, *scope) {
+				if err != nil || !clipMatches(n, string(data), search, scope) {
 					continue
 				}
 			}
@@ -101,20 +124,7 @@ func runClipWait(args []string) error {
 		rev = state.Rev
 		return len(found) > 0, nil
 	})
-	if errors.Is(err, errWaitTimeout) {
-		if last != nil {
-			last.Reset = false
-			_ = printClipNotes(g, last, nil, false)
-		}
-		return fmt.Errorf("%w after %s; continue with -since %d", errWaitTimeout, *timeout, rev)
-	}
-	if err != nil {
-		return err
-	}
-	slices.SortFunc(found, func(a, b clipNoteMeta) int {
-		return cmp.Or(cmp.Compare(b.TS, a.TS), cmp.Compare(b.ID, a.ID))
-	})
-	return printClipNotes(g, last, found, false)
+	return found, last, rev, err
 }
 
 // fileVersion identifies a version of a file well enough to notice a new

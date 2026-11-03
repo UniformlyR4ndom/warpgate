@@ -5,6 +5,7 @@ import (
 	"cmp"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -377,73 +378,145 @@ func (f captionFlag) Set(v string) error {
 	return nil
 }
 
-func runClipNew(args []string) error {
-	fs := flag.NewFlagSet("clip new", flag.ContinueOnError)
-	g := addGlobalFlags(fs)
-	file := fs.String("f", "", "read note content from this file instead of the positional argument")
-	title := fs.String("title", "", "note title (optional)")
-	var images []clipImage
-	fs.Var(attachFlag{&images}, "attach", "image file to attach (repeatable); with at least one, the text is optional")
-	fs.Var(captionFlag{&images}, "caption", "caption of the preceding -attach")
-	transformName := fs.String("transform", "id", "transform to disguise the image bytes with")
-	key := fs.String("key", "", "transform key (hex), where applicable; random if omitted")
-	iv := fs.String("iv", "", "transform IV (hex), for aes-ctr; random if omitted")
-	if err := parseFlags(fs, g, args); err != nil {
-		return err
-	}
+// clipNoteFlags holds the note-content flags shared by "clip new" and
+// "clip ask".
+type clipNoteFlags struct {
+	file          *string
+	title         *string
+	images        *[]clipImage
+	transformName *string
+	key, iv       *string
+}
 
+func addClipNoteFlags(fs *flag.FlagSet) *clipNoteFlags {
+	images := new([]clipImage)
+	nf := &clipNoteFlags{
+		file:          fs.String("f", "", "read note content from this file instead of the positional argument"),
+		title:         fs.String("title", "", "note title (optional)"),
+		images:        images,
+		transformName: fs.String("transform", "id", "transform to disguise the image bytes with"),
+		key:           fs.String("key", "", "transform key (hex), where applicable; random if omitted"),
+		iv:            fs.String("iv", "", "transform IV (hex), for aes-ctr; random if omitted"),
+	}
+	fs.Var(attachFlag{images}, "attach", "image file to attach (repeatable); with at least one, the text is optional")
+	fs.Var(captionFlag{images}, "caption", "caption of the preceding -attach")
+	return nf
+}
+
+// clipNoteResult is what createClipNote produced: the new note's id and
+// server time, the revision just before it (so a wait from there can't miss
+// a reply), and the attached images.
+type clipNoteResult struct {
+	id, ts int64
+	before int64
+	atts   []clipAttachmentMeta
+}
+
+// createClipNote validates the note-content flags, posts the note and any
+// images, and reports where to wait for a reply.
+func createClipNote(g *globalFlags, fs *flag.FlagSet, nf *clipNoteFlags) (clipNoteResult, error) {
+	var res clipNoteResult
+	images := *nf.images
 	var data []byte
-	if len(images) == 0 || *file != "" || fs.NArg() > 0 {
+	if len(images) == 0 || *nf.file != "" || fs.NArg() > 0 {
 		var err error
-		if data, err = clipTextArg(fs, *file, 0); err != nil {
-			return err
+		if data, err = clipTextArg(fs, *nf.file, 0); err != nil {
+			return res, err
 		}
 	}
 	for _, img := range images {
 		if mimeForExt(img.path) == "application/octet-stream" {
-			return fmt.Errorf("%s: unsupported image type (png, jpg, gif, webp, bmp)", img.path)
+			return res, fmt.Errorf("%s: unsupported image type (png, jpg, gif, webp, bmp)", img.path)
 		}
 		if _, err := os.Stat(img.path); err != nil {
-			return err
+			return res, err
 		}
 	}
 	var t transform.Transformer
 	var targs json.RawMessage
 	if len(images) > 0 {
 		var err error
-		if targs, err = buildTransformArgs(*transformName, *key, *iv, "", "attachment"); err != nil {
-			return err
+		if targs, err = buildTransformArgs(*nf.transformName, *nf.key, *nf.iv, "", "attachment"); err != nil {
+			return res, err
 		}
-		if t, err = transform.New(*transformName, targs); err != nil {
-			return err
+		if t, err = transform.New(*nf.transformName, targs); err != nil {
+			return res, err
 		}
 	}
 
-	// The revision before the note: "clip wait -since" from it can't miss
-	// a reply, however fast it comes.
 	before, err := fetchClipState(g, 0)
 	if err != nil {
+		return res, err
+	}
+	res.before = before.Rev
+	if res.id, res.ts, err = postClipNew(g, *nf.title, data); err != nil {
+		return res, err
+	}
+	res.atts = []clipAttachmentMeta{}
+	for _, img := range images {
+		meta, err := postClipAttachment(g, res.id, img.path, img.caption, *nf.transformName, targs, t)
+		if err != nil {
+			return res, fmt.Errorf("note %d created with %d of %d image(s); attaching %s failed: %w", res.id, len(res.atts), len(images), img.path, err)
+		}
+		res.atts = append(res.atts, meta)
+	}
+	return res, nil
+}
+
+func runClipNew(args []string) error {
+	fs := flag.NewFlagSet("clip new", flag.ContinueOnError)
+	g := addGlobalFlags(fs)
+	nf := addClipNoteFlags(fs)
+	if err := parseFlags(fs, g, args); err != nil {
 		return err
 	}
-	id, ts, err := postClipNew(g, *title, data)
+	res, err := createClipNote(g, fs, nf)
 	if err != nil {
 		return err
 	}
-	atts := []clipAttachmentMeta{}
-	for _, img := range images {
-		meta, err := postClipAttachment(g, id, img.path, img.caption, *transformName, targs, t)
-		if err != nil {
-			return fmt.Errorf("note %d created with %d of %d image(s); attaching %s failed: %w", id, len(atts), len(images), img.path, err)
-		}
-		atts = append(atts, meta)
+	msg := fmt.Sprintf("created note %d at %s", res.id, time.Unix(res.ts, 0).Format(time.RFC3339))
+	if len(res.atts) > 0 {
+		msg += fmt.Sprintf(" with %d image(s)", len(res.atts))
 	}
-	msg := fmt.Sprintf("created note %d at %s", id, time.Unix(ts, 0).Format(time.RFC3339))
-	if len(atts) > 0 {
-		msg += fmt.Sprintf(" with %d image(s)", len(atts))
-	}
-	msg += fmt.Sprintf("; replies: clip wait -since %d, files: wait-file -since %d", before.Rev, ts)
-	g.report(map[string]any{"id": id, "ts": ts, "since": before.Rev, "attachments": atts}, "%s", msg)
+	msg += fmt.Sprintf("; replies: clip wait -since %d, files: wait-file -since %d", res.before, res.ts)
+	g.report(map[string]any{"id": res.id, "ts": res.ts, "since": res.before, "attachments": res.atts}, "%s", msg)
 	return nil
+}
+
+func runClipAsk(args []string) error {
+	fs := flag.NewFlagSet("clip ask", flag.ContinueOnError)
+	g := addGlobalFlags(fs)
+	nf := addClipNoteFlags(fs)
+	timeout := durationFlag(fs, "timeout", 2*time.Minute, "give up waiting after this long, exit status 2 (0 = wait indefinitely)")
+	search := fs.String("search", "", "treat only notes containing this as the reply (case-insensitive)")
+	scope := fs.String("scope", "all", "where -search looks: all|title|content (content includes image captions)")
+	anySource := fs.Bool("any-source", false, "also treat wgcli's own notes (source cli) as a reply")
+	if err := parseFlags(fs, g, args); err != nil {
+		return err
+	}
+	if *scope != "all" && *scope != "title" && *scope != "content" {
+		return fmt.Errorf("-scope must be all, title or content")
+	}
+	res, err := createClipNote(g, fs, nf)
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(os.Stderr, "wgcli: posted note %d; waiting for a reply (timeout %s)...\n", res.id, time.Duration(*timeout))
+	found, last, rev, err := pollClipReply(g, res.before, time.Duration(*timeout), *search, *scope, *anySource)
+	if errors.Is(err, errWaitTimeout) {
+		if last != nil {
+			last.Reset = false
+			_ = printClipNotes(g, last, nil, false)
+		}
+		return fmt.Errorf("%w after %s; note %d is posted — wait for the reply with: clip wait -since %d", errWaitTimeout, time.Duration(*timeout), res.id, rev)
+	}
+	if err != nil {
+		return err
+	}
+	slices.SortFunc(found, func(a, b clipNoteMeta) int {
+		return cmp.Or(cmp.Compare(b.TS, a.TS), cmp.Compare(b.ID, a.ID))
+	})
+	return printClipNotes(g, last, found, false)
 }
 
 func runClipEdit(args []string) error {
@@ -505,7 +578,7 @@ func runClipDelete(args []string) error {
 
 func runClip(args []string) error {
 	if len(args) < 1 {
-		return fmt.Errorf("usage: wgcli clip <list|get|new|edit|delete|attach|get-attachment|delete-attachment|caption|wait> [flags] [args...]")
+		return fmt.Errorf("usage: wgcli clip <list|get|new|ask|edit|delete|attach|get-attachment|delete-attachment|caption|wait> [flags] [args...]")
 	}
 	sub, rest := args[0], args[1:]
 	switch sub {
@@ -515,6 +588,8 @@ func runClip(args []string) error {
 		return runClipGet(rest)
 	case "new":
 		return runClipNew(rest)
+	case "ask":
+		return runClipAsk(rest)
 	case "edit":
 		return runClipEdit(rest)
 	case "delete":

@@ -171,6 +171,16 @@ JSON: `{"id","ts","since","attachments"}`: pass `since` to `clip wait -since` an
 is the clipboard's revision before this note (it counts every change; 0 on an empty clipboard),
 `ts` the server's Unix time.
 
+### wgcli clip ask [flags] [text]
+Posts a note (same content flags as `clip new`: text or `-f`, `-title`, `-attach`/`-caption`,
+`-transform`/`-key`/`-iv`) and then waits for the operator's reply in one step, so you needn't
+thread `since` yourself. It waits from the revision just before the note, so a reply can't be
+missed however fast it comes; it ignores its own note unless `-any-source`, and `-search`/`-scope`
+(as in `clip list`) restrict what counts as the reply. On a reply it prints the note(s) like
+`clip list`. `-timeout` (default `2m`; `90s`, `5m`, or plain seconds; `0` = indefinitely): on
+timeout it exits with status 2 and prints the `clip wait -since` that resumes the wait without a
+gap, so the posted note isn't lost.
+
 ### wgcli clip edit [flags] <id> [text]
 Replaces a note's text (argument or `-f <file>`). `-title` replaces the title (`-title ""` clears
 it); without `-title` the title stays. JSON: `{"id"}`.
@@ -208,10 +218,14 @@ arrived before the wait started. Files appear only when completely uploaded. `-t
 `clip wait` (status 2, prints `[]`). JSON: `[{"path","size","mtime","sha256"}]`.
 
 **Asking the operator for something:**
-1. `wgcli clip new "please paste …"`, keeping `since` and `ts` from its output.
-2. `wgcli clip wait -since <since>` for a reply note, or `wgcli wait-file -ul -since <ts>` for an
-   upload, in the background if your environment allows it, so you stay responsive when the
-   operator takes a while or changes plans; otherwise with short timeouts, repeated.
+- For a reply note, `wgcli clip ask "please paste …"` does it in one step: it posts the note and
+  blocks until a reply, with no `since` to carry. Run it in the background if your environment
+  allows it, so you stay responsive while the operator takes their time; otherwise rely on its
+  `-timeout` and the `clip wait -since` it prints to resume.
+- To do it by hand, or to wait for an uploaded *file* rather than a note:
+  1. `wgcli clip new "please paste …"`, keeping `since` and `ts` from its output.
+  2. `wgcli clip wait -since <since>` for a reply note, or `wgcli wait-file -ul -since <ts>` for an
+     upload.
 Without `-since`, a wait counts from its own start and misses anything that arrived earlier, for
 example while a failed wait was being retried. Server restarts during a wait are ridden out.
 

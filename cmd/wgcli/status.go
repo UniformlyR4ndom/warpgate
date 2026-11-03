@@ -16,16 +16,19 @@ import (
 )
 
 type statusOut struct {
-	URL        string `json:"url"`
-	TLS        bool   `json:"tls"`
-	Pinned     bool   `json:"pinned"`
+	URL    string `json:"url"`
+	TLS    bool   `json:"tls"`
+	Pinned bool   `json:"pinned"`
+	// Transfer holds what transfers use unless their flags say otherwise.
+	Transfer transferSettings `json:"transfer"`
+	KeyID    string           `json:"keyId,omitempty"`
+	// Reachable and below are set once the server answers.
+	Reachable  bool   `json:"reachable"`
 	Registered bool   `json:"registered"`
 	Uploads    bool   `json:"uploads"`
 	UlFlat     bool   `json:"ulFlat"`
 	Auth       string `json:"auth"`
-	KeyID      string `json:"keyId,omitempty"`
-	// Transfer holds what transfers use unless their flags say otherwise.
-	Transfer transferSettings `json:"transfer"`
+	Error      string `json:"error,omitempty"`
 }
 
 type transferSettings struct {
@@ -81,8 +84,11 @@ func (t transferSettings) String() string {
 		t.Transform, t.Backend, frame, chunk, pc)
 }
 
-// runStatus checks, in order, that the server is reachable (registering with
-// the IP firewall if it blocks), what it offers, and that the key works.
+// runStatus reports first the local configuration (server URL, transport,
+// transfer settings, key), which needs no server, then contacts the server
+// (registering with the IP firewall if it blocks) for what it offers and
+// whether the key works. A local error or an unreachable server still leaves
+// the local section printed.
 func runStatus(args []string) error {
 	fs := flag.NewFlagSet("status", flag.ContinueOnError)
 	g := addGlobalFlags(fs)
@@ -94,31 +100,58 @@ func runStatus(args []string) error {
 		TLS:    strings.HasPrefix(g.url, "https://"),
 		Pinned: g.token != nil && g.token.CertPin != nil,
 	}
+	transfer, transferErr := envTransferSettings(g)
+	out.Transfer = transfer
+	keyConfigured := g.authKey != "" || g.authK != ""
+	if id, ok := g.localKeyID(); ok {
+		out.KeyID = id
+	}
 
-	settings, err := g.fetchSettings()
-	if err != nil {
-		return fmt.Errorf("reaching the server: %w", err)
-	}
-	out.Uploads, out.UlFlat, out.Registered = settings.Uploads, settings.UlFlat, g.registered
-
-	k, err := g.key()
-	if err != nil {
-		return err
-	}
-	if k != nil {
-		out.KeyID = authhash.Fingerprint(k)
-	}
-	if out.Auth, err = g.checkAuth(k != nil); err != nil {
-		return err
-	}
-	if out.Transfer, err = envTransferSettings(g); err != nil {
+	// gather fills the network part of out; the key ID becomes available here
+	// too when it was derived from a passphrase (the salt comes from the server).
+	gather := func() error {
+		settings, err := g.fetchSettings()
+		if err != nil {
+			return fmt.Errorf("reaching the server: %w", err)
+		}
+		out.Reachable = true
+		out.Uploads, out.UlFlat, out.Registered = settings.Uploads, settings.UlFlat, g.registered
+		k, err := g.key()
+		if err != nil {
+			return err
+		}
+		if k != nil {
+			out.KeyID = authhash.Fingerprint(k)
+		}
+		out.Auth, err = g.checkAuth(k != nil)
 		return err
 	}
 
 	if g.json {
+		err := transferErr
+		if err == nil {
+			err = gather()
+		}
+		if err != nil {
+			out.Error = err.Error()
+		}
 		printJSON(out)
-		return nil
+		return err
 	}
+
+	printStatusLocal(out, keyConfigured, transferErr)
+	if transferErr != nil {
+		return transferErr
+	}
+	if err := gather(); err != nil {
+		fmt.Printf("error:    %v\n", err)
+		return err
+	}
+	printStatusServer(out)
+	return nil
+}
+
+func printStatusLocal(out statusOut, keyConfigured bool, transferErr error) {
 	tls := "plain HTTP"
 	if out.TLS {
 		tls = "TLS"
@@ -127,6 +160,22 @@ func runStatus(args []string) error {
 		}
 	}
 	fmt.Printf("server:   %s (%s)\n", out.URL, tls)
+	switch {
+	case out.KeyID != "":
+		fmt.Printf("key:      configured (key ID %s)\n", out.KeyID)
+	case keyConfigured:
+		fmt.Println("key:      configured (passphrase; key ID shown once the server is reached)")
+	default:
+		fmt.Println("key:      none")
+	}
+	if transferErr != nil {
+		fmt.Printf("transfer: invalid: %v\n", transferErr)
+	} else {
+		fmt.Printf("transfer: %s\n", out.Transfer)
+	}
+}
+
+func printStatusServer(out statusOut) {
 	if out.Registered {
 		fmt.Println("firewall: this IP was registered now")
 	}
@@ -143,8 +192,6 @@ func runStatus(args []string) error {
 	} else {
 		fmt.Println("auth:     disabled on the server")
 	}
-	fmt.Printf("transfer: %s\n", out.Transfer)
-	return nil
 }
 
 type serverSettings struct {

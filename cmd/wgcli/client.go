@@ -210,6 +210,19 @@ func (g *globalFlags) key() ([]byte, error) {
 	return g.k, g.keyErr
 }
 
+// localKeyID returns the key fingerprint when it can be derived without the
+// server, i.e. from -auth-k (a passphrase needs the salt the server serves).
+func (g *globalFlags) localKeyID() (string, bool) {
+	if g.authK == "" {
+		return "", false
+	}
+	k, err := hex.DecodeString(g.authK)
+	if err != nil || len(k) != authhash.KeySize {
+		return "", false
+	}
+	return authhash.Fingerprint(k), true
+}
+
 // applyConnectToken sets the URL and certificate pin from -connect.
 func (g *globalFlags) applyConnectToken(urlGiven bool) error {
 	if g.connect == "" {
