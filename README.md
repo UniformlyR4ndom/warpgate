@@ -1,6 +1,6 @@
 # Warpgate
 
-Warpgate is a file server designed to bypass restrictive web proxies that perform deep-packet inspection. Files are served through a configurable *transform* that disguises their content, for example as an encrypted byte stream, a PDF attachment, or a base64-encoded HTML page. The browser-based frontend reverses the transform to recover the original file. Uploads work in the opposite direction: the frontend applies the transform before sending and the server reverses it on receipt.
+Warpgate is a file server for security professionals who need to move their own files across content-inspecting web proxies (for example during authorized penetration-testing engagements). Files are served through a configurable *transform* that reshapes their content — as an encrypted byte stream, a PDF attachment, or a base64-encoded HTML page — so that proxies performing deep-packet inspection pass them through. The browser-based frontend reverses the transform to recover the original file. Uploads work in the opposite direction: the frontend applies the transform before sending and the server reverses it on receipt.
 
 All frontend assets are embedded in the server binary; no internet access is required at runtime.
 
