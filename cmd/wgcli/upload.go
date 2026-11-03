@@ -262,7 +262,8 @@ func runUpload(args []string) error {
 	fs := flag.NewFlagSet("upload", flag.ContinueOnError)
 	g := addGlobalFlags(fs)
 	remoteName := fs.String("remote-name", "", "name to store the file as on the server (one file only; default: the local base name)")
-	dir := fs.String("dir", "", "existing directory below the upload root to upload into (default: the upload root)")
+	dir := fs.String("dir", "", "directory below the upload root to upload into (default: the upload root); must exist unless -p is given")
+	parents := fs.Bool("p", false, "create -dir (and any missing parents) first, like mkdir -p, instead of failing when it doesn't exist")
 	recursive := fs.Bool("r", false, "upload directories with their contents")
 	force := fs.Bool("force", false, "with several paths or -r: also upload files that are unchanged on the server")
 	transformName := fs.String("transform", "id", "transform: id|xor|aes-ctr|pdf|html-b64")
@@ -310,6 +311,12 @@ func runUpload(args []string) error {
 	o := xferOpts{
 		transformName: *transformName, transformArgs: transformArgs, transformer: transformer,
 		chunkSize: *chunkSize, frameSize: *frameSize, ws: *backend == "ws",
+	}
+
+	if *parents && *dir != "" {
+		if _, err := mkdirParents(g, *dir); err != nil {
+			return err
+		}
 	}
 
 	if many {

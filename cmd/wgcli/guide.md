@@ -152,10 +152,12 @@ hash matched); several (see "Transfer summary"):
 `{"transferred":[{"path","out","bytes","sha256","verified"}],"skipped","failed","bytes","transform","seconds"}`.
 
 ### wgcli upload [flags] <local>...
-Uploads into the upload directory, or into its existing subdirectory `-dir`; each path lands there
-under its own name (`-remote-name` renames a single file). `-r` uploads directories with their
-contents, creating subdirectories (at most 4 levels below the upload root; checked before anything
-is sent); links to directories and special files are skipped. **An existing file of the same name
+Uploads into the upload directory, or into its subdirectory `-dir`; each path lands there
+under its own name (`-remote-name` renames a single file). `-dir` must already exist unless `-p`
+is given, which creates it and any missing parents first, like `mkdir -p` (still at most 4 levels
+below the upload root). `-r` uploads directories with their contents, creating subdirectories (at
+most 4 levels below the upload root; checked before anything is sent); links to directories and
+special files are skipped. **An existing file of the same name
 is replaced without warning**, except that with several paths or `-r` identical files are skipped
 (`-force`: upload anyway). The server's SHA-256 of each stored file is compared with the local
 one. `-chunk-size` splits each file into sequential requests (HTTP only; default: one request);

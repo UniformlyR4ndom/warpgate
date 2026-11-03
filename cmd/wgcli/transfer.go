@@ -379,7 +379,7 @@ func uploadMany(g *globalFlags, o xferOpts, args []string, remoteDir string, rec
 			entries, err := fetchList(g, "/api/ul/", d)
 			if err != nil {
 				if d == remoteDir {
-					return fmt.Errorf("listing the upload target %q: %w", "/"+remoteDir, err)
+					return fmt.Errorf("listing the upload target %q: %w (if it does not exist, pass -p to create it, or run mkdir -p first)", "/"+remoteDir, err)
 				}
 				create = append(create, d)
 				continue
