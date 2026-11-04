@@ -123,9 +123,21 @@ func (s *Server) handleWSDownload(w http.ResponseWriter, r *http.Request, root *
 			writeWSClose(conn, websocket.CloseNormalClosure, "")
 			return
 		}
-		if chunkReq.Size <= 0 {
-			s.writeWSError(conn, encrypted, websocket.CloseInternalServerErr, "size must be positive")
+		if chunkReq.Size <= 0 || chunkReq.Start < 0 {
+			s.writeWSError(conn, encrypted, websocket.CloseInternalServerErr, "start must be non-negative and size positive")
 			return
+		}
+
+		// Clamp the requested range to the file size announced at handshake,
+		// so the length announced below is always one we can actually
+		// deliver. A request reaching past EOF yields a shorter (possibly
+		// empty) chunk, mirroring the HTTP download path, which streams
+		// whatever bytes exist in the range. Without this the loop would
+		// announce EncodedLen(chunkReq.Size) but send fewer bytes, leaving
+		// the client blocked for data that never comes until the idle timeout.
+		effSize := chunkReq.Size
+		if avail := info.Size() - chunkReq.Start; effSize > avail {
+			effSize = max(avail, 0)
 		}
 
 		if _, err := f.Seek(chunkReq.Start, io.SeekStart); err != nil {
@@ -133,7 +145,7 @@ func (s *Server) handleWSDownload(w http.ResponseWriter, r *http.Request, root *
 			return
 		}
 
-		reader, err := transformer.Transform(io.LimitReader(f, chunkReq.Size))
+		reader, err := transformer.Transform(io.LimitReader(f, effSize))
 		if err != nil {
 			s.writeWSError(conn, encrypted, websocket.CloseInternalServerErr, "internal error")
 			return
@@ -141,13 +153,13 @@ func (s *Server) handleWSDownload(w http.ResponseWriter, r *http.Request, root *
 
 		// The client needs the exact transformed length before it can know
 		// how many bytes to read off the wire for this chunk (it isn't
-		// always chunkReq.Size — e.g. pdf, html-b64). Transforms that can
+		// always effSize — e.g. pdf, html-b64). Transforms that can
 		// compute it without materializing their output do so (streaming is
 		// preserved); the rest are fully buffered here so the length can be
 		// measured directly.
 		var chunkLen int64
 		if st, ok := transformer.(transform.SizedTransformer); ok {
-			chunkLen = st.EncodedLen(chunkReq.Size)
+			chunkLen = st.EncodedLen(effSize)
 		} else {
 			data, err := io.ReadAll(reader)
 			if err != nil {
@@ -165,6 +177,7 @@ func (s *Server) handleWSDownload(w http.ResponseWriter, r *http.Request, root *
 		// WS messages instead of relying on gorilla's connection-wide buffer
 		// to auto-fragment one big message: this makes frame size a
 		// per-request value instead of a fixed per-connection one.
+		var sent int64
 		for {
 			n, rerr := io.ReadFull(reader, frameBuf)
 			if n > 0 {
@@ -172,6 +185,7 @@ func (s *Server) handleWSDownload(w http.ResponseWriter, r *http.Request, root *
 					log.Printf("ws download: writing frame for %q: %v", req.Path, werr)
 					return
 				}
+				sent += int64(n)
 			}
 			if rerr == io.EOF || rerr == io.ErrUnexpectedEOF {
 				break
@@ -180,6 +194,17 @@ func (s *Server) handleWSDownload(w http.ResponseWriter, r *http.Request, root *
 				log.Printf("ws download: reading chunk data for %q: %v", req.Path, rerr)
 				return
 			}
+		}
+
+		// The announced length is exact for the buffered branch and for the
+		// sized transforms under a stable file. A shortfall here means the
+		// file was truncated after the handshake stat: the client is still
+		// waiting for the missing bytes, so fail the transfer instead of
+		// returning to the request loop and deadlocking until the idle timeout.
+		if sent != chunkLen {
+			log.Printf("ws download: %q delivered %d of %d announced bytes (file changed during transfer)", req.Path, sent, chunkLen)
+			s.writeWSError(conn, encrypted, websocket.CloseInternalServerErr, "file changed during transfer")
+			return
 		}
 	}
 }

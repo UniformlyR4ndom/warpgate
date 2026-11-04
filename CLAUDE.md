@@ -278,8 +278,12 @@ among them) can drop the connection on large frames. So the client picks `frameS
    or `{"ok":false,"error"}`
 3. C→S, one at a time: `{"start","size"}` for a chunk, or `{"done":true}`
 4. S→C `{"ok":true,"chunkSize":N}`: the *transformed* length, since `pdf`/`html-b64` output is longer
-   than the input. Transforms implementing `transform.SizedTransformer` (`EncodedLen`: all but `pdf`)
-   stream; `pdf` output is buffered to measure it.
+   than the input. The plaintext range is first clamped to the file size announced at handshake, so
+   a request reaching past EOF yields a shorter (possibly empty) chunk rather than announcing bytes
+   the server can't deliver (which would stall the client). Transforms implementing
+   `transform.SizedTransformer` (`EncodedLen`: all but `pdf`) stream; `pdf` output is buffered to
+   measure it. A delivery falling short of the announced length (file truncated mid-transfer) is a
+   terminal error, not a return to the request loop.
 5. S→C binary messages of ≤ `frameSize`, `chunkSize` bytes in total
 6. Any error: `{"ok":false,"error"}`, then close
 

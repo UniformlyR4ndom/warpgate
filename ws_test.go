@@ -272,6 +272,88 @@ func TestWSDownloadChunkSizeAnnouncement(t *testing.T) {
 	}
 }
 
+// TestWSDownloadBeyondEOF is the regression test for the stall where a chunk
+// request reaching past the end of the file made the server announce the
+// requested length (EncodedLen(reqSize)) but deliver fewer bytes, leaving the
+// client blocked for data that never arrived until the idle timeout. The
+// server now clamps the announced length to what the file can actually
+// provide, mirroring the HTTP path.
+func TestWSDownloadBeyondEOF(t *testing.T) {
+	root := t.TempDir()
+	content := []byte("abc") // three bytes
+	if err := os.WriteFile(filepath.Join(root, "small.bin"), content, 0o644); err != nil {
+		t.Fatalf("writing test file: %v", err)
+	}
+	ts := newSimTestServer(t, Config{Root: root, NoAuth: true, WSFrameMax: 16 * 1024 * 1024})
+
+	// start within the file but size reaching well past EOF; and a request
+	// starting exactly at EOF, which must announce and deliver nothing.
+	cases := []struct {
+		name     string
+		start    int64
+		size     int64
+		wantSize int64
+	}{
+		{"size past EOF", 0, 10, int64(len(content))},
+		{"partial past EOF", 1, 10, int64(len(content)) - 1},
+		{"start at EOF", int64(len(content)), 10, 0},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			conn, _, err := websocket.DefaultDialer.Dial(wsURL(ts, "/api/files/ws/download"), nil)
+			if err != nil {
+				t.Fatalf("dial: %v", err)
+			}
+			defer conn.Close()
+
+			if err := conn.WriteJSON(wsDownloadRequest{Path: "small.bin", Transform: "id"}); err != nil {
+				t.Fatalf("writing request: %v", err)
+			}
+			var ack wsAck
+			if err := conn.ReadJSON(&ack); err != nil {
+				t.Fatalf("reading ack: %v", err)
+			}
+			if !ack.OK || ack.Size != int64(len(content)) {
+				t.Fatalf("unexpected ack: %+v", ack)
+			}
+
+			if err := conn.WriteJSON(wsChunkRequest{Start: tc.start, Size: tc.size}); err != nil {
+				t.Fatalf("writing chunk request: %v", err)
+			}
+			var chunkAck wsAck
+			if err := conn.ReadJSON(&chunkAck); err != nil {
+				t.Fatalf("reading chunk ack: %v", err)
+			}
+			if !chunkAck.OK || chunkAck.ChunkSize != tc.wantSize {
+				t.Fatalf("chunk ack = %+v, want ChunkSize %d", chunkAck, tc.wantSize)
+			}
+
+			// Reading exactly the announced number of bytes must not block:
+			// bound each read so a short delivery fails fast instead of hanging.
+			var got []byte
+			for int64(len(got)) < chunkAck.ChunkSize {
+				_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+				mt, p, err := conn.ReadMessage()
+				if err != nil {
+					t.Fatalf("reading chunk (announced %d, got %d so far): %v", chunkAck.ChunkSize, len(got), err)
+				}
+				if mt != websocket.BinaryMessage {
+					t.Fatalf("expected binary message, got type %d", mt)
+				}
+				got = append(got, p...)
+			}
+			if string(got) != string(content[tc.start:tc.start+chunkAck.ChunkSize]) {
+				t.Fatalf("delivered bytes %q, want %q", got, content[tc.start:tc.start+chunkAck.ChunkSize])
+			}
+
+			// The connection must still be usable for the next request.
+			if err := conn.WriteJSON(wsChunkRequest{Done: true}); err != nil {
+				t.Fatalf("writing done: %v", err)
+			}
+		})
+	}
+}
+
 func TestWSUploadRoundTrip(t *testing.T) {
 	ulRoot := t.TempDir()
 	ts := newSimTestServer(t, Config{Root: t.TempDir(), UlRoot: ulRoot, NoAuth: true, WSFrameMax: 16 * 1024 * 1024})
