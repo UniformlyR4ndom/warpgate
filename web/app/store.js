@@ -79,6 +79,7 @@ export const state = deepSignal({
   clipEditId: null,
   clipSearch: '',
   clipError: null,
+  clipSubmitting: false,
   authShowKey: false,
   wsFrameMinKB: 1,
   wsFrameMaxKB: 262144,

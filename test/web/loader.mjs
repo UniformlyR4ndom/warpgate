@@ -7,6 +7,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 const redirects = {
   'store.js': pathToFileURL(join(here, 'stub-store.mjs')).href,
   'pdf.min.mjs': pathToFileURL(join(here, 'stub-pdf.mjs')).href,
+  'api.js': pathToFileURL(join(here, 'stub-api.mjs')).href,
 };
 
 export function resolve(specifier, context, nextResolve) {

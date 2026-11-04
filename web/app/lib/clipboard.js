@@ -221,13 +221,6 @@ export function removePendingAttachment(i) {
   state.pendingAttachments.splice(i, 1);
 }
 
-function clearPendingAttachments() {
-  state.pendingAttachments.forEach(function(pa) {
-    try { URL.revokeObjectURL(pa.url); } catch(e) {}
-  });
-  state.pendingAttachments = [];
-}
-
 async function uploadAttachment(noteId, pa) {
   var tx    = snapshotTransform();
   var bytes = new Uint8Array(await pa.blob.arrayBuffer());
@@ -262,7 +255,8 @@ export async function createNote(title, text, source) {
 }
 
 export async function submitClip() {
-  if (!canSubmitClip()) return;
+  if (!canSubmitClip() || state.clipSubmitting) return;
+  state.clipSubmitting = true;
   state.clipError = null;
   var editing = state.clipEditId !== null;
   try {
@@ -273,6 +267,9 @@ export async function submitClip() {
       if (!res.ok) throw new Error('HTTP ' + res.status);
     } else {
       noteId = await createNote(state.clipTitle, state.clipText, '');
+      // Keep the new id so a retry after a later step fails updates this note
+      // instead of creating a duplicate.
+      state.clipEditId = noteId;
     }
     for (var r = 0; r < state.clipRemovedAttachments.length; r++) {
       await apiDeleteAttachment(state.clipRemovedAttachments[r]);
@@ -286,14 +283,18 @@ export async function submitClip() {
         await apiEditAttachmentCaption(att.id, caption);
       }
     }
-    for (var i = 0; i < state.pendingAttachments.length; i++) {
-      await uploadAttachment(noteId, state.pendingAttachments[i]);
+    // Drop each image as it uploads, so a retry doesn't re-upload one that
+    // already succeeded.
+    while (state.pendingAttachments.length) {
+      await uploadAttachment(noteId, state.pendingAttachments[0]);
+      removePendingAttachment(0);
     }
-    clearPendingAttachments();
     cancelEdit();
     await reloadClipboard();
   } catch(err) {
     state.clipError = (editing ? 'Failed to update note (' : 'Failed to submit note (') + err.message + ')';
+  } finally {
+    state.clipSubmitting = false;
   }
 }
 
@@ -351,5 +352,7 @@ async function apiDeleteAttachment(id) {
   var res = await apiFetch(API_BASE + '/api/clip/attachment/delete', {
     method: 'DELETE', headers: jsonHeaders(), body: encodeBody({ id: id }),
   });
-  if (!res.ok) throw new Error('HTTP ' + res.status);
+  // 404 means it's already gone, so a retried submit that re-runs this delete
+  // succeeds idempotently.
+  if (!res.ok && res.status !== 404) throw new Error('HTTP ' + res.status);
 }

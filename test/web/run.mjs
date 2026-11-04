@@ -18,3 +18,4 @@ await import('./transform.test.mjs');
 await import('./loadguard.test.mjs');
 await import('./ws.test.mjs');
 await import('./chunksize.test.mjs');
+await import('./clipboard.test.mjs');

@@ -30,25 +30,27 @@ function Composer(props) {
   return html`
     <div class="clip-compose">
       <input type="text" class="clip-title-input" ...${text(state, 'clipTitle')} maxlength="200" placeholder="Title (optional)"
-             onPaste=${handleClipPaste} onKeyDown=${onTitleKey} />
+             onPaste=${handleClipPaste} onKeyDown=${onTitleKey} disabled=${state.clipSubmitting} />
       <textarea class="clip-textarea" ...${text(state, 'clipText')} ref=${props.textareaRef}
-                placeholder="Type a note, or paste an image…" onPaste=${handleClipPaste} onKeyDown=${onTextKey}></textarea>
+                placeholder="Type a note, or paste an image…" onPaste=${handleClipPaste} onKeyDown=${onTextKey}
+                disabled=${state.clipSubmitting}></textarea>
       ${state.pendingAttachments.length > 0 && html`
         <div class="clip-pending">
           ${state.pendingAttachments.map((pa, i) => html`
             <div class="clip-fig" key=${pa.url}>
               <div class="clip-thumb">
                 <img src=${pa.url} alt="" />
-                <button class="clip-thumb-del" onClick=${() => removePendingAttachment(i)} title="Remove image">✕</button>
+                <button class="clip-thumb-del" onClick=${() => removePendingAttachment(i)} title="Remove image"
+                        disabled=${state.clipSubmitting}>✕</button>
               </div>
               <input type="text" class="clip-caption-input" ...${text(state.pendingAttachments[i], 'caption')} maxlength="200"
                      placeholder="Caption" title=${pa.caption || 'Caption (optional); also used as the download file name'}
-                     onKeyDown=${captionKey} />
+                     onKeyDown=${captionKey} disabled=${state.clipSubmitting} />
             </div>`)}
         </div>`}
       <div class="clip-btn-row">
-        <button class="choose-btn" onClick=${submitClip} disabled=${!canSubmitClip()}>${editing ? 'Update' : 'Submit'}</button>
-        ${editing && html`<button class="choose-btn" onClick=${cancelEdit}>Cancel</button>`}
+        <button class="choose-btn" onClick=${submitClip} disabled=${!canSubmitClip() || state.clipSubmitting}>${editing ? 'Update' : 'Submit'}</button>
+        ${editing && html`<button class="choose-btn" onClick=${cancelEdit} disabled=${state.clipSubmitting}>Cancel</button>`}
       </div>
     </div>`;
 }
