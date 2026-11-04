@@ -372,8 +372,12 @@ paths:
           description: Invalid or path-traversal path, or a segment named `.warpgate-tmp`.
         "401":
           description: |
-            Missing or invalid `X-Auth` header, or the request body is malformed or fails to
-            decrypt (see CLAUDE.md's "Parameter Encryption" section).
+            Missing or invalid `X-Auth` header, or — with auth enabled — a request body that can't
+            be decoded and so may be encrypted under the wrong key (indistinguishable from a bad
+            `X-Auth`). A malformed body under `-no-auth` is `400`; an oversize body is `413`. See
+            CLAUDE.md's "Parameter Encryption" section.
+        "413":
+          description: Request body exceeds the parameter-body size limit.
         "403":
           description: |
             The path passes through a symlink pointing outside the root, or leads to the upload
@@ -515,8 +519,12 @@ paths:
             over 255 bytes or contains control characters.
         "401":
           description: |
-            Missing or invalid `X-Auth` header, or the request body is malformed or fails to
-            decrypt (see CLAUDE.md's "Parameter Encryption" section).
+            Missing or invalid `X-Auth` header, or — with auth enabled — a request body that can't
+            be decoded and so may be encrypted under the wrong key (indistinguishable from a bad
+            `X-Auth`). A malformed body under `-no-auth` is `400`; an oversize body is `413`. See
+            CLAUDE.md's "Parameter Encryption" section.
+        "413":
+          description: Request body exceeds the parameter-body size limit.
         "403":
           description: |
             The path passes through a symlink pointing outside the root, or leads to the upload
@@ -634,8 +642,12 @@ paths:
             unrecognized `continuation-key`.
         "401":
           description: |
-            Missing or invalid `X-Auth` header, or the `transform` part's content is malformed or
-            fails to decrypt (see CLAUDE.md's "Parameter Encryption" section).
+            Missing or invalid `X-Auth` header, or — with auth enabled — a `transform` part that
+            can't be decoded and so may be encrypted under the wrong key (indistinguishable from a
+            bad `X-Auth`). A malformed part under `-no-auth` is `400`; an oversize one is `413`.
+            See CLAUDE.md's "Parameter Encryption" section.
+        "413":
+          description: The `transform` part exceeds the parameter-body size limit.
         "403":
           description: |
             `dir` passes through a symlink pointing outside the upload root, or leads to the
@@ -720,8 +732,12 @@ paths:
             negative `start`, or non-positive `size`.
         "401":
           description: |
-            Missing or invalid `X-Auth` header, or the request body is malformed or fails to
-            decrypt (see CLAUDE.md's "Parameter Encryption" section).
+            Missing or invalid `X-Auth` header, or — with auth enabled — a request body that can't
+            be decoded and so may be encrypted under the wrong key (indistinguishable from a bad
+            `X-Auth`). A malformed body under `-no-auth` is `400`; an oversize body is `413`. See
+            CLAUDE.md's "Parameter Encryption" section.
+        "413":
+          description: Request body exceeds the parameter-body size limit.
         "405":
           description: Method not allowed.
 
@@ -809,8 +825,12 @@ paths:
             `continuation-key`, or the cumulative upload exceeds 1024 MiB.
         "401":
           description: |
-            Missing or invalid `X-Auth` header, or the `transform` part's content is malformed or
-            fails to decrypt (see CLAUDE.md's "Parameter Encryption" section).
+            Missing or invalid `X-Auth` header, or — with auth enabled — a `transform` part that
+            can't be decoded and so may be encrypted under the wrong key (indistinguishable from a
+            bad `X-Auth`). A malformed part under `-no-auth` is `400`; an oversize one is `413`.
+            See CLAUDE.md's "Parameter Encryption" section.
+        "413":
+          description: The `transform` part exceeds the parameter-body size limit.
         "404":
           description: Upload not configured (server started without `-ul-root`).
         "405":
@@ -904,7 +924,12 @@ paths:
             an invalid name (control characters, backslash, over 255 bytes; on Windows servers also
             `:*?"<>|`, a trailing dot/space, or a device name such as `CON` or `NUL`).
         "401":
-          description: Missing or invalid `X-Auth` header, or the body fails to decrypt.
+          description: |
+            Missing or invalid `X-Auth` header, or — with auth enabled — a body that can't be
+            decoded and so may be encrypted under the wrong key. Malformed under `-no-auth` is
+            `400`; oversize is `413`.
+        "413":
+          description: Request body exceeds the parameter-body size limit.
         "403":
           description: |
             The parent passes through a symlink pointing outside the upload root, or is the
@@ -1033,8 +1058,12 @@ paths:
           description: "`data` is not valid base64, or `title` is invalid."
         "401":
           description: |
-            Missing or invalid `X-Auth` header, or the request body is malformed or fails to
-            decrypt (see CLAUDE.md's "Parameter Encryption" section).
+            Missing or invalid `X-Auth` header, or — with auth enabled — a request body that can't
+            be decoded and so may be encrypted under the wrong key (indistinguishable from a bad
+            `X-Auth`). A malformed body under `-no-auth` is `400`; an oversize body is `413`. See
+            CLAUDE.md's "Parameter Encryption" section.
+        "413":
+          description: Request body exceeds the parameter-body size limit.
         "405":
           description: Method not allowed.
         "500":
@@ -1083,8 +1112,12 @@ paths:
           description: "`data` is not valid base64, or `title` is invalid."
         "401":
           description: |
-            Missing or invalid `X-Auth` header, or the request body is malformed or fails to
-            decrypt (see CLAUDE.md's "Parameter Encryption" section).
+            Missing or invalid `X-Auth` header, or — with auth enabled — a request body that can't
+            be decoded and so may be encrypted under the wrong key (indistinguishable from a bad
+            `X-Auth`). A malformed body under `-no-auth` is `400`; an oversize body is `413`. See
+            CLAUDE.md's "Parameter Encryption" section.
+        "413":
+          description: Request body exceeds the parameter-body size limit.
         "404":
           description: No note with the given ID exists.
         "405":
@@ -1117,8 +1150,12 @@ paths:
           description: Note deleted successfully.
         "401":
           description: |
-            Missing or invalid `X-Auth` header, or the request body is malformed or fails to
-            decrypt (see CLAUDE.md's "Parameter Encryption" section).
+            Missing or invalid `X-Auth` header, or — with auth enabled — a request body that can't
+            be decoded and so may be encrypted under the wrong key (indistinguishable from a bad
+            `X-Auth`). A malformed body under `-no-auth` is `400`; an oversize body is `413`. See
+            CLAUDE.md's "Parameter Encryption" section.
+        "413":
+          description: Request body exceeds the parameter-body size limit.
         "404":
           description: No note with the given ID exists.
         "405":
@@ -1163,13 +1200,15 @@ paths:
         "400":
           description: Invalid multipart form, mime, caption, or image data.
         "401":
-          description: Missing/invalid `X-Auth`, or the transform part fails to decrypt.
+          description: |
+            Missing/invalid `X-Auth`, or — with auth enabled — a `transform` part that can't be
+            decoded (possibly a wrong key). Malformed under `-no-auth` is `400`; oversize is `413`.
         "404":
           description: No note with the given `note_id` exists.
         "405":
           description: Method not allowed.
         "413":
-          description: Image exceeds the 20 MiB cap.
+          description: The `transform` part exceeds the parameter-body size limit, or the image exceeds the 20 MiB cap.
 
   /api/clip/attachment/download:
     post:
@@ -1208,7 +1247,11 @@ paths:
         "400":
           description: Invalid transform or contentType.
         "401":
-          description: Missing/invalid `X-Auth`, or the body fails to decrypt.
+          description: |
+            Missing/invalid `X-Auth`, or — with auth enabled — a body that can't be decoded
+            (possibly a wrong key). Malformed under `-no-auth` is `400`; oversize is `413`.
+        "413":
+          description: Request body exceeds the parameter-body size limit.
         "404":
           description: No attachment with the given ID exists.
         "405":
@@ -1243,7 +1286,11 @@ paths:
         "400":
           description: Invalid caption.
         "401":
-          description: Missing/invalid `X-Auth`, or the body fails to decrypt.
+          description: |
+            Missing/invalid `X-Auth`, or — with auth enabled — a body that can't be decoded
+            (possibly a wrong key). Malformed under `-no-auth` is `400`; oversize is `413`.
+        "413":
+          description: Request body exceeds the parameter-body size limit.
         "404":
           description: No attachment with the given ID exists.
         "405":
@@ -1271,7 +1318,11 @@ paths:
         "204":
           description: Attachment deleted successfully.
         "401":
-          description: Missing/invalid `X-Auth`, or the body fails to decrypt.
+          description: |
+            Missing/invalid `X-Auth`, or — with auth enabled — a body that can't be decoded
+            (possibly a wrong key). Malformed under `-no-auth` is `400`; oversize is `413`.
+        "413":
+          description: Request body exceeds the parameter-body size limit.
         "404":
           description: No attachment with the given ID exists.
         "405":

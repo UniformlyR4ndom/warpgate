@@ -49,7 +49,7 @@ func (s *Server) handleClipAttachmentNew(w http.ResponseWriter, r *http.Request)
 	defer tf.Close()
 	wasEncrypted, err := s.decodeParams(tf, &spec)
 	if err != nil {
-		http.Error(w, "invalid transform spec", http.StatusUnauthorized)
+		s.writeParamError(w, err)
 		return
 	}
 	if !validImageMime(spec.Mime) {
@@ -117,7 +117,7 @@ func (s *Server) handleClipAttachmentDownload(w http.ResponseWriter, r *http.Req
 		ContentType string          `json:"contentType"`
 	}
 	if _, err := s.decodeParams(r.Body, &req); err != nil {
-		http.Error(w, "invalid request body", http.StatusUnauthorized)
+		s.writeParamError(w, err)
 		return
 	}
 	transformer, err := transform.New(req.Transform, req.Args)
@@ -161,7 +161,7 @@ func (s *Server) handleClipAttachmentEdit(w http.ResponseWriter, r *http.Request
 		Caption string `json:"caption"`
 	}
 	if _, err := s.decodeParams(r.Body, &req); err != nil {
-		http.Error(w, "invalid request body", http.StatusUnauthorized)
+		s.writeParamError(w, err)
 		return
 	}
 	if !validClipTitle(req.Caption) {
@@ -189,7 +189,7 @@ func (s *Server) handleClipAttachmentDelete(w http.ResponseWriter, r *http.Reque
 		ID int64 `json:"id"`
 	}
 	if _, err := s.decodeParams(r.Body, &req); err != nil {
-		http.Error(w, "invalid request body", http.StatusUnauthorized)
+		s.writeParamError(w, err)
 		return
 	}
 	found, err := s.db.DeleteAttachment(req.ID)

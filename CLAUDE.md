@@ -367,8 +367,12 @@ JSON, so a TLS-terminating proxy could undo the disguise. Opt-in, client-side, k
   nonce and ciphertext. Subkeys from `internal/paramcrypt.DeriveKeys(K)`: labeled HMACs
   `warpgate-param-enc-v2` / `warpgate-param-mac-v2`.
 - **Server** (`Server.decodeParams`, `paramdecode.go`): tries JSON first, then (auth enabled) the
-  encrypted form; both are always accepted, no flag. Any decode failure is `401`, like a bad
-  `X-Auth`. Not available under `-no-auth`.
+  encrypted form; both are always accepted, no flag. `writeParamError` maps the failure to a status:
+  `413` oversize (`errParamsTooLarge`), `400` plainly malformed (`errParamsMalformed`: plain-JSON
+  parse failed with no keys to try, i.e. `-no-auth`), `401` only when a wrong key can't be told from
+  a malformed body (`errParamsInvalid`, like a bad `X-Auth` — so a MAC failure leaks nothing). This
+  keeps a size error (e.g. a clipboard note over `maxParamBodySize`) from latching the browser into
+  its wrong-key state. Encryption itself is not available under `-no-auth`.
 - **Scope**: every JSON request body, the multipart `transform` part (never `file`), and every WS
   control message (handshake, chunk requests, `done`).
 - **Responses** are encrypted only when the request was: `decodeParams` returns `encrypted`, which

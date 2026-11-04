@@ -43,7 +43,7 @@ func (s *Server) handleClipNew(w http.ResponseWriter, r *http.Request) {
 	}
 	wasEncrypted, err := s.decodeParams(r.Body, &req)
 	if err != nil {
-		http.Error(w, "invalid request body", http.StatusUnauthorized)
+		s.writeParamError(w, err)
 		return
 	}
 	if !validClipTitle(req.Title) {
@@ -81,7 +81,7 @@ func (s *Server) handleClipEdit(w http.ResponseWriter, r *http.Request) {
 		Data  string  `json:"data"`
 	}
 	if _, err := s.decodeParams(r.Body, &req); err != nil {
-		http.Error(w, "invalid request body", http.StatusUnauthorized)
+		s.writeParamError(w, err)
 		return
 	}
 	if req.Title != nil && !validClipTitle(*req.Title) {
@@ -114,7 +114,7 @@ func (s *Server) handleClipDelete(w http.ResponseWriter, r *http.Request) {
 		ID int64 `json:"id"`
 	}
 	if _, err := s.decodeParams(r.Body, &req); err != nil {
-		http.Error(w, "invalid request body", http.StatusUnauthorized)
+		s.writeParamError(w, err)
 		return
 	}
 	found, err := s.db.DeleteClipboard(req.ID)

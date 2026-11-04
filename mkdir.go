@@ -29,7 +29,7 @@ func (s *Server) handleMkdir(w http.ResponseWriter, r *http.Request) {
 
 	var req mkdirRequest
 	if _, err := s.decodeParams(r.Body, &req); err != nil {
-		http.Error(w, "invalid request body", http.StatusUnauthorized)
+		s.writeParamError(w, err)
 		return
 	}
 

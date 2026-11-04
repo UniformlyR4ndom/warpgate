@@ -73,7 +73,7 @@ func (s *Server) handleList(w http.ResponseWriter, r *http.Request, root *os.Roo
 	var req listRequest
 	wasEncrypted, err := s.decodeParams(r.Body, &req)
 	if err != nil {
-		http.Error(w, "invalid request body", http.StatusUnauthorized)
+		s.writeParamError(w, err)
 		return
 	}
 

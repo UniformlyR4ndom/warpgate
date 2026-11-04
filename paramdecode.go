@@ -17,10 +17,21 @@ import (
 // footgun — none of decodeParams's callers had any size cap before this.
 const maxParamBodySize = 1 << 20 // 1 MiB
 
-// errParamsInvalid is returned by decodeParams for any decode failure —
-// malformed JSON, bad base64, or a paramcrypt MAC mismatch — so callers
-// don't need to (and can't reliably) distinguish which occurred.
-var errParamsInvalid = errors.New("invalid request body")
+// decodeParams failures, kept distinct so writeParamError can map each to the
+// right HTTP status instead of collapsing them all onto 401 (which the browser
+// treats as a wrong key, latching the whole UI into the auth-failed state):
+//   - errParamsTooLarge: body over maxParamBodySize — a size problem, not auth.
+//   - errParamsMalformed: body undecodable with no encryption in play (plain
+//     JSON parse failed and there are no param-crypt keys to try), so it is
+//     unambiguously a bad request.
+//   - errParamsInvalid: decode failed while an encrypted body was possible, so
+//     a wrong key can't be told from a malformed one; kept deliberately
+//     ambiguous (like a rejected X-Auth) so a MAC failure leaks nothing.
+var (
+	errParamsTooLarge  = errors.New("request body too large")
+	errParamsMalformed = errors.New("invalid request body")
+	errParamsInvalid   = errors.New("invalid or unauthorized request body")
+)
 
 // decodeParams reads all of r (bounded by maxParamBodySize) and decodes it
 // into v: as plain JSON first; if that fails and the server has derived
@@ -33,20 +44,38 @@ var errParamsInvalid = errors.New("invalid request body")
 // same way — but only ever in reply to a message that arrived encrypted.
 func (s *Server) decodeParams(r io.Reader, v any) (bool, error) {
 	raw, err := io.ReadAll(io.LimitReader(r, maxParamBodySize+1))
-	if err != nil || len(raw) > maxParamBodySize {
-		return false, errParamsInvalid
+	if err != nil {
+		return false, errParamsMalformed
+	}
+	if len(raw) > maxParamBodySize {
+		return false, errParamsTooLarge
 	}
 	if json.Unmarshal(raw, v) == nil {
 		return false, nil
 	}
 	if s.cfg.NoAuth {
-		return false, errParamsInvalid
+		return false, errParamsMalformed
 	}
 	plaintext, err := paramcrypt.Decrypt(s.paramKeys, string(raw))
 	if err != nil || json.Unmarshal(plaintext, v) != nil {
 		return false, errParamsInvalid
 	}
 	return true, nil
+}
+
+// writeParamError sends the HTTP status that matches a decodeParams failure:
+// 413 for an oversize body, 400 for a plainly malformed one, and 401 for a
+// failure indistinguishable from a wrong key (so it mirrors a rejected X-Auth
+// and the browser's wrong-key handling still applies where it should).
+func (s *Server) writeParamError(w http.ResponseWriter, err error) {
+	status := http.StatusUnauthorized
+	switch {
+	case errors.Is(err, errParamsTooLarge):
+		status = http.StatusRequestEntityTooLarge
+	case errors.Is(err, errParamsMalformed):
+		status = http.StatusBadRequest
+	}
+	http.Error(w, err.Error(), status)
 }
 
 // encodeParamsResponse writes v as the HTTP response body: as an encrypted

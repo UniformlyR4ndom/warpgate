@@ -262,7 +262,7 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 		}
 		wasEncrypted, err = s.decodeParams(tf, &spec)
 		if err != nil {
-			http.Error(w, "invalid transform spec", http.StatusUnauthorized)
+			s.writeParamError(w, err)
 			return
 		}
 		transformName = spec.Transform

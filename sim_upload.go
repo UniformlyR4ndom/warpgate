@@ -83,7 +83,7 @@ func (s *Server) handleSimUpload(w http.ResponseWriter, r *http.Request) {
 		}
 		wasEncrypted, err = s.decodeParams(tf, &spec)
 		if err != nil {
-			http.Error(w, "invalid transform spec", http.StatusUnauthorized)
+			s.writeParamError(w, err)
 			return
 		}
 		continuationKey = spec.ContinuationKey

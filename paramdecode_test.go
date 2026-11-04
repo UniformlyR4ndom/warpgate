@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -78,11 +79,14 @@ func TestDecodeParamsEncryptedBlob(t *testing.T) {
 	}
 }
 
+// With auth on, a garbage body can't be told from a wrong-key encrypted one,
+// so it stays the deliberately ambiguous errParamsInvalid (→ 401).
 func TestDecodeParamsGarbageRejected(t *testing.T) {
 	s := newParamDecodeTestServer(t, Config{Key: "test-key"})
 	var got struct{}
-	if _, err := s.decodeParams(strings.NewReader("not json and not base64!!!"), &got); err == nil {
-		t.Fatal("expected error for garbage input")
+	_, err := s.decodeParams(strings.NewReader("not json and not base64!!!"), &got)
+	if !errors.Is(err, errParamsInvalid) {
+		t.Fatalf("got %v, want errParamsInvalid", err)
 	}
 }
 
@@ -94,22 +98,23 @@ func TestDecodeParamsWrongKeyRejected(t *testing.T) {
 		t.Fatal(err)
 	}
 	var got struct{}
-	if _, err := s.decodeParams(strings.NewReader(blob), &got); err == nil {
-		t.Fatal("expected error for a blob encrypted under a different key")
+	if _, err := s.decodeParams(strings.NewReader(blob), &got); !errors.Is(err, errParamsInvalid) {
+		t.Fatalf("got %v, want errParamsInvalid", err)
 	}
 }
 
+// An oversize body is a size problem, not an auth one: errParamsTooLarge (→ 413).
 func TestDecodeParamsOversizedBodyRejected(t *testing.T) {
 	s := newParamDecodeTestServer(t, Config{Key: "test-key"})
-	// Not valid JSON on its own, so decodeParams must fall through to the
-	// decrypt path and reject it there on size, not hang trying to buffer it.
 	big := bytes.Repeat([]byte("x"), maxParamBodySize+1)
 	var got struct{}
-	if _, err := s.decodeParams(bytes.NewReader(big), &got); err == nil {
-		t.Fatal("expected error for oversized body")
+	if _, err := s.decodeParams(bytes.NewReader(big), &got); !errors.Is(err, errParamsTooLarge) {
+		t.Fatalf("got %v, want errParamsTooLarge", err)
 	}
 }
 
+// Under -no-auth there is no encryption to fall back to, so an undecodable body
+// is unambiguously malformed: errParamsMalformed (→ 400), never 401.
 func TestDecodeParamsNoAuthRejectsEncryptedBlob(t *testing.T) {
 	s := newParamDecodeTestServer(t, Config{NoAuth: true})
 	// Built with a real key even though the server has none — simulates a
@@ -119,8 +124,57 @@ func TestDecodeParamsNoAuthRejectsEncryptedBlob(t *testing.T) {
 		t.Fatal(err)
 	}
 	var got struct{}
-	if _, err := s.decodeParams(strings.NewReader(blob), &got); err == nil {
-		t.Fatal("expected -no-auth server to reject an encrypted blob outright")
+	if _, err := s.decodeParams(strings.NewReader(blob), &got); !errors.Is(err, errParamsMalformed) {
+		t.Fatalf("got %v, want errParamsMalformed", err)
+	}
+}
+
+// The report's concrete case: a clipboard note whose body crosses the
+// parameter-body limit must come back 413 (a size error), not 401 — which the
+// browser would read as a wrong key and latch the whole UI. Checked under
+// -no-auth too, where a 401 would be especially nonsensical.
+func TestHandleClipNewOversizeIsNotUnauthorized(t *testing.T) {
+	for _, noAuth := range []bool{false, true} {
+		cfg := Config{Key: "test-key"}
+		if noAuth {
+			cfg = Config{NoAuth: true}
+		}
+		s := newParamDecodeTestServer(t, cfg)
+		body := bytes.Repeat([]byte("x"), maxParamBodySize+1)
+		rec := httptest.NewRecorder()
+		s.handleClipNew(rec, httptest.NewRequest(http.MethodPost, "/api/clip/new", bytes.NewReader(body)))
+		if rec.Code != http.StatusRequestEntityTooLarge {
+			t.Errorf("noAuth=%v: oversize note status = %d, want %d", noAuth, rec.Code, http.StatusRequestEntityTooLarge)
+		}
+	}
+}
+
+// Under -no-auth a malformed body is a 400, never 401.
+func TestHandleClipNewMalformedNoAuthIsBadRequest(t *testing.T) {
+	s := newParamDecodeTestServer(t, Config{NoAuth: true})
+	rec := httptest.NewRecorder()
+	s.handleClipNew(rec, httptest.NewRequest(http.MethodPost, "/api/clip/new", strings.NewReader("not json!!!")))
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("malformed body under -no-auth = %d, want %d", rec.Code, http.StatusBadRequest)
+	}
+}
+
+// writeParamError maps each decodeParams failure to its intended status.
+func TestWriteParamErrorStatus(t *testing.T) {
+	s := newParamDecodeTestServer(t, Config{Key: "test-key"})
+	for _, tc := range []struct {
+		err  error
+		want int
+	}{
+		{errParamsTooLarge, http.StatusRequestEntityTooLarge},
+		{errParamsMalformed, http.StatusBadRequest},
+		{errParamsInvalid, http.StatusUnauthorized},
+	} {
+		rec := httptest.NewRecorder()
+		s.writeParamError(rec, tc.err)
+		if rec.Code != tc.want {
+			t.Errorf("writeParamError(%v) = %d, want %d", tc.err, rec.Code, tc.want)
+		}
 	}
 }
 

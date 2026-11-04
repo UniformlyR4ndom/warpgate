@@ -23,7 +23,7 @@ func (s *Server) handleSimDownload(w http.ResponseWriter, r *http.Request) {
 
 	var req simDownloadRequest
 	if _, err := s.decodeParams(r.Body, &req); err != nil {
-		http.Error(w, "invalid request body", http.StatusUnauthorized)
+		s.writeParamError(w, err)
 		return
 	}
 
