@@ -44,39 +44,53 @@ type Config struct {
 	TrustedProxies string
 }
 
-func main() {
-	var cfg Config
-	var wsFrameMaxStr string
-
-	flag.StringVar(&cfg.Root, "root", "./files", "root directory to serve files from")
-	flag.StringVar(&cfg.UlRoot, "ul-root", "", "directory to accept file uploads into (uploads disabled if not set)")
-	flag.BoolVar(&cfg.UlFlat, "ul-flat", false,
+func registerFlags(fs *flag.FlagSet, cfg *Config, wsFrameMaxStr, completionShell *string) {
+	fs.StringVar(&cfg.Root, "root", "./files", "root directory to serve files from")
+	fs.StringVar(&cfg.UlRoot, "ul-root", "", "directory to accept file uploads into (uploads disabled if not set)")
+	fs.BoolVar(&cfg.UlFlat, "ul-flat", false,
 		"keep the upload directory flat: no browsing, downloading or creating subdirectories through the upload endpoints")
-	flag.StringVar(&cfg.DBPath, "db", "warpgate.sqlite", "path to the SQLite database file")
-	flag.StringVar(&cfg.Addr, "listen", "0.0.0.0:8080", "address to listen on (host:port)")
-	flag.StringVar(&cfg.Cert, "cert", "", "TLS certificate (chain) file; requires -cert-key")
-	flag.StringVar(&cfg.CertKey, "cert-key", "", "TLS private key file; requires -cert")
-	flag.StringVar(&cfg.ClientRoot, "client-root", "", "PEM certificate used to validate client certificates; requires -cert and -cert-key")
-	flag.StringVar(&cfg.ClientFP, "client-fp", "", "hex SHA-256 fingerprint of the client certificate to accept; requires -cert and -cert-key")
-	flag.StringVar(&cfg.Key, "auth-key", "", "authentication key for X-Auth header (auto-generated if not set)")
-	flag.BoolVar(&cfg.NoAuth, "no-auth", false, "disable authentication")
-	flag.StringVar(&wsFrameMaxStr, "ws-frame-max", "16M",
+	fs.StringVar(&cfg.DBPath, "db", "warpgate.sqlite", "path to the SQLite database file")
+	fs.StringVar(&cfg.Addr, "listen", "0.0.0.0:8080", "address to listen on (host:port)")
+	fs.StringVar(&cfg.Cert, "cert", "", "TLS certificate (chain) file; requires -cert-key")
+	fs.StringVar(&cfg.CertKey, "cert-key", "", "TLS private key file; requires -cert")
+	fs.StringVar(&cfg.ClientRoot, "client-root", "", "PEM certificate used to validate client certificates; requires -cert and -cert-key")
+	fs.StringVar(&cfg.ClientFP, "client-fp", "", "hex SHA-256 fingerprint of the client certificate to accept; requires -cert and -cert-key")
+	fs.StringVar(&cfg.Key, "auth-key", "", "authentication key for X-Auth header (auto-generated if not set)")
+	fs.BoolVar(&cfg.NoAuth, "no-auth", false, "disable authentication")
+	fs.StringVar(wsFrameMaxStr, "ws-frame-max", "16M",
 		"Maximum WebSocket frame size: a byte count, or a number with a K or M suffix (case-insensitive, e.g. 512K, 4M); range 1K-256M. "+
 			"Clients may request a smaller per-transfer frame size (via the UI) up to this ceiling; smaller frames are more likely to pass through proxies that buffer whole frames for inspection")
-	flag.StringVar(&cfg.PathPrefix, "path-prefix", "",
+	fs.StringVar(&cfg.PathPrefix, "path-prefix", "",
 		"serve UI and API only under this single path segment (e.g. s3cr3t); all other paths get an empty page")
-	flag.StringVar(&cfg.IPAllow, "ip-allow", "", "comma-separated IPs/CIDRs that are always served; enables the IP firewall")
-	flag.StringVar(&cfg.IPRegPath, "ip-reg-path", "",
+	fs.StringVar(&cfg.IPAllow, "ip-allow", "", "comma-separated IPs/CIDRs that are always served; enables the IP firewall")
+	fs.StringVar(&cfg.IPRegPath, "ip-reg-path", "",
 		"path segment (under -path-prefix) whose visit registers the client IP for access; enables the IP firewall")
-	flag.IntVar(&cfg.IPRegMax, "ip-reg-max", 0,
+	fs.IntVar(&cfg.IPRegMax, "ip-reg-max", 0,
 		"maximum number of registered IPs (0 = unlimited); without -ip-reg-path, registration happens via the -path-prefix base path")
-	flag.DurationVar(&cfg.IPRegWindow, "ip-reg-window", 0,
+	fs.DurationVar(&cfg.IPRegWindow, "ip-reg-window", 0,
 		"accept IP registrations only this long after startup, e.g. 15m (0 = unlimited); without -ip-reg-path, registration happens via the -path-prefix base path")
-	flag.StringVar(&cfg.PublicURL, "public-url", "",
+	fs.StringVar(&cfg.PublicURL, "public-url", "",
 		"http(s)://host[:port] under which clients reach this server, for the connect token (default: the certificate's name, else the listen address)")
-	flag.StringVar(&cfg.TrustedProxies, "trusted-proxies", "",
+	fs.StringVar(&cfg.TrustedProxies, "trusted-proxies", "",
 		"comma-separated IPs/CIDRs of reverse proxies whose X-Forwarded-For header determines the client IP")
+	fs.StringVar(completionShell, "completion", "",
+		"print a shell completion script (bash or zsh) and exit")
+}
+
+func main() {
+	var cfg Config
+	var wsFrameMaxStr, completionShell string
+	registerFlags(flag.CommandLine, &cfg, &wsFrameMaxStr, &completionShell)
 	flag.Parse()
+
+	if completionShell != "" {
+		script, err := completionScript(flag.CommandLine, completionShell)
+		if err != nil {
+			log.Fatal(err)
+		}
+		fmt.Print(script)
+		return
+	}
 
 	pathPrefix, err := normalizePathSegment(cfg.PathPrefix)
 	if err != nil {

@@ -27,6 +27,23 @@ Run:
 ./warpgate -root ./files -cert server.crt -cert-key server.key
 ```
 
+### Shell completion
+
+`warpgate -completion bash|zsh` prints a completion script for the flags (zsh also shows each
+flag's description). It completes for the command name `warpgate`, also when invoked by path.
+
+zsh — in `~/.zshrc`, after `compinit` (frameworks like Oh My Zsh run it for you):
+```zsh
+eval "$(warpgate -completion zsh)"
+```
+bash — in `~/.bashrc`:
+```bash
+eval "$(warpgate -completion bash)"
+```
+Alternatively install it as a file, regenerated after upgrades:
+`warpgate -completion zsh > ~/.zfunc/_warpgate` (with `~/.zfunc` in `$fpath` before `compinit`),
+or `warpgate -completion bash > ~/.local/share/bash-completion/completions/warpgate`.
+
 ## Command Line Parameters
 
 ### File serving

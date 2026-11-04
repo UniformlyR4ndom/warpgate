@@ -713,3 +713,7 @@ test/push_to_wgclip_test.sh
 | `-public-url` | — | `http(s)://host[:port]` clients use, for the connect token |
 | `-trusted-proxies` | — | IPs/CIDRs of reverse proxies whose `X-Forwarded-For` is trusted |
 | `-ws-frame-max` | `16M` | Max WS frame size a client may request; bytes or `K`/`M` suffix, `1K`–`256M` |
+| `-completion` | — | Print a `bash`/`zsh` completion script and exit (`completion.go`) |
+
+Completion scripts are generated from the registered flags (`registerFlags`); a new non-boolean flag
+needs an entry in `flagValueKinds` (dir/file/none), or `completion_test.go` fails.
