@@ -2,7 +2,7 @@
 // directory): listing, navigation, and chunked/whole-file downloads over HTTP
 // or WS.
 import { API_BASE, state, settings } from '../store.js';
-import { jsonHeaders, authHeaders, encodeBody, decodeResponseJSON, assertOk,
+import { jsonHeaders, encodeBody, decodeResponseJSON, assertOk,
          paramEncryptEnabled, apiFetch, apiWSOpen, noteWSAck, sendWSControl, wsDecryptFor, closeWSSession } from './api.js';
 import { wsNextJSON, receiveWSBinary, readBodyWithProgress } from './ws.js';
 import { decrypt, buildTransformArgs, perRequestSecrets, resolveContentTypeOverride } from './transform.js';

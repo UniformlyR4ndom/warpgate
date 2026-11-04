@@ -678,6 +678,11 @@ go build ./...
 go test ./...
 golangci-lint run        # v2, must report 0 issues
 
+# Frontend lint (dev-only; the no-build-step frontend has no compiler to catch these).
+# Flags dead references, bad import paths and imported names that no longer exist.
+npm install              # once; devDeps only, node_modules is git-ignored, never shipped
+npm run lint             # eslint over web/app; must report 0 issues
+
 # End to end: builds warpgate + wgcli, every transform/backend, clipboard, edge cases
 python3 test/e2e_suite.py --quick   # fast; see test/README.md
 python3 test/e2e_suite.py           # full, up to 1G files

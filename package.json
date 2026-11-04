@@ -1,0 +1,14 @@
+{
+  "name": "warpgate-web-dev",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Dev-only lint tooling for the warpgate frontend. Not shipped: web/ is embedded into the Go binary; this package and node_modules are never part of a build.",
+  "scripts": {
+    "lint": "eslint web/app"
+  },
+  "devDependencies": {
+    "eslint": "^9.0.0",
+    "eslint-plugin-import": "^2.31.0",
+    "globals": "^15.0.0"
+  }
+}

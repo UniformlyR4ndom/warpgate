@@ -3,3 +3,4 @@
 *.sqlite
 /warpgate
 /local/
+/node_modules/
