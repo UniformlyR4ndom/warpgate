@@ -37,12 +37,26 @@ export async function wsNextJSON(ws, decrypt) {
 // Pace sends to real transport throughput and bound unsent data in memory.
 // Resolving via a real timer (not just a microtask) lets the browser paint
 // between sends, so progress bars animate instead of jumping 0→100%.
+// Rejects if the connection closes, errors, or is no longer OPEN, so a dropped
+// connection can't leave the poll rescheduling forever (the send loop would
+// never settle and its caller never reach cleanup).
 export function wsWaitForDrain(ws, maxBuffered) {
-  return new Promise(function(resolve) {
-    (function check() {
-      if (ws.bufferedAmount <= maxBuffered) { setTimeout(resolve, 0); return; }
-      setTimeout(check, 0);
-    })();
+  return new Promise(function(resolve, reject) {
+    var timer = null;
+    function cleanup() {
+      if (timer !== null) { clearTimeout(timer); timer = null; }
+      ws.removeEventListener('close', onFail);
+      ws.removeEventListener('error', onFail);
+    }
+    function onFail() { cleanup(); reject(new Error('WebSocket closed during send')); }
+    function check() {
+      if (ws.readyState !== WebSocket.OPEN) { onFail(); return; }
+      if (ws.bufferedAmount <= maxBuffered) { cleanup(); resolve(); return; }
+      timer = setTimeout(check, 0);
+    }
+    ws.addEventListener('close', onFail);
+    ws.addEventListener('error', onFail);
+    timer = setTimeout(check, 0);
   });
 }
 
@@ -50,6 +64,7 @@ export async function sendWSBinary(ws, buffer, frameSize, onProgress) {
   var bytes = new Uint8Array(buffer);
   for (var offset = 0; offset < bytes.length; offset += frameSize) {
     await wsWaitForDrain(ws, frameSize);
+    if (ws.readyState !== WebSocket.OPEN) throw new Error('WebSocket closed during send');
     var slice = bytes.slice(offset, offset + frameSize);
     ws.send(slice);
     if (onProgress) onProgress(slice.byteLength);
