@@ -5,7 +5,7 @@ import { API_BASE, state, settings } from '../store.js';
 import { jsonHeaders, encodeBody, decodeResponseJSON, assertOk,
          paramEncryptEnabled, apiFetch, apiWSOpen, noteWSAck, sendWSControl, wsDecryptFor, closeWSSession } from './api.js';
 import { wsNextJSON, receiveWSBinary, readBodyWithProgress } from './ws.js';
-import { decrypt, buildTransformArgs, perRequestSecrets, resolveContentTypeOverride } from './transform.js';
+import { decrypt, buildTransformArgs, perRequestSecrets, resolveContentTypeOverride, snapshotTransform } from './transform.js';
 import { authKeyHash } from '../store.js';
 import { padIndex, triggerDownload, applyExtOverride } from './util.js';
 import { addTransfer, removeTransfer, makeTransferProgress, updateIfChanged } from './transfers.js';
@@ -47,20 +47,18 @@ export function navigateTo(root, index) {
   load(root);
 }
 
-async function fetchChunk(wsSession, prefix, path, start, size, onProgress) {
-  if (settings.backend === 'ws') { return fetchChunkWS(wsSession, prefix, path, start, size, onProgress); }
-  return fetchChunkHTTP(prefix, path, start, size, onProgress);
+async function fetchChunk(opts, wsSession, prefix, path, start, size, onProgress) {
+  if (opts.backend === 'ws') { return fetchChunkWS(opts, wsSession, prefix, path, start, size, onProgress); }
+  return fetchChunkHTTP(opts, prefix, path, start, size, onProgress);
 }
 
-async function fetchChunkHTTP(prefix, path, start, size, onProgress) {
-  var t = settings.transform;
-  var s = perRequestSecrets();
-  var contentType = resolveContentTypeOverride();
+async function fetchChunkHTTP(opts, prefix, path, start, size, onProgress) {
+  var s = perRequestSecrets(opts.tx);
   var body = {
     path: path, start: start, size: size,
-    transform: t.type, args: buildTransformArgs(s.password, s.htmlB64Key),
+    transform: opts.tx.type, args: buildTransformArgs(opts.tx, s.password, s.htmlB64Key),
   };
-  if (contentType) body.contentType = contentType;
+  if (opts.contentType) body.contentType = opts.contentType;
   var res = await apiFetch(API_BASE + prefix + 'download', {
     method:  'POST',
     headers: jsonHeaders(),
@@ -68,19 +66,18 @@ async function fetchChunkHTTP(prefix, path, start, size, onProgress) {
   }, true);
   assertOk(res);
   var buffer = await readBodyWithProgress(res, onProgress);
-  return decrypt(buffer, s.password, s.htmlB64Key);
+  return decrypt(opts.tx, buffer, s.password, s.htmlB64Key);
 }
 
-async function fetchChunkWS(wsSession, prefix, path, start, size, onProgress) {
+async function fetchChunkWS(opts, wsSession, prefix, path, start, size, onProgress) {
   if (!wsSession.ws) {
-    var t = settings.transform;
-    var s = perRequestSecrets();
+    var s = perRequestSecrets(opts.tx);
     var ws = await apiWSOpen(prefix + 'ws/download');
     var encrypted = paramEncryptEnabled();
     sendWSControl(ws, {
-      auth: authKeyHash.value, path: path, transform: t.type,
-      args: buildTransformArgs(s.password, s.htmlB64Key),
-      frameSize: settings.wsFrameSizeKB * 1024,
+      auth: authKeyHash.value, path: path, transform: opts.tx.type,
+      args: buildTransformArgs(opts.tx, s.password, s.htmlB64Key),
+      frameSize: opts.wsFrameBytes,
     });
     var ack = noteWSAck(await wsNextJSON(ws, wsDecryptFor(encrypted)));
     if (!ack.ok) { ws.close(); throw new Error(ack.error || 'download failed'); }
@@ -94,7 +91,7 @@ async function fetchChunkWS(wsSession, prefix, path, start, size, onProgress) {
   var chunkAck = await wsNextJSON(wsSession.ws, wsDecryptFor(wsSession.encrypted));
   if (!chunkAck.ok) throw new Error(chunkAck.error || 'download failed');
   var received = await receiveWSBinary(wsSession.ws, chunkAck.chunkSize, onProgress);
-  return decrypt(received.buffer, wsSession.password, wsSession.htmlB64Key);
+  return decrypt(opts.tx, received.buffer, wsSession.password, wsSession.htmlB64Key);
 }
 
 export async function downloadFile(root, entry) {
@@ -103,6 +100,14 @@ export async function downloadFile(root, entry) {
   var prefix     = API_PREFIX[root];
   var path       = b.segments.concat([entry.name]).join('/');
   var chunking   = settings.chunking;
+  // Captured once so a settings change mid-transfer can't retarget transport
+  // or decode a later chunk with a mismatched transform.
+  var opts       = {
+    tx:           snapshotTransform(),
+    backend:      settings.backend,
+    wsFrameBytes: settings.wsFrameSizeKB * 1024,
+    contentType:  resolveContentTypeOverride(),
+  };
   var wsSession  = { ws: null, password: null, htmlB64Key: null };
   var transfer   = addTransfer('download', entry.name, root);
   var onProgress = makeTransferProgress(transfer, entry.size);
@@ -120,7 +125,7 @@ export async function downloadFile(root, entry) {
           for (var i = 0; i < numChunks; i++) {
             var start = i * chunkBytes;
             var size  = Math.min(chunkBytes, entry.size - start);
-            var data  = await fetchChunk(wsSession, prefix, path, start, size, onProgress);
+            var data  = await fetchChunk(opts, wsSession, prefix, path, start, size, onProgress);
             await writable.write(data);
           }
           await writable.close();
@@ -140,7 +145,7 @@ export async function downloadFile(root, entry) {
           for (var i = 0; i < numChunks; i++) {
             var start = i * chunkBytes;
             var size  = Math.min(chunkBytes, entry.size - start);
-            var data  = await fetchChunk(wsSession, prefix, path, start, size, onProgress);
+            var data  = await fetchChunk(opts, wsSession, prefix, path, start, size, onProgress);
             triggerDownload(data, saveName + '.' + padIndex(i));
           }
         } catch(err) {
@@ -153,7 +158,7 @@ export async function downloadFile(root, entry) {
     }
   } else {
     try {
-      var data = await fetchChunk(wsSession, prefix, path, 0, entry.size, onProgress);
+      var data = await fetchChunk(opts, wsSession, prefix, path, 0, entry.size, onProgress);
       triggerDownload(data, saveName);
     } catch(err) {
       b.error = 'Download failed: ' + (err.status ? 'HTTP ' + err.status : err);

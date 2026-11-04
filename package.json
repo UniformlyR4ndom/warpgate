@@ -4,7 +4,8 @@
   "private": true,
   "description": "Dev-only lint tooling for the warpgate frontend. Not shipped: web/ is embedded into the Go binary; this package and node_modules are never part of a build.",
   "scripts": {
-    "lint": "eslint web/app"
+    "lint": "eslint web/app",
+    "test:web": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON test/web/run.mjs"
   },
   "devDependencies": {
     "eslint": "^9.0.0",

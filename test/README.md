@@ -88,3 +88,22 @@ test/push_to_wgclip_test.sh
 ```
 
 Takes about 10 s. Exit code is `0` if every check passed, `1` otherwise.
+
+# test/web — frontend unit tests (Node)
+
+The no-build frontend has no runtime of its own, so a tiny Node harness exercises the pure
+first-party modules in isolation. An ESM loader (`test/web/loader.mjs`) redirects the two
+browser-only imports (`store.js`, `pdf.min.mjs`) to stubs, and `run.mjs` installs the browser
+globals those modules expect (`window.crypto`, the vendored `aesjs`) before importing them.
+
+```bash
+npm run test:web
+```
+
+- `transform.test.mjs` — guards finding #1 from the code-QA review: a transform setting changed
+  mid-transfer must not affect an in-flight transfer. `snapshotTransform()` is captured once at
+  transfer start and threaded explicitly into every encode/decode/arg call, so mutating `settings`
+  afterward is ignored (covers the XOR key/type change, `buildTransformArgs`, `encodeBytesForUpload`,
+  an `aes-ctr` round trip, and `perRequestSecrets`).
+
+Exit code is `0` if every check passed, `1` otherwise.

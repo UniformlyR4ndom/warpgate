@@ -4,10 +4,9 @@ import { settings } from '../store.js';
 import { getDocument } from '../../pdf.min.mjs';
 import { hexToBytes, applyXOR, binaryStringToBytes, bytesToBinaryString, randomHex } from './util.js';
 
-function decryptAESCTR(buffer) {
-  var t    = settings.transform.aesCtr;
-  var key  = Array.from(hexToBytes(t.key));
-  var iv   = Array.from(hexToBytes(t.iv));
+function decryptAESCTR(tx, buffer) {
+  var key  = Array.from(hexToBytes(tx.aesCtr.key));
+  var iv   = Array.from(hexToBytes(tx.aesCtr.iv));
   var data = new Uint8Array(buffer);
   var aesCtr = new aesjs.ModeOfOperation.ctr(key, new aesjs.Counter(iv));
   return Promise.resolve(aesCtr.decrypt(data));
@@ -40,23 +39,35 @@ function decryptPDF(buffer, password) {
   }).finally(function() { task.destroy(); });
 }
 
-// Reverses the current transform on a downloaded chunk's ArrayBuffer.
-export function decrypt(buffer, password, htmlB64Key) {
+// A snapshot of the transform settings, taken when a transfer starts and
+// passed explicitly to every encode/decode/arg call for that transfer, so a
+// settings change mid-transfer can't decode a response (or encode an upload)
+// with parameters that don't match what the request declared.
+export function snapshotTransform() {
   var t = settings.transform;
-  if (t.type === 'xor')      { return Promise.resolve(applyXOR(new Uint8Array(buffer), hexToBytes(t.xor.key))); }
-  if (t.type === 'aes-ctr')  { return decryptAESCTR(buffer); }
-  if (t.type === 'pdf')      { return decryptPDF(buffer, password); }
-  if (t.type === 'html-b64') { return decryptHTMLB64(buffer, htmlB64Key); }
+  return {
+    type:   t.type,
+    xor:    { key: t.xor.key },
+    aesCtr: { key: t.aesCtr.key, iv: t.aesCtr.iv },
+    pdf:    { filename: t.pdf.filename, passwordEnabled: t.pdf.password.enabled },
+  };
+}
+
+// Reverses tx's transform on a downloaded chunk's ArrayBuffer.
+export function decrypt(tx, buffer, password, htmlB64Key) {
+  if (tx.type === 'xor')      { return Promise.resolve(applyXOR(new Uint8Array(buffer), hexToBytes(tx.xor.key))); }
+  if (tx.type === 'aes-ctr')  { return decryptAESCTR(tx, buffer); }
+  if (tx.type === 'pdf')      { return decryptPDF(buffer, password); }
+  if (tx.type === 'html-b64') { return decryptHTMLB64(buffer, htmlB64Key); }
   return Promise.resolve(new Uint8Array(buffer));
 }
 
-export function buildTransformArgs(password, htmlB64Key) {
-  var t = settings.transform;
-  if (t.type === 'xor')      return { key: t.xor.key };
-  if (t.type === 'aes-ctr')  return { key: t.aesCtr.key, iv: t.aesCtr.iv };
-  if (t.type === 'html-b64') return { key: htmlB64Key };
-  if (t.type === 'pdf') {
-    var args = { filename: t.pdf.filename || 'attachment' };
+export function buildTransformArgs(tx, password, htmlB64Key) {
+  if (tx.type === 'xor')      return { key: tx.xor.key };
+  if (tx.type === 'aes-ctr')  return { key: tx.aesCtr.key, iv: tx.aesCtr.iv };
+  if (tx.type === 'html-b64') return { key: htmlB64Key };
+  if (tx.type === 'pdf') {
+    var args = { filename: tx.pdf.filename || 'attachment' };
     if (password) { args.password = password; }
     return args;
   }
@@ -65,11 +76,10 @@ export function buildTransformArgs(password, htmlB64Key) {
 
 // A fresh per-request password (pdf) / key (html-b64), or null for transforms
 // that don't use one.
-export function perRequestSecrets() {
-  var t = settings.transform;
+export function perRequestSecrets(tx) {
   return {
-    password:   (t.type === 'pdf'      && t.pdf.password.enabled) ? randomHex(10) : null,
-    htmlB64Key: (t.type === 'html-b64') ? randomHex(16) : null,
+    password:   (tx.type === 'pdf'      && tx.pdf.passwordEnabled) ? randomHex(10) : null,
+    htmlB64Key: (tx.type === 'html-b64') ? randomHex(16) : null,
   };
 }
 
@@ -92,25 +102,24 @@ function createPDFWithAttachment(fileBytes, filename) {
   });
 }
 
-// Applies the current transform to bytes (a whole file or one upload chunk),
+// Applies tx's transform to bytes (a whole file or one upload chunk),
 // resolving to {data: Blob, args}.
-export async function encodeBytesForUpload(bytes, filename) {
-  var t = settings.transform;
-  if (t.type === 'xor') {
-    var encoded = applyXOR(bytes, hexToBytes(t.xor.key));
-    return { data: new Blob([encoded]), args: { key: t.xor.key } };
+export async function encodeBytesForUpload(tx, bytes, filename) {
+  if (tx.type === 'xor') {
+    var encoded = applyXOR(bytes, hexToBytes(tx.xor.key));
+    return { data: new Blob([encoded]), args: { key: tx.xor.key } };
   }
-  if (t.type === 'aes-ctr') {
-    var key    = Array.from(hexToBytes(t.aesCtr.key));
-    var iv     = Array.from(hexToBytes(t.aesCtr.iv));
+  if (tx.type === 'aes-ctr') {
+    var key    = Array.from(hexToBytes(tx.aesCtr.key));
+    var iv     = Array.from(hexToBytes(tx.aesCtr.iv));
     var aesCtr = new aesjs.ModeOfOperation.ctr(key, new aesjs.Counter(iv));
-    return { data: new Blob([aesCtr.encrypt(bytes)]), args: { key: t.aesCtr.key, iv: t.aesCtr.iv } };
+    return { data: new Blob([aesCtr.encrypt(bytes)]), args: { key: tx.aesCtr.key, iv: tx.aesCtr.iv } };
   }
-  if (t.type === 'pdf') {
+  if (tx.type === 'pdf') {
     var pdfBytes = await createPDFWithAttachment(bytes, filename);
     return { data: new Blob([pdfBytes], { type: 'application/pdf' }), args: { filename: filename } };
   }
-  if (t.type === 'html-b64') {
+  if (tx.type === 'html-b64') {
     var keyHex = randomHex(16);
     var xored  = applyXOR(bytes, hexToBytes(keyHex));
     var html = '<!DOCTYPE html><html><body>\n' +
@@ -121,12 +130,12 @@ export async function encodeBytesForUpload(bytes, filename) {
   return { data: new Blob([bytes]), args: {} };
 }
 
-export async function encodeForUpload(file) {
+export async function encodeForUpload(tx, file) {
   var buf = await file.arrayBuffer();
-  return encodeBytesForUpload(new Uint8Array(buf), uploadFilename(file));
+  return encodeBytesForUpload(tx, new Uint8Array(buf), uploadFilename(tx, file));
 }
 
 // Name the file is embedded under inside an uploaded PDF.
-export function uploadFilename(file) {
-  return settings.transform.pdf.filename || file.name;
+export function uploadFilename(tx, file) {
+  return tx.pdf.filename || file.name;
 }

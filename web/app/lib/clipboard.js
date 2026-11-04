@@ -2,7 +2,7 @@
 // create/edit/delete, and image attachments.
 import { API_BASE, state, settings } from '../store.js';
 import { apiFetch, authHeaders, jsonHeaders, encodeBody, decodeResponseJSON, paramEncryptEnabled, assertOk } from './api.js';
-import { decrypt, buildTransformArgs, perRequestSecrets, encodeBytesForUpload } from './transform.js';
+import { decrypt, buildTransformArgs, perRequestSecrets, encodeBytesForUpload, snapshotTransform } from './transform.js';
 import { textToBase64, base64ToText, triggerDownload, saveURL, safeFileName } from './util.js';
 
 export async function copyClip(b64) {
@@ -148,18 +148,19 @@ export async function ensureAttachment(att) {
   if (state.clipImages[att.id] !== undefined) return;
   state.clipImages[att.id] = 'loading';
   try {
-    var s = perRequestSecrets();
+    var tx = snapshotTransform();
+    var s = perRequestSecrets(tx);
     var res = await apiFetch(API_BASE + '/api/clip/attachment/download', {
       method:  'POST',
       headers: jsonHeaders(),
       body:    encodeBody({
         id:        att.id,
-        transform: settings.transform.type,
-        args:      buildTransformArgs(s.password, s.htmlB64Key),
+        transform: tx.type,
+        args:      buildTransformArgs(tx, s.password, s.htmlB64Key),
       }),
     }, true);
     if (!res.ok) throw new Error('HTTP ' + res.status);
-    var bytes = await decrypt(await res.arrayBuffer(), s.password, s.htmlB64Key);
+    var bytes = await decrypt(tx, await res.arrayBuffer(), s.password, s.htmlB64Key);
     state.clipImages[att.id] = URL.createObjectURL(new Blob([bytes], { type: att.mime }));
   } catch(err) {
     state.clipImages[att.id] = 'error';
@@ -205,9 +206,10 @@ function clearPendingAttachments() {
 }
 
 async function uploadAttachment(noteId, pa) {
+  var tx    = snapshotTransform();
   var bytes = new Uint8Array(await pa.blob.arrayBuffer());
-  var enc   = await encodeBytesForUpload(bytes, 'attachment');
-  var spec  = { transform: settings.transform.type, args: enc.args, note_id: noteId, mime: pa.mime,
+  var enc   = await encodeBytesForUpload(tx, bytes, 'attachment');
+  var spec  = { transform: tx.type, args: enc.args, note_id: noteId, mime: pa.mime,
                 caption: sanitizeClipTitle(pa.caption) };
   var fd    = new FormData();
   fd.append('transform', new Blob([encodeBody(spec)]), 'transform.json');

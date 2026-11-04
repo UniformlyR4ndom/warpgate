@@ -5,7 +5,7 @@ import { authHeaders, jsonHeaders, encodeBody, decodeResponseJSON, assertOk,
          paramEncryptEnabled, apiFetch, apiWSOpen, noteWSAck, sendWSControl, wsDecryptFor } from './api.js';
 import { load } from './download.js';
 import { wsNextJSON, sendWSBinary } from './ws.js';
-import { encodeBytesForUpload, encodeForUpload, uploadFilename } from './transform.js';
+import { encodeBytesForUpload, encodeForUpload, uploadFilename, snapshotTransform } from './transform.js';
 import { addTransfer, removeTransfer, makeTransferProgress, updateIfChanged } from './transfers.js';
 import { addToast } from './notices.js';
 import { sha256Hex } from './util.js';
@@ -51,15 +51,18 @@ export async function createDir(name) {
 
 export async function uploadFiles(files) {
   state.uploadError = null;
-  // Fixed at the start, so navigating away mid-upload doesn't redirect it.
+  // Fixed at the start, so navigating away or changing settings mid-upload
+  // can't redirect the transfer or encode with a mismatched transform.
   var dir = state.ulFlat ? '' : state.browse.ul.segments.join('/');
+  var tx = snapshotTransform();
+  var backend = settings.backend;
   var promises = Array.from(files).map(async function(file) {
     var transfer   = addTransfer('upload', file.name, 'ul');
     var onProgress = makeTransferProgress(transfer, file.size);
     try {
-      var serverHash = settings.backend === 'ws'
-        ? await uploadFileWS(file, dir, onProgress)
-        : await uploadFileHTTP(file, dir, onProgress);
+      var serverHash = backend === 'ws'
+        ? await uploadFileWS(tx, file, dir, onProgress)
+        : await uploadFileHTTP(tx, file, dir, onProgress);
       await reportUpload(file, serverHash);
     } catch(err) {
       addToast(false, 'Upload of "' + file.name + '" failed: ' +
@@ -100,12 +103,12 @@ function uploadForm(spec, encrypted, data, name) {
 
 // A single-request HTTP upload has no progress event (fetch doesn't expose
 // upload streaming), so onProgress only fires on the chunked path.
-async function uploadFileHTTP(file, dir, onProgress) {
-  if (settings.uploadChunking.enabled) { return uploadFileHTTPChunked(file, dir, onProgress); }
+async function uploadFileHTTP(tx, file, dir, onProgress) {
+  if (settings.uploadChunking.enabled) { return uploadFileHTTPChunked(tx, file, dir, onProgress); }
 
   var encrypted = paramEncryptEnabled();
-  var result = await encodeForUpload(file);
-  var spec   = encodeBody(withDir({ transform: settings.transform.type, args: result.args, 'ul-done': true }, dir));
+  var result = await encodeForUpload(tx, file);
+  var spec   = encodeBody(withDir({ transform: tx.type, args: result.args, 'ul-done': true }, dir));
   var res = await apiFetch(API_BASE + '/api/files/upload', {
     method: 'POST', headers: authHeaders(), body: uploadForm(spec, encrypted, result.data, file.name),
   });
@@ -116,10 +119,10 @@ async function uploadFileHTTP(file, dir, onProgress) {
 
 // Chunks are sent strictly one at a time: the server rejects concurrent
 // requests for a filename and only recognizes the immediately-next key.
-async function uploadFileHTTPChunked(file, dir, onProgress) {
+async function uploadFileHTTPChunked(tx, file, dir, onProgress) {
   var chunkSize = settings.uploadChunking.chunkSizeMB * 1024 * 1024;
   var bytes     = new Uint8Array(await file.arrayBuffer());
-  var filename  = uploadFilename(file);
+  var filename  = uploadFilename(tx, file);
   var encrypted = paramEncryptEnabled();
 
   var continuationKey = '';
@@ -131,9 +134,9 @@ async function uploadFileHTTPChunked(file, dir, onProgress) {
     var slice = bytes.subarray(offset, end);
     done      = end >= bytes.length;
 
-    var result = await encodeBytesForUpload(slice, filename);
+    var result = await encodeBytesForUpload(tx, slice, filename);
     var spec = encodeBody(withDir({
-      transform: settings.transform.type,
+      transform: tx.type,
       args: result.args,
       'continuation-key': continuationKey,
       'ul-done': done,
@@ -152,8 +155,8 @@ async function uploadFileHTTPChunked(file, dir, onProgress) {
   return serverHash;
 }
 
-async function uploadFileWS(file, dir, onProgress) {
-  var result    = await encodeForUpload(file);
+async function uploadFileWS(tx, file, dir, onProgress) {
+  var result    = await encodeForUpload(tx, file);
   var buffer    = await result.data.arrayBuffer();
   var frameSize = settings.wsFrameSizeKB * 1024;
   var decrypt   = wsDecryptFor(paramEncryptEnabled());
@@ -163,7 +166,7 @@ async function uploadFileWS(file, dir, onProgress) {
     sendWSControl(ws, withDir({
       auth:      authKeyHash.value,
       filename:  file.name,
-      transform: settings.transform.type,
+      transform: tx.type,
       args:      result.args,
       frameSize: frameSize,
     }, dir));
