@@ -5,7 +5,7 @@
 // it deletes both files after a successful push and renames the hash file to
 // <name>.failed otherwise.
 import { state, authKeyHash } from '../store.js';
-import { createNote, pollClipboard, sanitizeClipTitle } from './clipboard.js';
+import { createNote, reloadClipboard, sanitizeClipTitle } from './clipboard.js';
 import { sha256Hex } from './util.js';
 import { addToast } from './notices.js';
 
@@ -226,7 +226,7 @@ async function processPush(folder, name, files) {
   await kvSet('pushed:' + hashName, parsed.hash).catch(function() {});
   delete firstSeen[hashName];
   addToast(true, 'Note #' + id + (title ? ' "' + title + '"' : '') + ' pushed from outbox');
-  pollClipboard();
+  reloadClipboard();
   await removePushed(folder, name);
 }
 

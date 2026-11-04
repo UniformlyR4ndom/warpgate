@@ -9,11 +9,20 @@ import { decrypt, buildTransformArgs, perRequestSecrets, resolveContentTypeOverr
 import { authKeyHash } from '../store.js';
 import { padIndex, triggerDownload, applyExtOverride } from './util.js';
 import { addTransfer, removeTransfer, makeTransferProgress, updateIfChanged } from './transfers.js';
+import { makeRequestGuard } from './loadguard.js';
 
 // The server fixes each route to one root.
 const API_PREFIX = { dl: '/api/files/', ul: '/api/ul/' };
 
+// One guard per root: a listing that resolves after the user has navigated
+// elsewhere (or changed the auth key) is dropped instead of overwriting the
+// directory now on screen, and overlapping auto-refresh ticks are serialized.
+const loadGuard = { dl: makeRequestGuard(), ul: makeRequestGuard() };
+
 export async function load(root) {
+  var g = loadGuard[root];
+  var token = g.start();
+  if (token === null) return; // a listing for this path is already in flight
   var b = state.browse[root];
   try {
     var encrypted = paramEncryptEnabled();
@@ -22,6 +31,7 @@ export async function load(root) {
       headers: jsonHeaders(),
       body:    encodeBody({ path: b.segments.join('/') }),
     });
+    if (!g.fresh(token)) return;
     if (res.status === 404 && root === 'ul' && b.segments.length === 0) {
       b.entries = [];
       b.error = 'Uploads are not enabled on this server.';
@@ -29,22 +39,34 @@ export async function load(root) {
     }
     if (!res.ok) throw new Error('HTTP ' + res.status);
     var data = await decodeResponseJSON(res, encrypted);
+    if (!g.fresh(token)) return;
     updateIfChanged(b, 'entries', data);
     b.error = null;
   } catch(err) {
+    if (!g.fresh(token)) return;
     b.error = 'Failed to load directory (' + err.message + ')';
+  } finally {
+    g.done(token);
   }
+}
+
+// Reload after a context change (navigation, auth key / DB change): mark the
+// new context so any in-flight listing for the old one is dropped and the
+// serialize check doesn't skip this reload.
+export function reload(root) {
+  loadGuard[root].bump();
+  load(root);
 }
 
 export function enterDir(root, name) {
   state.browse[root].segments.push(name);
-  load(root);
+  reload(root);
 }
 
 export function navigateTo(root, index) {
   var b = state.browse[root];
   b.segments = b.segments.slice(0, index + 1);
-  load(root);
+  reload(root);
 }
 
 async function fetchChunk(opts, wsSession, prefix, path, start, size, onProgress) {

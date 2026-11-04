@@ -4,6 +4,12 @@ import { API_BASE, state, settings } from '../store.js';
 import { apiFetch, authHeaders, jsonHeaders, encodeBody, decodeResponseJSON, paramEncryptEnabled, assertOk } from './api.js';
 import { decrypt, buildTransformArgs, perRequestSecrets, encodeBytesForUpload, snapshotTransform } from './transform.js';
 import { textToBase64, base64ToText, triggerDownload, saveURL, safeFileName } from './util.js';
+import { makeRequestGuard } from './loadguard.js';
+
+// Serializes overlapping auto-refresh polls (so a delayed one can't overwrite
+// newer notes or rewind the cursor) and drops a poll whose database changed
+// under it (auth key / DB swap).
+const clipGuard = makeRequestGuard();
 
 export async function copyClip(b64) {
   await navigator.clipboard.writeText(base64ToText(b64));
@@ -83,22 +89,39 @@ export function visibleClipItems() {
 
 // Full resync from scratch — the auth key may now point at a different DB.
 export function resetClipSync() {
+  clipGuard.bump();
   state.clipCursor = 0;
   state.clipItems  = [];
   Object.keys(state.clipImages).forEach(revokeClipImage);
 }
 
 export async function pollClipboard() {
+  var token = clipGuard.start();
+  if (token === null) return; // a poll is already in flight for this database
   state.clipError = null;
   try {
     var encrypted = paramEncryptEnabled();
     var url = API_BASE + '/api/clip/state?since=' + state.clipCursor + (encrypted ? '&e=1' : '');
     var res = await apiFetch(url, { headers: authHeaders() });
+    if (!clipGuard.fresh(token)) return;
     if (!res.ok) throw new Error('HTTP ' + res.status);
-    applyClipState(await decodeResponseJSON(res, encrypted));
+    var data = await decodeResponseJSON(res, encrypted);
+    if (!clipGuard.fresh(token)) return;
+    applyClipState(data);
   } catch(err) {
+    if (!clipGuard.fresh(token)) return;
     state.clipError = 'Failed to load clipboard (' + err.message + ')';
+  } finally {
+    clipGuard.done(token);
   }
+}
+
+// Poll after a local change (create/edit/delete): mark a new generation so any
+// in-flight auto-refresh poll is dropped and this one isn't skipped as a
+// same-generation overlap, guaranteeing the change is reflected.
+export async function reloadClipboard() {
+  clipGuard.bump();
+  return pollClipboard();
 }
 
 // Upsert `changed`, drop ids absent from `ids`, honor `reset`.
@@ -268,7 +291,7 @@ export async function submitClip() {
     }
     clearPendingAttachments();
     cancelEdit();
-    await pollClipboard();
+    await reloadClipboard();
   } catch(err) {
     state.clipError = (editing ? 'Failed to update note (' : 'Failed to submit note (') + err.message + ')';
   }
@@ -311,7 +334,7 @@ export async function deleteClip(id) {
       method: 'DELETE', headers: jsonHeaders(), body: encodeBody({ id: id }),
     });
     if (!res.ok) throw new Error('HTTP ' + res.status);
-    await pollClipboard();
+    await reloadClipboard();
   } catch(err) {
     state.clipError = 'Failed to delete note (' + err.message + ')';
   }

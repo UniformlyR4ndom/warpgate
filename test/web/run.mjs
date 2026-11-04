@@ -15,3 +15,4 @@ globalThis.aesjs = require(join(here, '..', '..', 'web', 'aes.js'));
 register('./loader.mjs', import.meta.url);
 
 await import('./transform.test.mjs');
+await import('./loadguard.test.mjs');

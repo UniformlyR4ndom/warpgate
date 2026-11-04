@@ -547,6 +547,13 @@ each tab lists its own. The Upload tab adds a drop zone (uploads go into the dir
 they start) and "New folder" (disabled at `MKDIR_MAX_DEPTH`). With `state.ulFlat` it shows the flat
 `loadUploadDir` table instead (`refreshUpload` picks).
 
+`load`/`pollClipboard` go through a per-context `makeRequestGuard` (`lib/loadguard.js`): a response
+whose context changed while in flight (navigation, auth-key/DB change) is dropped instead of
+overwriting what's now on screen, and overlapping auto-refresh ticks are serialized. A context
+change or a local mutation calls the `reload*` variant (`reload(root)`, `reloadUpload`,
+`reloadClipboard`), which `bump()`s the guard so the refresh proceeds and supersedes any in-flight
+read; plain `load`/`refreshUpload`/`pollClipboard` are the serialized auto-refresh path.
+
 ### UI settings persistence
 
 `settings` (`store.js`) is saved as `{"version":1,"settings":{…}}` in

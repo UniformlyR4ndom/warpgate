@@ -3,7 +3,7 @@
 import { API_BASE, state, settings, authKeyHash } from '../store.js';
 import { authHeaders, jsonHeaders, encodeBody, decodeResponseJSON, assertOk,
          paramEncryptEnabled, apiFetch, apiWSOpen, noteWSAck, sendWSControl, wsDecryptFor } from './api.js';
-import { load } from './download.js';
+import { load, reload } from './download.js';
 import { wsNextJSON, sendWSBinary } from './ws.js';
 import { encodeBytesForUpload, encodeForUpload, uploadFilename, snapshotTransform } from './transform.js';
 import { addTransfer, removeTransfer, makeTransferProgress, updateIfChanged } from './transfers.js';
@@ -36,6 +36,13 @@ export function refreshUpload() {
   else load('ul');
 }
 
+// Refresh after a local change (upload, new folder): force the tree listing so
+// it isn't skipped as a same-context overlap and shows the change immediately.
+export function reloadUpload() {
+  if (state.ulFlat) loadUploadDir();
+  else reload('ul');
+}
+
 // Mirrors the server's limit on how deep below the upload root a directory
 // may be created.
 export const MKDIR_MAX_DEPTH = 4;
@@ -46,7 +53,7 @@ export async function createDir(name) {
     method: 'POST', headers: jsonHeaders(), body: encodeBody({ path: path }),
   });
   if (!res.ok) throw new Error((await res.text()).trim() || 'HTTP ' + res.status);
-  load('ul');
+  reload('ul');
 }
 
 export async function uploadFiles(files) {
@@ -72,7 +79,7 @@ export async function uploadFiles(files) {
     }
   });
   await Promise.all(promises);
-  refreshUpload();
+  reloadUpload();
 }
 
 // A green toast means the server's hash of the stored file matches the local

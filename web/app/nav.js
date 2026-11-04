@@ -1,7 +1,7 @@
 // Tab navigation + the shared refresh dispatch. Tab-specific loaders are
 // wired in as each tab is ported.
 import { state } from './store.js';
-import { load } from './lib/download.js';
+import { load, reload } from './lib/download.js';
 import { refreshUpload } from './lib/upload.js';
 import { pollClipboard, resetClipSync } from './lib/clipboard.js';
 
@@ -41,6 +41,6 @@ export function restoreTab() {
 // (kept across tab switches) and resync the clipboard from scratch.
 export function onAuthKeyChange() {
   resetClipSync();
-  load('dl');
+  reload('dl');
   if (state.tab !== 'download') refreshActive();
 }
