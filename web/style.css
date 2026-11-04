@@ -995,8 +995,14 @@ input[type="text"].clip-caption-input:focus {
   word-break: break-word;
 }
 
+.notice-success {
+  border-color: var(--accent);
+  border-left: 3px solid var(--accent);
+}
+
 .notice-error {
   border-color: var(--error);
+  border-left: 3px solid var(--error);
 }
 
 .notice-close {

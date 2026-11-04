@@ -1,7 +1,7 @@
 import { html, text } from './html.js';
 import { useState, useEffect } from '../vendor/hooks.module.js';
 import { state, settings } from '../store.js';
-import { connectOutbox, reconnectOutbox, disconnectOutbox, dismissNotice } from '../lib/outbox.js';
+import { connectOutbox, reconnectOutbox, disconnectOutbox } from '../lib/outbox.js';
 
 const SHELLS = [
   { id: 'ps', label: 'PowerShell', url: 'static/push-to-wgclip.ps1' },
@@ -77,17 +77,6 @@ export function OutboxSettings() {
       ${connected && html`
         <button class="choose-btn" onClick=${disconnectOutbox} title="Stop watching and forget the folder.">Disconnect</button>`}
       <button class="choose-btn" onClick=${() => (state.outbox.showScript = true)} title="Show the PowerShell and bash/zsh functions that push text into the outbox.">Push function</button>
-    </div>`;
-}
-
-export function OutboxNotices() {
-  return html`
-    <div class="notices">
-      ${state.outbox.notices.map((n) => html`
-        <div key=${n.id} class="notice ${n.ok ? '' : 'notice-error'}">
-          <span>${n.text}</span>
-          <button class="notice-close" onClick=${() => dismissNotice(n.id)} title="Dismiss">✕</button>
-        </div>`)}
     </div>`;
 }
 

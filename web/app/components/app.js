@@ -6,7 +6,8 @@ import { DownloadTab } from './download.js';
 import { UploadTab } from './upload.js';
 import { ClipboardTab } from './clipboard.js';
 import { BenchmarkTab } from './benchmark.js';
-import { OutboxNotices, OutboxScriptDialog } from './outbox.js';
+import { OutboxScriptDialog } from './outbox.js';
+import { Toasts } from './toasts.js';
 
 // Shown as a dot on the closed settings button.
 function settingsAttention() {
@@ -56,7 +57,7 @@ export function App() {
           ${state.tab === 'benchmark' && html`<${BenchmarkTab} />`}
         </main>
       </div>
-      <${OutboxNotices} />
+      <${Toasts} />
       ${state.outbox.showScript && html`<${OutboxScriptDialog} />`}
     <//>`;
 }

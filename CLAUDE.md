@@ -199,7 +199,9 @@ an explicit `"ul-done":false` starts chunking.
 
 Every completing response (one-shot, final chunk, completed replay, WS final ack) carries
 `sha256`: `publishUpload` hashes the temp file right before the rename; the session keeps it for
-replays. wgcli compares it with the local file and fails on a mismatch.
+replays. wgcli compares it with the local file and fails on a mismatch. The browser UI compares it
+too (`reportUpload`, needs `crypto.subtle`): a match raises a green "uploaded and verified" toast, a
+mismatch a red one.
 
 `ul_session.go` (`sessionStore`, generic over the session payload) and `upload.go`
 (`handleUploadFirstChunk`, `handleUploadContinuation`) implement it:
@@ -616,7 +618,8 @@ git-ignored): `local/push-to-wgclip/push-to-clip.md`.
   timer is set only after awaiting a file system call (`sleep` in the scan loop) — keep it that way.
 - **Permissions**: `readwrite`; after a reload it's granted only with "Allow on every visit",
   otherwise the section offers Reconnect.
-- Each push raises a notice (successes vanish after 5 s, failures stay). The ⇪ marker is
+- Each push raises a toast (`lib/notices.js` `addToast`: green successes vanish after 5 s, red
+  failures stay; shared with upload verification, rendered by `<Toasts>`). The ⇪ marker is
   informational: any process of the same user can push.
 - **`push-to-wgclip.ps1`** must work in Windows PowerShell 5.1 and PowerShell 7, also in
   Constrained Language Mode (no .NET calls on non-core types, no `$PSBoundParameters.ContainsKey`),

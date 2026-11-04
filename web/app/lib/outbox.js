@@ -7,6 +7,7 @@
 import { state, authKeyHash } from '../store.js';
 import { createNote, pollClipboard, sanitizeClipTitle } from './clipboard.js';
 import { sha256Hex } from './util.js';
+import { addToast } from './notices.js';
 
 var MAX_BYTES = 512 * 1024;
 var PICKUP_DELAY_MS = 300;
@@ -14,7 +15,6 @@ var SCAN_MS = 5000;
 var FAIL_AFTER_MS = 10000;
 var LEFTOVER_MS = 60 * 60 * 1000;
 var REMOVE_RETRY_MS = [0, 200, 500, 1000, 2000];
-var NOTICE_MS = 5000;
 
 var dir = null;
 var savedHandle = null;
@@ -24,7 +24,6 @@ var releaseLock = null;
 var kicked = false;
 var wake = null;
 var firstSeen = {};
-var noticeSeq = 0;
 
 // --- persistence of the folder handle and of pushed-but-not-yet-deleted files
 
@@ -226,7 +225,7 @@ async function processPush(folder, name, files) {
   // Recorded before deleting, so a hash file that survives a failed delete is never pushed twice.
   await kvSet('pushed:' + hashName, parsed.hash).catch(function() {});
   delete firstSeen[hashName];
-  notify(true, 'Note #' + id + (title ? ' "' + title + '"' : '') + ' pushed from outbox');
+  addToast(true, 'Note #' + id + (title ? ' "' + title + '"' : '') + ' pushed from outbox');
   pollClipboard();
   await removePushed(folder, name);
 }
@@ -238,7 +237,7 @@ function retryOrFail(name, files, waited, msg) {
 
 async function fail(name, files, msg) {
   delete firstSeen[name + '.sha256'];
-  notify(false, name + ': ' + msg);
+  addToast(false, name + ': ' + msg);
   for (var i = 0; i < REMOVE_RETRY_MS.length; i++) {
     await delay(REMOVE_RETRY_MS[i]);
     try { await files[name + '.sha256'].move(name + '.failed'); return; } catch (e) {}
@@ -278,17 +277,4 @@ async function removeLeftovers(folder, names, files) {
     if (Date.now() - (await files[n].getFile()).lastModified < LEFTOVER_MS) continue;
     if (await remove(folder, n) && failed) await remove(folder, n.slice(0, -'.failed'.length));
   }
-}
-
-// --- notices
-
-function notify(ok, text) {
-  var id = ++noticeSeq;
-  state.outbox.notices.push({ id: id, ok: ok, text: text });
-  if (ok) setTimeout(function() { dismissNotice(id); }, NOTICE_MS);
-}
-
-export function dismissNotice(id) {
-  var i = state.outbox.notices.findIndex(function(n) { return n.id === id; });
-  if (i >= 0) state.outbox.notices.splice(i, 1);
 }

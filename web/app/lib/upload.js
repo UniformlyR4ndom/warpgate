@@ -7,6 +7,8 @@ import { load } from './download.js';
 import { wsNextJSON, sendWSBinary } from './ws.js';
 import { encodeBytesForUpload, encodeForUpload, uploadFilename } from './transform.js';
 import { addTransfer, removeTransfer, makeTransferProgress, updateIfChanged } from './transfers.js';
+import { addToast } from './notices.js';
+import { sha256Hex } from './util.js';
 
 export async function loadUploadDir() {
   try {
@@ -55,20 +57,32 @@ export async function uploadFiles(files) {
     var transfer   = addTransfer('upload', file.name, 'ul');
     var onProgress = makeTransferProgress(transfer, file.size);
     try {
-      if (settings.backend === 'ws') {
-        await uploadFileWS(file, dir, onProgress);
-      } else {
-        await uploadFileHTTP(file, dir, onProgress);
-      }
+      var serverHash = settings.backend === 'ws'
+        ? await uploadFileWS(file, dir, onProgress)
+        : await uploadFileHTTP(file, dir, onProgress);
+      await reportUpload(file, serverHash);
     } catch(err) {
-      state.uploadError = 'Upload of "' + file.name + '" failed: ' +
-        (err.status ? 'HTTP ' + err.status : err);
+      addToast(false, 'Upload of "' + file.name + '" failed: ' +
+        (err.status ? 'HTTP ' + err.status : err.message || err));
     } finally {
       removeTransfer(transfer);
     }
   });
   await Promise.all(promises);
   refreshUpload();
+}
+
+// A green toast means the server's hash of the stored file matches the local
+// file, so it was written fully and correctly. A mismatch is a red, sticky toast.
+async function reportUpload(file, serverHash) {
+  var label = '"' + file.name + '"';
+  if (!serverHash || !(window.crypto && window.crypto.subtle)) {
+    addToast(true, label + ' uploaded (unverified)');
+    return;
+  }
+  var localHash = await sha256Hex(await file.arrayBuffer());
+  if (localHash === serverHash) addToast(true, label + ' uploaded (verified)');
+  else addToast(false, label + ' uploaded, but the hash does not match — the file may be corrupted on the server');
 }
 
 // dir is sent only when set, so a flat upload is accepted under -ul-flat.
@@ -89,12 +103,15 @@ function uploadForm(spec, encrypted, data, name) {
 async function uploadFileHTTP(file, dir, onProgress) {
   if (settings.uploadChunking.enabled) { return uploadFileHTTPChunked(file, dir, onProgress); }
 
+  var encrypted = paramEncryptEnabled();
   var result = await encodeForUpload(file);
   var spec   = encodeBody(withDir({ transform: settings.transform.type, args: result.args, 'ul-done': true }, dir));
   var res = await apiFetch(API_BASE + '/api/files/upload', {
-    method: 'POST', headers: authHeaders(), body: uploadForm(spec, paramEncryptEnabled(), result.data, file.name),
+    method: 'POST', headers: authHeaders(), body: uploadForm(spec, encrypted, result.data, file.name),
   });
   assertOk(res);
+  var data = await decodeResponseJSON(res, encrypted);
+  return data && data.sha256;
 }
 
 // Chunks are sent strictly one at a time: the server rejects concurrent
@@ -106,6 +123,7 @@ async function uploadFileHTTPChunked(file, dir, onProgress) {
   var encrypted = paramEncryptEnabled();
 
   var continuationKey = '';
+  var serverHash = '';
   var offset = 0;
   var done   = false;
   while (!done) {
@@ -126,10 +144,12 @@ async function uploadFileHTTPChunked(file, dir, onProgress) {
     assertOk(res);
     var data = await decodeResponseJSON(res, encrypted);
     continuationKey = data['continuation-key'] || '';
+    if (done) serverHash = data.sha256 || '';
 
     if (onProgress) onProgress(slice.byteLength);
     offset = end;
   }
+  return serverHash;
 }
 
 async function uploadFileWS(file, dir, onProgress) {
@@ -155,6 +175,7 @@ async function uploadFileWS(file, dir, onProgress) {
 
     var final = await wsNextJSON(ws, decrypt);
     if (!final.ok) throw new Error(final.error || 'upload failed');
+    return final.sha256;
   } finally {
     ws.close();
   }
