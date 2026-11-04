@@ -1,9 +1,9 @@
-push-to-wgclip() {
+push2wgclip() {
     # Pushes text into the warpgate clipboard through the outbox folder watched by an open warpgate tab.
     # Outbox: $WGCLIP_OUTBOX, default ~/wgclip-outbox. Limit: 512 KiB. Works in bash and zsh.
-    #   ls -la | push-to-wgclip -t 'dir listing'
-    #   push-to-wgclip -f notes.txt
-    local usage='usage: push-to-wgclip [-t title] [-f file] [-n] [-T timeout_sec] < text'
+    #   ls -la | push2wgclip -t 'dir listing'
+    #   push2wgclip -f notes.txt
+    local usage='usage: push2wgclip [-t title] [-f file] [-n] [-T timeout_sec] < text'
     local limit=524288 title='' src='' nowait='' timeout=30 opt OPTIND=1 OPTARG
     while getopts 't:f:nT:h' opt; do
         case $opt in
@@ -15,7 +15,7 @@ push-to-wgclip() {
         esac
     done
     # No exclamation marks anywhere: interactive shells apply history expansion to pasted code.
-    case $timeout in ''|*[^0-9]*) echo "push-to-wgclip: invalid timeout: $timeout" >&2; return 2 ;; esac
+    case $timeout in ''|*[^0-9]*) echo "push2wgclip: invalid timeout: $timeout" >&2; return 2 ;; esac
 
     local outbox=${WGCLIP_OUTBOX:-$HOME/wgclip-outbox}
     mkdir -p -- "$outbox" || return 1
@@ -24,10 +24,10 @@ push-to-wgclip() {
     local file=$outbox/$name size
 
     if [ -n "$src" ]; then
-        [ -f "$src" ] || { echo "push-to-wgclip: not a file: $src" >&2; return 1; }
+        [ -f "$src" ] || { echo "push2wgclip: not a file: $src" >&2; return 1; }
         size=$(wc -c < "$src") || return 1
         if [ "$size" -gt "$limit" ]; then
-            echo "push-to-wgclip: too large (> 512 KiB); meant for text/small content" >&2
+            echo "push2wgclip: too large (> 512 KiB); meant for text/small content" >&2
             return 1
         fi
         cp -- "$src" "$file" || return 1
@@ -38,12 +38,12 @@ push-to-wgclip() {
         size=$(wc -c < "$file")
         if [ "$size" -gt "$limit" ]; then
             rm -f -- "$file"
-            echo "push-to-wgclip: too large (> 512 KiB); meant for text/small content" >&2
+            echo "push2wgclip: too large (> 512 KiB); meant for text/small content" >&2
             return 1
         fi
         local text
         text=$(cat -- "$file")
-        if [ -z "$text" ]; then rm -f -- "$file"; echo 'push-to-wgclip: nothing to push' >&2; return 1; fi
+        if [ -z "$text" ]; then rm -f -- "$file"; echo 'push2wgclip: nothing to push' >&2; return 1; fi
         printf '%s' "$text" > "$file" || return 1
     fi
 
@@ -68,12 +68,12 @@ push-to-wgclip() {
             # the browser may still be checking the renamed file
             sleep 1
             rm -f -- "$file.failed" "$file"
-            echo 'push-to-wgclip: push failed, see the warpgate tab' >&2
+            echo 'push2wgclip: push failed, see the warpgate tab' >&2
             return 1
         fi
         [ -e "$file.sha256" ] || [ -e "$file" ] || { echo 'pushed'; return 0; }
         i=$((i + 1))
     done
-    echo "push-to-wgclip: not picked up within $timeout s: no warpgate tab open, outbox not connected, or auth key not entered? The push stays queued in $outbox." >&2
+    echo "push2wgclip: not picked up within $timeout s: no warpgate tab open, outbox not connected, or auth key not entered? The push stays queued in $outbox." >&2
     return 1
 }

@@ -15,7 +15,7 @@ const ENV_SYNTAX = isWindows() ? '$env:WGCLIP_OUTBOX' : 'WGCLIP_OUTBOX';
 // The configured outbox path (settings.outboxPath), trimmed; '' means the default.
 function outboxPath() { return settings.outboxPath.trim(); }
 
-// Last path segment of a '/'- or '\'-separated path, the folder push-to-wgclip
+// Last path segment of a '/'- or '\'-separated path, the folder push2wgclip
 // writes into; falls back to the default so the mismatch check has something to compare.
 function targetFolder() {
   var parts = outboxPath().replace(/[\/\\]+$/, '').split(/[\/\\]/);
@@ -63,15 +63,15 @@ export function OutboxSettings() {
       <div class="outbox-hint">Script writes to <code>${outboxPath() || DEFAULT_PATH}</code></div>`}
     ${o.status !== 'off' && o.folder !== targetFolder() && html`
       <div class="outbox-hint outbox-mismatch"
-           title=${`push-to-wgclip writes to "${targetFolder()}" but this tab watches "${o.folder}". Set the outbox path to the folder you connected (and copy the Push function again), or connect "${targetFolder()}".`}>
+           title=${`push2wgclip writes to "${targetFolder()}" but this tab watches "${o.folder}". Set the outbox path to the folder you connected (and copy the Push function again), or connect "${targetFolder()}".`}>
         Watching "${o.folder}", but script writes to "${targetFolder()}"
       </div>`}
-    <label title="The folder push-to-wgclip writes to. Baked into the copied Push function as ${ENV_SYNTAX} so you don't set it by hand. Use an absolute path (a leading ~ is not expanded). Leave empty for the default ${DEFAULT_PATH}.">Script outbox path</label>
+    <label title="The folder push2wgclip writes to. Baked into the copied Push function as ${ENV_SYNTAX} so you don't set it by hand. Use an absolute path (a leading ~ is not expanded). Leave empty for the default ${DEFAULT_PATH}.">Script outbox path</label>
     <input type="text" class="outbox-path" ...${text(settings, 'outboxPath')} placeholder=${DEFAULT_PATH}
-      title="The folder push-to-wgclip writes to. Baked into the copied Push function as ${ENV_SYNTAX} so you don't set it by hand. Use an absolute path (a leading ~ is not expanded). Leave empty for the default ${DEFAULT_PATH}." />
+      title="The folder push2wgclip writes to. Baked into the copied Push function as ${ENV_SYNTAX} so you don't set it by hand. Use an absolute path (a leading ~ is not expanded). Leave empty for the default ${DEFAULT_PATH}." />
     <div class="outbox-buttons outbox-stacked">
       ${o.status === 'off' && html`
-        <button class="choose-btn" onClick=${connectOutbox} title="Pick the folder push-to-wgclip writes to, e.g. wgclip-outbox in your home directory. Needs read/write access.">Connect folder</button>`}
+        <button class="choose-btn" onClick=${connectOutbox} title="Pick the folder push2wgclip writes to, e.g. wgclip-outbox in your home directory. Needs read/write access.">Connect folder</button>`}
       ${o.status === 'reconnect' && html`
         <button class="choose-btn" onClick=${reconnectOutbox} title="Grant access to the previously picked folder again.">Reconnect</button>`}
       ${connected && html`
@@ -122,22 +122,22 @@ export function OutboxScriptDialog() {
         ${shell === 'ps' ? html`
           <p>
             Click Copy, then run <code>Get-Clipboard -Raw | Invoke-Expression</code> in PowerShell to define${' '}
-            <code>push-to-wgclip</code> for the session. Pasting the code directly can crash Windows PowerShell
+            <code>push2wgclip</code> for the session. Pasting the code directly can crash Windows PowerShell
             5.1 when it is taller than the console window.
           </p>
           <p>
-            Usage: <code>Get-ChildItem | push-to-wgclip -Title 'listing'</code>.${' '}
+            Usage: <code>Get-ChildItem | push2wgclip -Title 'listing'</code>.${' '}
             ${path
               ? html`This copy sets <code>$env:WGCLIP_OUTBOX</code> to <code>${path}</code>; connect that folder here.`
               : html`It writes to <code>~\\${DEFAULT_FOLDER}</code> unless <code>$env:WGCLIP_OUTBOX</code> is set; connect the same folder here.`}
           </p>` : html`
           <p>
-            Click Copy and paste it into a bash or zsh terminal to define <code>push-to-wgclip</code> for the
-            session. To keep it, save it as <code>~/push-to-wgclip.sh</code> and add${' '}
-            <code>source ~/push-to-wgclip.sh</code> to <code>~/.bashrc</code> or <code>~/.zshrc</code>.
+            Click Copy and paste it into a bash or zsh terminal to define <code>push2wgclip</code> for the
+            session. To keep it, save it as <code>~/push2wgclip.sh</code> and add${' '}
+            <code>source ~/push2wgclip.sh</code> to <code>~/.bashrc</code> or <code>~/.zshrc</code>.
           </p>
           <p>
-            Usage: <code>ls -la | push-to-wgclip -t 'listing'</code> or <code>push-to-wgclip -f notes.txt</code>.${' '}
+            Usage: <code>ls -la | push2wgclip -t 'listing'</code> or <code>push2wgclip -f notes.txt</code>.${' '}
             ${path
               ? html`This copy sets <code>$WGCLIP_OUTBOX</code> to <code>${path}</code>; connect that folder here.`
               : html`It writes to <code>~/${DEFAULT_FOLDER}</code> unless <code>$WGCLIP_OUTBOX</code> is set; connect the same folder here.`}

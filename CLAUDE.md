@@ -513,7 +513,8 @@ Preact + htm + `@preact/signals` + `deepsignal` as native ES modules; no build s
   one module per tab
 - `app/components/` — `html.js` (bound `html` tag, `text`/`num`/`check`/`sel` binding helpers),
   `app.js`, `panel.js`, `browser.js` (file browser, both roots), `transfers.js`, `outbox.js`, one per tab
-- `push-to-wgclip.ps1`, `push-to-wgclip.sh` — outbox push functions (see "Outbox")
+- `push-to-wgclip.ps1`, `push-to-wgclip.sh` — outbox push functions, both defining `push2wgclip`
+  (the name has no hyphen so it autocompletes without colliding with `push-` commands; see "Outbox")
 
 **htm pitfalls.** htm closes tags positionally and knows no void elements: always self-close
 (`<input … />`, `<img … />`, `<br />`), or the element swallows its siblings. Whitespace containing a

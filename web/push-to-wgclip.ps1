@@ -1,13 +1,13 @@
-function push-to-wgclip {
+function push2wgclip {
     <#
     .SYNOPSIS
     Pushes text into the warpgate clipboard through the outbox folder watched by an open warpgate tab.
     .DESCRIPTION
     Outbox: $env:WGCLIP_OUTBOX, default ~/wgclip-outbox. Limit: 512 KiB.
     .EXAMPLE
-    Get-ChildItem | push-to-wgclip -Title 'dir listing'
+    Get-ChildItem | push2wgclip -Title 'dir listing'
     .EXAMPLE
-    push-to-wgclip -Path notes.txt
+    push2wgclip -Path notes.txt
     #>
     [CmdletBinding()]
     param(
@@ -19,7 +19,7 @@ function push-to-wgclip {
     )
     end {
         $limit = 512KB
-        $tooLarge = "too large (> $($limit / 1KB) KiB); push-to-wgclip is meant for text/small content"
+        $tooLarge = "too large (> $($limit / 1KB) KiB); push2wgclip is meant for text/small content"
         $outbox = if ($env:WGCLIP_OUTBOX) { $env:WGCLIP_OUTBOX } else { Join-Path $HOME 'wgclip-outbox' }
         if (-not (Test-Path -LiteralPath $outbox -PathType Container)) {
             New-Item -ItemType Directory -Path $outbox -ErrorAction Stop | Out-Null
