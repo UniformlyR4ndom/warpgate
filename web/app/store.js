@@ -1,7 +1,7 @@
 import { deepSignal } from './vendor/deepsignal.module.js';
 import { signal, effect } from './vendor/signals.module.js';
 import { deriveKey, authToken, fingerprint, labelBytes } from './lib/authhash.js';
-import { bytesToHex, hexToBytes } from './lib/util.js';
+import { bytesToHex, hexToBytes, positiveOr } from './lib/util.js';
 
 export const API_BASE = window.location.pathname.replace(/\/[^/]*$/, '');
 
@@ -123,6 +123,15 @@ function mergeSettings(target, source) {
   }
 }
 
+// Restored values are otherwise trusted as-is; coerce the chunk sizes that
+// drive the transfer loops back to a sane positive number so a persisted
+// empty/zero/negative value can't carry a bad setting across reloads. The
+// loops also re-validate at their boundary (chunkBytesFromMB).
+function clampSettings() {
+  settings.chunking.chunkSize = positiveOr(settings.chunking.chunkSize, 100);
+  settings.uploadChunking.chunkSizeMB = positiveOr(settings.uploadChunking.chunkSizeMB, 100);
+}
+
 function loadSettings() {
   try {
     var raw = localStorage.getItem(SETTINGS_STORAGE_KEY);
@@ -131,6 +140,7 @@ function loadSettings() {
       mergeSettings(settings, parsed.settings);
     }
   } catch(e) {}
+  clampSettings();
 }
 
 function loadAuthK() {

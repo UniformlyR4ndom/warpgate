@@ -7,7 +7,7 @@ import { jsonHeaders, encodeBody, decodeResponseJSON, assertOk,
 import { wsNextJSON, receiveWSBinary, readBodyWithProgress } from './ws.js';
 import { decrypt, buildTransformArgs, perRequestSecrets, resolveContentTypeOverride, snapshotTransform } from './transform.js';
 import { authKeyHash } from '../store.js';
-import { padIndex, triggerDownload, applyExtOverride } from './util.js';
+import { padIndex, triggerDownload, applyExtOverride, chunkBytesFromMB } from './util.js';
 import { addTransfer, removeTransfer, makeTransferProgress, updateIfChanged } from './transfers.js';
 import { makeRequestGuard } from './loadguard.js';
 
@@ -136,7 +136,7 @@ export async function downloadFile(root, entry) {
   var saveName   = applyExtOverride(entry.name, settings.extOverride.ext, settings.extOverride.mode);
 
   if (chunking.enabled) {
-    var chunkBytes = chunking.chunkSize * 1024 * 1024;
+    var chunkBytes = chunkBytesFromMB(chunking.chunkSize, 100);
     var numChunks  = Math.ceil(entry.size / chunkBytes);
 
     if (chunking.reassemble && state.hasFileSystemAccess) {

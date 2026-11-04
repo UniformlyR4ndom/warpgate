@@ -58,6 +58,23 @@ export function padIndex(i) {
   return ('000' + i).slice(-3);
 }
 
+// A finite number > 0, else fallback. For sanitizing a user-entered or
+// persisted numeric setting (an empty field reads as "" / NaN, a cleared one
+// as 0) before it is stored or used.
+export function positiveOr(n, fallback) {
+  n = Number(n);
+  return Number.isFinite(n) && n > 0 ? n : fallback;
+}
+
+// A chunk size setting (in MB) as a positive integer byte count, falling back
+// to defaultMB when the setting is empty, zero, negative, NaN, or so small it
+// floors to zero bytes — any of which would otherwise stall the chunking loop
+// (no forward progress) or make it no-op.
+export function chunkBytesFromMB(mb, defaultMB) {
+  var bytes = Math.floor(positiveOr(mb, defaultMB) * 1024 * 1024);
+  return bytes >= 1 ? bytes : defaultMB * 1024 * 1024;
+}
+
 export function formatSize(bytes) {
   if (bytes === null || bytes === undefined) return '';
   if (bytes < 1024)               return bytes.toFixed(2) + ' B';

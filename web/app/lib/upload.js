@@ -8,7 +8,7 @@ import { wsNextJSON, sendWSBinary } from './ws.js';
 import { encodeBytesForUpload, encodeForUpload, uploadFilename, snapshotTransform } from './transform.js';
 import { addTransfer, removeTransfer, makeTransferProgress, updateIfChanged } from './transfers.js';
 import { addToast } from './notices.js';
-import { sha256Hex } from './util.js';
+import { sha256Hex, chunkBytesFromMB } from './util.js';
 
 export async function loadUploadDir() {
   try {
@@ -127,7 +127,7 @@ async function uploadFileHTTP(tx, file, dir, onProgress) {
 // Chunks are sent strictly one at a time: the server rejects concurrent
 // requests for a filename and only recognizes the immediately-next key.
 async function uploadFileHTTPChunked(tx, file, dir, onProgress) {
-  var chunkSize = settings.uploadChunking.chunkSizeMB * 1024 * 1024;
+  var chunkSize = chunkBytesFromMB(settings.uploadChunking.chunkSizeMB, 100);
   var bytes     = new Uint8Array(await file.arrayBuffer());
   var filename  = uploadFilename(tx, file);
   var encrypted = paramEncryptEnabled();
