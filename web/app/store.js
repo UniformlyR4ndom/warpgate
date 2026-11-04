@@ -23,6 +23,7 @@ export const settings = deepSignal({
   wsFrameSizeKB: 4096,
   contentType: { preset: 'auto', custom: '' },
   extOverride: { ext: '', mode: 'replace' },
+  outboxPath: '',
   transform: {
     type: 'id',
     xor:    { auto: true,  key: '' },

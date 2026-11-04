@@ -948,6 +948,10 @@ input[type="text"].clip-caption-input:focus {
   white-space: nowrap;
 }
 
+.outbox-path {
+  margin-bottom: 0.6rem;
+}
+
 .outbox-buttons {
   display: flex;
   flex-wrap: wrap;

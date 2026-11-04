@@ -1,6 +1,6 @@
-import { html } from './html.js';
+import { html, text } from './html.js';
 import { useState, useEffect } from '../vendor/hooks.module.js';
-import { state } from '../store.js';
+import { state, settings } from '../store.js';
 import { connectOutbox, reconnectOutbox, disconnectOutbox, dismissNotice } from '../lib/outbox.js';
 
 const SHELLS = [
@@ -11,6 +11,26 @@ const SHELLS = [
 const DEFAULT_FOLDER = 'wgclip-outbox';
 const DEFAULT_PATH = (isWindows() ? '~\\' : '~/') + DEFAULT_FOLDER;
 const ENV_SYNTAX = isWindows() ? '$env:WGCLIP_OUTBOX' : 'WGCLIP_OUTBOX';
+
+// The configured outbox path (settings.outboxPath), trimmed; '' means the default.
+function outboxPath() { return settings.outboxPath.trim(); }
+
+// Last path segment of a '/'- or '\'-separated path, the folder push-to-wgclip
+// writes into; falls back to the default so the mismatch check has something to compare.
+function targetFolder() {
+  var parts = outboxPath().replace(/[\/\\]+$/, '').split(/[\/\\]/);
+  return parts[parts.length - 1] || DEFAULT_FOLDER;
+}
+
+// A WGCLIP_OUTBOX assignment baking the configured path into the copied function,
+// quoted for the shell ('' = PowerShell literal escape, '\'' = bash literal escape).
+function envAssignment(shell) {
+  var p = outboxPath();
+  if (!p) return '';
+  return shell === 'ps'
+    ? "$env:WGCLIP_OUTBOX = '" + p.replace(/'/g, "''") + "'"
+    : "export WGCLIP_OUTBOX='" + p.replace(/'/g, "'\\''") + "'";
+}
 
 function statusText(o) {
   switch (o.status) {
@@ -40,12 +60,15 @@ export function OutboxSettings() {
       <span class="outbox-dot"></span><span>${statusText(o)}</span>
     </div>
     ${o.status === 'off' && html`
-      <div class="outbox-hint">Default: <code>${DEFAULT_PATH}</code></div>`}
-    ${o.status !== 'off' && o.folder !== DEFAULT_FOLDER && html`
+      <div class="outbox-hint">Script writes to <code>${outboxPath() || DEFAULT_PATH}</code></div>`}
+    ${o.status !== 'off' && o.folder !== targetFolder() && html`
       <div class="outbox-hint outbox-mismatch"
-           title=${`push-to-wgclip writes to ${DEFAULT_PATH} by default. For "${o.folder}", set ${ENV_SYNTAX} to its full path first.`}>
-        Non-default: set <code>${ENV_SYNTAX}</code>
+           title=${`push-to-wgclip writes to "${targetFolder()}" but this tab watches "${o.folder}". Set the outbox path to the folder you connected (and copy the Push function again), or connect "${targetFolder()}".`}>
+        Watching "${o.folder}", but script writes to "${targetFolder()}"
       </div>`}
+    <label title="The folder push-to-wgclip writes to. Baked into the copied Push function as ${ENV_SYNTAX} so you don't set it by hand. Use an absolute path (a leading ~ is not expanded). Leave empty for the default ${DEFAULT_PATH}.">Script outbox path</label>
+    <input type="text" class="outbox-path" ...${text(settings, 'outboxPath')} placeholder=${DEFAULT_PATH}
+      title="The folder push-to-wgclip writes to. Baked into the copied Push function as ${ENV_SYNTAX} so you don't set it by hand. Use an absolute path (a leading ~ is not expanded). Leave empty for the default ${DEFAULT_PATH}." />
     <div class="outbox-buttons outbox-stacked">
       ${o.status === 'off' && html`
         <button class="choose-btn" onClick=${connectOutbox} title="Pick the folder push-to-wgclip writes to, e.g. wgclip-outbox in your home directory. Needs read/write access.">Connect folder</button>`}
@@ -91,9 +114,13 @@ export function OutboxScriptDialog() {
       .catch((e) => setScripts((m) => ({ ...m, [shell]: 'Failed to load: ' + e.message })));
   }, [shell]);
   var script = scripts[shell] || '';
+  var loaded = script && !script.startsWith('Failed to load:');
+  var assign = envAssignment(shell);
+  var shown = assign && loaded ? assign + '\n\n' + script : script;
+  var path = outboxPath();
   function pick(id) { setShell(id); setCopied(false); }
   async function copy() {
-    await navigator.clipboard.writeText(script);
+    await navigator.clipboard.writeText(shown);
     setCopied(true);
   }
   return html`
@@ -110,9 +137,10 @@ export function OutboxScriptDialog() {
             5.1 when it is taller than the console window.
           </p>
           <p>
-            Usage: <code>Get-ChildItem | push-to-wgclip -Title 'listing'</code>. It writes to${' '}
-            <code>~\\${DEFAULT_FOLDER}</code> unless <code>$env:WGCLIP_OUTBOX</code> is set; connect the same
-            folder here.
+            Usage: <code>Get-ChildItem | push-to-wgclip -Title 'listing'</code>.${' '}
+            ${path
+              ? html`This copy sets <code>$env:WGCLIP_OUTBOX</code> to <code>${path}</code>; connect that folder here.`
+              : html`It writes to <code>~\\${DEFAULT_FOLDER}</code> unless <code>$env:WGCLIP_OUTBOX</code> is set; connect the same folder here.`}
           </p>` : html`
           <p>
             Click Copy and paste it into a bash or zsh terminal to define <code>push-to-wgclip</code> for the
@@ -120,11 +148,12 @@ export function OutboxScriptDialog() {
             <code>source ~/push-to-wgclip.sh</code> to <code>~/.bashrc</code> or <code>~/.zshrc</code>.
           </p>
           <p>
-            Usage: <code>ls -la | push-to-wgclip -t 'listing'</code> or <code>push-to-wgclip -f notes.txt</code>.
-            It writes to <code>~/${DEFAULT_FOLDER}</code> unless <code>$WGCLIP_OUTBOX</code> is set; connect the
-            same folder here.
+            Usage: <code>ls -la | push-to-wgclip -t 'listing'</code> or <code>push-to-wgclip -f notes.txt</code>.${' '}
+            ${path
+              ? html`This copy sets <code>$WGCLIP_OUTBOX</code> to <code>${path}</code>; connect that folder here.`
+              : html`It writes to <code>~/${DEFAULT_FOLDER}</code> unless <code>$WGCLIP_OUTBOX</code> is set; connect the same folder here.`}
           </p>`}
-        <pre class="script-code">${script}</pre>
+        <pre class="script-code">${shown}</pre>
         <div class="outbox-buttons">
           <button class="choose-btn" onClick=${copy} disabled=${!script} title="Copy the function to the system clipboard.">${copied ? 'Copied' : 'Copy'}</button>
           <button class="choose-btn" onClick=${() => (state.outbox.showScript = false)} title="Close (Esc)">Close</button>

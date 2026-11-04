@@ -627,8 +627,12 @@ git-ignored): `local/push-to-wgclip/push-to-clip.md`.
   `date`) writes the hash file under a temporary name and renames it. File names take randomness
   from `/dev/urandom` because zsh's `$RANDOM` repeats in subshells. It must not contain `!`: pasted
   into an interactive shell, history expansion makes zsh drop the definition.
-- The dialog has PowerShell / Bash tabs, preselected by platform. The panel warns when the folder
-  isn't named `wgclip-outbox` (the default; `WGCLIP_OUTBOX` overrides), in the platform's syntax.
+- The dialog has PowerShell / Bash tabs, preselected by platform. The panel's "Script outbox path"
+  field (`settings.outboxPath`, empty = the default `~/wgclip-outbox`) is the path the script writes
+  to; the dialog bakes it into the copied function as a `WGCLIP_OUTBOX` assignment (quoted for the
+  shell), since the browser can't set the script's environment and the picker never reveals the
+  connected folder's full path. The panel warns when the connected folder's name differs from that
+  path's last segment.
 
 ### Benchmark tab
 
