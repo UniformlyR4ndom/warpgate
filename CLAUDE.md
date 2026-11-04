@@ -4,16 +4,37 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Comment Policy
 
-Default to no comment at all; add one only when skipping it would leave a reader
-surprised or misled. When a comment is warranted, it must:
+The default is no comment: names, types, and structure should carry the meaning. A comment that
+restates the code is noise that hides the comments that matter, and it rots. Add one only when
+skipping it would leave a reader surprised or misled. If in doubt, leave it out. A warranted
+comment must:
 
-1. Be brief — no more than the fact and, if needed, a short reason why.
-2. State only what is true and non-obvious about the code it annotates — if the code
-   already shows it, the comment isn't earning its place.
-3. Never narrate history — no past bugs, no design alternatives once tried.
-4. Never narrate relationships to other code — no "only called from X," no "same as Y
-   does it," no caller/sibling enumeration. Describe this code, not the rest of the
-   codebase.
+1. Be brief — the fact and, if needed, a short reason why. Prefer one line; a longer comment is
+   fine when the rationale genuinely needs it.
+2. State only what is true and non-obvious about the code it annotates — if the code already
+   shows it, the comment isn't earning its place.
+3. Explain why, not what: a non-obvious constraint, a deliberate choice that looks wrong, a
+   workaround for an external bug, or a security invariant whose removal would look harmless
+   (refer to `doc/security.md` rather than restating the threat-model decision).
+4. Never narrate history — no past bugs, no design alternatives once tried; git records that.
+5. Never narrate relationships to other code — no "only called from X," no "same as Y does it,"
+   no caller/sibling enumeration. Describe this code, not the rest of the codebase.
+
+Forbidden, for example:
+
+- Restating code: `// create the output directory` above `os.MkdirAll(...)`.
+- Doc comments that just repeat the name: `// NewSigner creates a new Signer`.
+- History or change narration: `// added …`, `// now uses …`, `// fixed …`, `// previously …`.
+- Remarks to the reviewer or about the conversation: `// as requested …`, `// changed because …`.
+- Section banners and step labels: `// --- helpers ---`, `// step 1: …`.
+- Explaining the language or the standard library.
+- Commented-out code.
+
+When editing, update or delete comments your change makes wrong; don't add comments to code you
+didn't otherwise change.
+
+Before finishing, review every comment in your diff against this policy and delete each one that
+doesn't clearly fit.
 
 ## Duplication Policy
 
