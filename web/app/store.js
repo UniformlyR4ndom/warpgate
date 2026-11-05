@@ -108,29 +108,51 @@ export const transformTypes = [
   { id: 'html-b64', label: 'HTML (base64)' },
 ];
 
-// Only copies keys that already exist on target, ignoring stale/unknown fields.
+export const clipSearchScopes = [
+  { id: 'all',     label: 'Title + content' },
+  { id: 'title',   label: 'Title'           },
+  { id: 'content', label: 'Content'         },
+];
+
+export const extOverrideModes = [
+  { id: 'replace', label: 'Replace' },
+  { id: 'append',  label: 'Append'  },
+];
+
+function isPlainObject(v) {
+  return v !== null && typeof v === 'object' && !Array.isArray(v);
+}
+
+// Restores only keys that exist in the defaults, and only values of the
+// default's type, so stale or damaged storage falls back per field.
 function mergeSettings(target, source) {
-  if (!source || typeof source !== 'object') return;
+  if (!isPlainObject(source)) return;
   for (var key in source) {
     if (!Object.prototype.hasOwnProperty.call(source, key)) continue;
     if (!Object.prototype.hasOwnProperty.call(target, key)) continue;
     var sVal = source[key];
     var tVal = target[key];
-    if (sVal && typeof sVal === 'object' && !Array.isArray(sVal) && tVal && typeof tVal === 'object') {
+    if (isPlainObject(tVal)) {
       mergeSettings(tVal, sVal);
-    } else {
+    } else if (typeof sVal === typeof tVal) {
       target[key] = sVal;
     }
   }
 }
 
-// Restored values are otherwise trusted as-is; coerce the chunk sizes that
-// drive the transfer loops back to a sane positive number so a persisted
-// empty/zero/negative value can't carry a bad setting across reloads. The
-// loops also re-validate at their boundary (chunkBytesFromMB).
-function clampSettings() {
+// The first choice is the default.
+function oneOf(obj, key, choices) {
+  var ids = choices.map(function(c) { return c.id; });
+  if (ids.indexOf(obj[key]) === -1) obj[key] = ids[0];
+}
+
+function normalizeSettings() {
   settings.chunking.chunkSize = positiveOr(settings.chunking.chunkSize, 100);
   settings.uploadChunking.chunkSizeMB = positiveOr(settings.uploadChunking.chunkSizeMB, 100);
+  oneOf(settings, 'backend', backendTypes);
+  oneOf(settings.transform, 'type', transformTypes);
+  oneOf(settings, 'clipSearchScope', clipSearchScopes);
+  oneOf(settings.extOverride, 'mode', extOverrideModes);
 }
 
 function loadSettings() {
@@ -141,7 +163,7 @@ function loadSettings() {
       mergeSettings(settings, parsed.settings);
     }
   } catch(e) {}
-  clampSettings();
+  normalizeSettings();
 }
 
 function loadAuthK() {

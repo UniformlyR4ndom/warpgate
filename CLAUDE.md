@@ -585,7 +585,9 @@ read; plain `load`/`refreshUpload`/`pollClipboard` are the serialized auto-refre
 `settings` (`store.js`) is saved as `{"version":1,"settings":{…}}` in
 `localStorage["warpgate-settings"]` by an effect over `JSON.stringify(settings)`, so any change
 saves. New configurable values belong in `settings`. `mergeSettings` restores only keys that still
-exist. `initStore()` runs `loadSettings()` before `applyAuto()`, so a custom key with `auto: false`
+exist, with the default's type; `normalizeSettings` then checks chunk sizes and the enum fields
+against their option lists (`backendTypes`, `transformTypes`, `clipSearchScopes`,
+`extOverrideModes`, which the UI renders too), falling back per field. `initStore()` runs `loadSettings()` before `applyAuto()`, so a custom key with `auto: false`
 survives and `auto: true` regenerates.
 
 - The auth key is not in `settings`: K lives in `sessionStorage["warpgate-auth-k"]` (per browser

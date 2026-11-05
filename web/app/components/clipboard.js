@@ -1,6 +1,6 @@
 import { html, text, sel } from './html.js';
 import { useRef, useEffect } from '../vendor/hooks.module.js';
-import { state, settings } from '../store.js';
+import { state, settings, clipSearchScopes } from '../store.js';
 import { formatTS, saveURL } from '../lib/util.js';
 import { visibleClipItems, submitClip, canSubmitClip, resetClipDraft, editClip, deleteClip, copyClip, downloadClip,
          handleClipPaste, removePendingAttachment, ensureAttachment, openAttachment, isBlobURL,
@@ -62,9 +62,7 @@ function ListHeader() {
              title="Case-insensitive substring search; matches are highlighted"
              onKeyDown=${(e) => { if (e.key === 'Escape') state.clipSearch = ''; }} />
       <select class="clip-search-scope" ...${sel(settings, 'clipSearchScope')} title="Which fields the search looks at">
-        <option value="all">Title + content</option>
-        <option value="title">Title</option>
-        <option value="content">Content</option>
+        ${clipSearchScopes.map((s) => html`<option value=${s.id}>${s.label}</option>`)}
       </select>
       <button class="clip-sort-btn" onClick=${() => (settings.clipSortDesc = !settings.clipSortDesc)}
               title=${settings.clipSortDesc ? 'Newest first — click to sort oldest first' : 'Oldest first — click to sort newest first'}>

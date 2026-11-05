@@ -1,6 +1,6 @@
 import { html, text, num, check, sel } from './html.js';
 import { useEffect } from '../vendor/hooks.module.js';
-import { settings, state, backendTypes, transformTypes } from '../store.js';
+import { settings, state, backendTypes, transformTypes, extOverrideModes } from '../store.js';
 import { randomHex, normalizeExtOverride } from '../lib/util.js';
 import { OutboxSettings } from './outbox.js';
 import { AuthSettings } from './auth.js';
@@ -142,8 +142,7 @@ export function Panel() {
                 <input type="text" ...${text(settings.extOverride, 'ext')} placeholder="e.g. txt" maxlength="17"
                   class=${extInvalid ? 'input-invalid' : ''} title=${extInvalid ? 'Invalid extension, not applied. ' + TIP.ext : TIP.ext} />
                 <select ...${sel(settings.extOverride, 'mode')} disabled=${!extActive} title=${TIP.extmode}>
-                  <option value="replace">Replace</option>
-                  <option value="append">Append</option>
+                  ${extOverrideModes.map((m) => html`<option value=${m.id}>${m.label}</option>`)}
                 </select>
               </div>
             </div>`}
