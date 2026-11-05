@@ -254,7 +254,10 @@ mismatch a red one.
 an existing directory (`404`; `403` through an escaping symlink). The file name is reduced to its base
 name (`ulBaseName`, splitting on `/` and `\`; HTTP reads the raw filename via `rawPartFilename`
 because `mime/multipart` applies `filepath.Base`) and must pass `validName`. The relative path keys
-the session and is returned as `name`. A directory at the target is a `409`.
+the session and is returned as `name`. A directory at the target is a `409`. The key is the path as
+spelled, not resolved: two spellings of one target (through a directory symlink, or differing case
+on a case-insensitive filesystem) get separate claims and sessions, and the later publication wins;
+each result is still a complete file. Accepted: upload each target under one spelling.
 
 **Directory creation** (`mkdir.go`): exactly one directory whose parent exists — `201`, `409` if the
 name exists, `404` without parent. At most `ulMkdirMaxDepth` (4) levels below `-ul-root` (creation
