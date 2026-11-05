@@ -457,6 +457,12 @@ Registered in the `transformers` map (`transform.go`). Optional interfaces: `Con
 (`html-b64`: `text/html; charset=utf-8`, `pdf`: `application/pdf`) and `SizedTransformer`
 (`EncodedLen`). Frontend decode/encode is in `web/app/lib/transform.js`.
 
+`pdf` and `html-b64` hold a whole call's input in memory (`transform.Buffers`, `buffered.go`), a few
+times its size; one call (request, chunk, or WS upload) is limited to `MaxBufferedPlain` (256 MiB)
+of plaintext: `413` / WS error from the server (`bufferedTooLarge`, `bufferedUploadTooLarge`;
+encoded input bounded by `MaxEncodedLen`), refused up front by wgcli. id/xor/aes-ctr stream and are
+unlimited.
+
 | Name | Args | Notes |
 |------|------|-------|
 | `id` | — | No-op |

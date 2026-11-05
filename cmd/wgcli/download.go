@@ -286,6 +286,9 @@ func runDownload(args []string) error {
 	if err != nil {
 		return fmt.Errorf("constructing transform: %w", err)
 	}
+	if transform.Buffers(transformer) && *chunkSize > transform.MaxBufferedPlain {
+		return fmt.Errorf("--chunk-size: transform %q handles at most %d bytes per request", *transformName, transform.MaxBufferedPlain)
+	}
 	o := xferOpts{
 		prefix: apiPrefix(*ul), transformName: *transformName, transformArgs: transformArgs, transformer: transformer,
 		chunkSize: *chunkSize, frameSize: *frameSize, ws: *backend == "ws", verify: !*noVerify,

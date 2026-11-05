@@ -101,6 +101,7 @@ func (s *Server) handleWSUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	var spooled int64
 	for {
 		mt, p, err := wsReadMessage(conn)
 		if err != nil {
@@ -119,6 +120,11 @@ func (s *Server) handleWSUpload(w http.ResponseWriter, r *http.Request) {
 			break
 		}
 
+		spooled += int64(len(p))
+		if msg := bufferedUploadTooLarge(req.Transform, transformer, spooled); msg != "" {
+			s.writeWSError(conn, encrypted, websocket.CloseMessageTooBig, "%s", msg)
+			return
+		}
 		if _, err := raw.Write(p); err != nil {
 			log.Printf("ws upload: writing temp file for %q: %v", filename, err)
 			s.writeWSError(conn, encrypted, websocket.CloseInternalServerErr, "internal error")

@@ -95,7 +95,9 @@ registers at its base URL; otherwise run `wgcli register <url>` with the URL the
 `-transform` on `download`, `upload` and the image commands of `clip`. Keys and IVs left out are
 random per run, so naming the transform suffices. Use `id` unless a proxy blocks or alters transfers;
 then try `aes-ctr`, or `pdf`/`html-b64` where only documents pass. A transform is a disguise, not
-protection: its keys travel with the request unless `-param-crypt` is on.
+protection: its keys travel with the request unless `-param-crypt` is on. `pdf` and `html-b64` are
+held in memory as a whole per request, so each request carries at most 256 MiB with them: larger
+uploads need `-chunk-size` (http backend), and `-chunk-size` can't exceed 256M.
 
 | Transform | Flags |
 |-----------|-------|

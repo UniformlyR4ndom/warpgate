@@ -127,6 +127,10 @@ func (s *Server) handleWSDownload(w http.ResponseWriter, r *http.Request, root *
 			s.writeWSError(conn, encrypted, websocket.CloseInternalServerErr, errInvalidRange)
 			return
 		}
+		if msg := bufferedTooLarge(req.Transform, transformer, chunkReq.Size); msg != "" {
+			s.writeWSError(conn, encrypted, websocket.CloseMessageTooBig, "%s", msg)
+			return
+		}
 
 		// Clamp the requested range to the file size announced at handshake,
 		// so the length announced below is always one we can actually

@@ -118,6 +118,11 @@ func uploadFile(g *globalFlags, o xferOpts, localPath, dir, name string) (fileRe
 	var res uploadResult
 	var sum string
 	var err error
+	if transform.Buffers(o.transformer) && (o.ws || o.chunkSize == 0) {
+		if fi, statErr := g.local.Stat(localPath); statErr == nil && fi.Size() > transform.MaxBufferedPlain {
+			return fileResult{}, fmt.Errorf("%s: transform %q handles at most %d bytes per request; use --chunk-size (http backend)", localPath, o.transformName, transform.MaxBufferedPlain)
+		}
+	}
 	switch {
 	case o.ws:
 		res, sum, err = uploadWS(g, o, localPath, dir, name)
@@ -307,6 +312,9 @@ func runUpload(args []string) error {
 	transformer, err := transform.New(*transformName, transformArgs)
 	if err != nil {
 		return fmt.Errorf("constructing transform: %w", err)
+	}
+	if transform.Buffers(transformer) && *chunkSize > transform.MaxBufferedPlain {
+		return fmt.Errorf("--chunk-size: transform %q handles at most %d bytes per request", *transformName, transform.MaxBufferedPlain)
 	}
 	o := xferOpts{
 		transformName: *transformName, transformArgs: transformArgs, transformer: transformer,

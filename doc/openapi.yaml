@@ -524,7 +524,7 @@ paths:
             `X-Auth`). A malformed body under `-no-auth` is `400`; an oversize body is `413`. See
             CLAUDE.md's "Parameter Encryption" section.
         "413":
-          description: Request body exceeds the parameter-body size limit.
+          description: Request body exceeds the parameter-body size limit, or `size` exceeds 256 MiB with a transform that buffers each request (`pdf`, `html-b64`).
         "403":
           description: |
             The path passes through a symlink pointing outside the root, or leads to the upload
@@ -647,7 +647,7 @@ paths:
             bad `X-Auth`). A malformed part under `-no-auth` is `400`; an oversize one is `413`.
             See CLAUDE.md's "Parameter Encryption" section.
         "413":
-          description: The `transform` part exceeds the parameter-body size limit.
+          description: The `transform` part exceeds the parameter-body size limit, or the `file` part is larger than 256 MiB of plaintext encodes to with a buffering transform (`pdf`, `html-b64`).
         "403":
           description: |
             `dir` passes through a symlink pointing outside the upload root, or leads to the

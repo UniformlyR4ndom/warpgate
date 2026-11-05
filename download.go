@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"log"
 	"net/http"
@@ -24,6 +25,29 @@ const errInvalidRange = "start must be non-negative and size positive"
 
 func validRange(start, size int64) bool {
 	return start >= 0 && size > 0
+}
+
+var maxBufferedPlain int64 = transform.MaxBufferedPlain
+
+// bufferedTooLarge is the error for a download a buffering transform would
+// have to hold in memory beyond maxBufferedPlain; "" if it fits.
+func bufferedTooLarge(name string, t transform.Transformer, plain int64) string {
+	if !transform.Buffers(t) || plain <= maxBufferedPlain {
+		return ""
+	}
+	return bufferedLimitMsg(name)
+}
+
+// bufferedUploadTooLarge is bufferedTooLarge for encoded upload data.
+func bufferedUploadTooLarge(name string, t transform.Transformer, encoded int64) string {
+	if !transform.Buffers(t) || encoded <= transform.MaxEncodedLen(t, maxBufferedPlain) {
+		return ""
+	}
+	return bufferedLimitMsg(name)
+}
+
+func bufferedLimitMsg(name string) string {
+	return fmt.Sprintf("transform %q handles at most %d bytes per request; use smaller chunks", name, maxBufferedPlain)
 }
 
 // maxContentTypeLen bounds a client-supplied Content-Type override; actual
@@ -86,6 +110,11 @@ func (s *Server) handleDownload(w http.ResponseWriter, r *http.Request, root *os
 	transformer, err := transform.New(req.Transform, req.Args)
 	if err != nil {
 		http.Error(w, "invalid transform: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	if msg := bufferedTooLarge(req.Transform, transformer, req.Size); msg != "" {
+		http.Error(w, msg, http.StatusRequestEntityTooLarge)
 		return
 	}
 

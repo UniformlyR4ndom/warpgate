@@ -104,3 +104,15 @@ func TestDownloadShortChunkFails(t *testing.T) {
 		t.Errorf("short download left %d files behind", len(entries))
 	}
 }
+
+func TestBufferedTransformChunkSizeLimit(t *testing.T) {
+	common := []string{"-url", "http://127.0.0.1:1", "-no-root", "-transform", "html-b64", "-chunk-size", "300M"}
+	for _, err := range []error{
+		runDownload(append(append([]string{}, common...), "-o", "x", "f.bin")),
+		runUpload(append(append([]string{}, common...), "f.bin")),
+	} {
+		if err == nil || !strings.Contains(err.Error(), "at most") {
+			t.Errorf("err = %v, want the per-request limit", err)
+		}
+	}
+}

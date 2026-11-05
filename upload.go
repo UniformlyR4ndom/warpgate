@@ -279,6 +279,11 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 	}
 	defer file.Close()
 
+	if msg := bufferedUploadTooLarge(transformName, transformer, header.Size); msg != "" {
+		http.Error(w, msg, http.StatusRequestEntityTooLarge)
+		return
+	}
+
 	filename, status, err := s.ulTarget(dir, rawPartFilename(header))
 	if err != nil {
 		http.Error(w, err.Error(), status)
