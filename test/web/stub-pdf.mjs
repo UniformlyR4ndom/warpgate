@@ -3,3 +3,6 @@
 export function getDocument() {
   throw new Error('stub-pdf: getDocument is not available in the Node test harness');
 }
+
+export const GlobalWorkerOptions = {};
+export class PDFWorker {}

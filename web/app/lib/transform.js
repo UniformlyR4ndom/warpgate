@@ -1,7 +1,7 @@
 // Client-side transform decode (download path), encode (upload path), and
 // per-request arg building.
 import { settings } from '../store.js';
-import { getDocument } from '../../pdf.min.mjs';
+import { getDocument, GlobalWorkerOptions, PDFWorker } from '../../pdf.min.mjs';
 import { hexToBytes, applyXOR, binaryStringToBytes, bytesToBinaryString, randomHex, REQUEST_LIMIT_MB } from './util.js';
 
 function decryptAESCTR(tx, buffer) {
@@ -25,8 +25,19 @@ function decryptHTMLB64(buffer, keyHex) {
   return Promise.resolve(applyXOR(bytes, hexToBytes(keyHex)));
 }
 
+// Passed to every getDocument call so no loading task owns the worker: a task
+// destroys the worker it owns, which breaks decodes started meanwhile.
+var pdfWorker = null;
+
+function sharedPDFWorker() {
+  if (!pdfWorker || pdfWorker.destroyed) {
+    pdfWorker = PDFWorker.create({ port: GlobalWorkerOptions.workerPort });
+  }
+  return pdfWorker;
+}
+
 function decryptPDF(buffer, password) {
-  var opts = { data: new Uint8Array(buffer) };
+  var opts = { data: new Uint8Array(buffer), worker: sharedPDFWorker() };
   if (password) { opts.password = password; }
   var task = getDocument(opts);
   return task.promise.then(async function(pdf) {
@@ -36,7 +47,7 @@ function decryptPDF(buffer, password) {
     var content = await pdf.getAttachmentContent(id);
     if (!content) throw new Error('PDF attachment is empty');
     return new Uint8Array(content);
-  }).finally(function() { task.destroy(); });
+  }).finally(function() { return task.destroy().catch(function() {}); });
 }
 
 // A snapshot of the transform settings, taken when a transfer starts and
