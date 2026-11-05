@@ -3,7 +3,7 @@ import { useRef, useEffect } from '../vendor/hooks.module.js';
 import { state, settings, clipSearchScopes } from '../store.js';
 import { formatTS, saveURL } from '../lib/util.js';
 import { visibleClipItems, submitClip, canSubmitClip, resetClipDraft, editClip, deleteClip, copyClip, downloadClip,
-         handleClipPaste, removePendingAttachment, ensureAttachment, openAttachment, isBlobURL,
+         handleClipPaste, removePendingAttachment, ensureAttachment, retryAttachment, openAttachment, isBlobURL,
          isAttachmentRemoved, toggleRemoveAttachment, downloadAttachment } from '../lib/clipboard.js';
 
 const DOWNLOAD_ICON = html`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>`;
@@ -75,8 +75,8 @@ function ListHeader() {
 function Thumb(props) {
   var att = props.att;
   var item = props.item;
-  useEffect(() => { ensureAttachment(att); }, [att.id]);
   var img = state.clipImages[att.id];
+  useEffect(() => { ensureAttachment(att); }, [att.id, img]);
   var removed = isAttachmentRemoved(att.id);
   var loaded = isBlobURL(img);
   return html`
@@ -84,7 +84,8 @@ function Thumb(props) {
       <div class="clip-thumb ${removed ? 'clip-thumb-removing' : ''}">
         ${loaded && html`<img src=${img} alt="" title="Open image" onClick=${() => openAttachment(item, att)} />`}
         ${(!img || img === 'loading') && html`<span class="clip-thumb-ph">…</span>`}
-        ${img === 'error' && html`<span class="clip-thumb-ph" title="Failed to load">⚠</span>`}
+        ${img === 'error' && html`<span class="clip-thumb-ph clip-thumb-retry" title="Failed to load; click to retry"
+                                         onClick=${() => retryAttachment(att.id)}>⚠</span>`}
         ${loaded && !props.editing && html`
           <button class="clip-thumb-dl" onClick=${() => downloadAttachment(item, att)} title="Download image">${DOWNLOAD_ICON}</button>`}
         ${props.editing && html`

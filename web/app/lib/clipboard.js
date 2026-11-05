@@ -168,10 +168,14 @@ export function isBlobURL(v) {
 }
 
 // Lazily fetch an attachment's bytes once (immutable per id), disguised by
-// the current transform, and cache the resulting object URL.
+// the current transform, and cache the resulting object URL. The result is
+// dropped if the cache entry was pruned or reset meanwhile: after a database
+// change the same id may name another image.
 export async function ensureAttachment(att) {
   if (state.clipImages[att.id] !== undefined) return;
+  var token = clipGuard.token();
   state.clipImages[att.id] = 'loading';
+  var result;
   try {
     var tx = snapshotTransform();
     var s = perRequestSecrets(tx);
@@ -186,10 +190,19 @@ export async function ensureAttachment(att) {
     }, true);
     if (!res.ok) throw new Error('HTTP ' + res.status);
     var bytes = await decrypt(tx, await res.arrayBuffer(), s.password, s.htmlB64Key);
-    state.clipImages[att.id] = URL.createObjectURL(new Blob([bytes], { type: att.mime }));
+    result = URL.createObjectURL(new Blob([bytes], { type: att.mime }));
   } catch(err) {
-    state.clipImages[att.id] = 'error';
+    result = 'error';
   }
+  if (clipGuard.fresh(token) && state.clipImages[att.id] === 'loading') {
+    state.clipImages[att.id] = result;
+  } else if (isBlobURL(result)) {
+    try { URL.revokeObjectURL(result); } catch(e) {}
+  }
+}
+
+export function retryAttachment(id) {
+  if (state.clipImages[id] === 'error') delete state.clipImages[id];
 }
 
 export function openAttachment(item, att) {

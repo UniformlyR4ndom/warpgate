@@ -798,6 +798,10 @@ input[type="text"].clip-caption-input:focus {
   font-size: 1.2rem;
 }
 
+.clip-thumb-retry {
+  cursor: pointer;
+}
+
 .clip-thumb-del {
   position: absolute;
   top: 2px;

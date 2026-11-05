@@ -8,7 +8,7 @@
 // The network boundary (api.js) and the store are stubbed via the loader; the
 // real transform/util/loadguard run.
 import assert from 'node:assert/strict';
-import { submitClip, editClip, resetClipDraft, resetClipSync } from '../../web/app/lib/clipboard.js';
+import { submitClip, editClip, resetClipDraft, resetClipSync, ensureAttachment, retryAttachment } from '../../web/app/lib/clipboard.js';
 import { state, settings } from './stub-store.mjs';
 import { mock, ok, fail } from './stub-api.mjs';
 
@@ -149,6 +149,52 @@ await test('a database change drops an edit draft but keeps a new-note draft', a
   resetClipSync();
   assert.equal(state.clipText, 'new note');
   assert.equal(state.pendingAttachments.length, 1);
+});
+
+function imageResponse() {
+  return { ok: true, status: 200, arrayBuffer: async function() { return new Uint8Array([1, 2, 3]).buffer; } };
+}
+
+function deferredFetch() {
+  var release;
+  var gate = new Promise(function(r) { release = r; });
+  mock.reset(function() { return gate.then(imageResponse); });
+  return release;
+}
+
+await test('an attachment load finishing after a database change is dropped', async () => {
+  resetState();
+  var release = deferredFetch();
+  var p = ensureAttachment({ id: 5, mime: 'image/png' });
+  resetClipSync();
+  var r = trackRevokes();
+  try { release(); await p; } finally { r.restore(); }
+  assert.equal(state.clipImages[5], undefined);
+  assert.equal(r.revoked.length, 1, 'the stale object URL is revoked');
+});
+
+await test('an attachment pruned while loading is not cached', async () => {
+  resetState();
+  var release = deferredFetch();
+  var p = ensureAttachment({ id: 6, mime: 'image/png' });
+  delete state.clipImages[6];
+  var r = trackRevokes();
+  try { release(); await p; } finally { r.restore(); }
+  assert.equal(state.clipImages[6], undefined);
+  assert.equal(r.revoked.length, 1);
+});
+
+await test('a failed attachment load can be retried', async () => {
+  resetState();
+  mock.reset(function() { return fail(500); });
+  await ensureAttachment({ id: 7, mime: 'image/png' });
+  assert.equal(state.clipImages[7], 'error');
+  mock.reset(imageResponse);
+  await ensureAttachment({ id: 7, mime: 'image/png' });
+  assert.equal(state.clipImages[7], 'error', 'no reload without a retry');
+  retryAttachment(7);
+  await ensureAttachment({ id: 7, mime: 'image/png' });
+  assert.ok(String(state.clipImages[7]).startsWith('blob:'), 'loaded after retry: ' + state.clipImages[7]);
 });
 
 if (failures) { console.error('\n' + failures + ' test(s) failed'); process.exit(1); }
