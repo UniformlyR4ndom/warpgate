@@ -46,6 +46,8 @@ type Server struct {
 	uploadSessions    *sessionStore[*ulSession]
 	simUploadSessions *sessionStore[*simUlSession]
 
+	shuttingDown chan struct{} // closed when ListenAndServe begins its shutdown
+
 	stopSweep chan struct{} // nil when the sweeper isn't running
 	sweepDone chan struct{}
 	closeOnce sync.Once
@@ -86,6 +88,9 @@ func NewServer(cfg Config, db *DB) (srv *Server, err error) {
 	if cfg.wsIdleTimeout == 0 {
 		cfg.wsIdleTimeout = defaultWSIdleTimeout
 	}
+	if cfg.clipPollWait == 0 {
+		cfg.clipPollWait = defaultClipPollWait
+	}
 
 	s := &Server{
 		cfg:     cfg,
@@ -97,7 +102,8 @@ func NewServer(cfg Config, db *DB) (srv *Server, err error) {
 			ReadBufferSize:  wsBufferSize,
 			WriteBufferSize: wsBufferSize,
 		},
-		authLimit: newAuthLimiter(),
+		authLimit:    newAuthLimiter(),
+		shuttingDown: make(chan struct{}),
 	}
 	defer func() {
 		if err != nil {
@@ -316,6 +322,8 @@ func (s *Server) ListenAndServe(ctx context.Context) error {
 			httpSrv.TLSConfig = tlsCfg
 		}
 	}
+	// Shutdown waits for in-flight requests, so held clipboard polls must end at once.
+	httpSrv.RegisterOnShutdown(func() { close(s.shuttingDown) })
 	errc := make(chan error, 1)
 	go func() {
 		if s.cfg.Cert != "" {

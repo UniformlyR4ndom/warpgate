@@ -21,5 +21,6 @@ await import('./ws.test.mjs');
 await import('./chunksize.test.mjs');
 await import('./streamcodec.test.mjs');
 await import('./clipboard.test.mjs');
+await import('./clippoll.test.mjs');
 await import('./upload.test.mjs');
 await import('./outbox.test.mjs');

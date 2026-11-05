@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"sync"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -18,6 +19,9 @@ var errNoteNotFound = errors.New("note not found")
 
 type DB struct {
 	sql *sql.DB
+
+	revMu      sync.Mutex
+	revChanged chan struct{} // closed and replaced whenever clip_rev advances
 }
 
 func OpenDB(path string) (*DB, error) {
@@ -35,7 +39,7 @@ func OpenDB(path string) (*DB, error) {
 		conn.Close()
 		return nil, err
 	}
-	return &DB{sql: conn}, nil
+	return &DB{sql: conn, revChanged: make(chan struct{})}, nil
 }
 
 func migrate(conn *sql.DB) error {
@@ -147,6 +151,26 @@ func (db *DB) Close() error {
 	return db.sql.Close()
 }
 
+// RevChanged returns a channel that is closed once clip_rev advances past its
+// value at the time of the call.
+func (db *DB) RevChanged() <-chan struct{} {
+	db.revMu.Lock()
+	defer db.revMu.Unlock()
+	return db.revChanged
+}
+
+// commitRev commits a transaction that called nextRev and wakes RevChanged waiters.
+func (db *DB) commitRev(tx *sql.Tx) error {
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	db.revMu.Lock()
+	close(db.revChanged)
+	db.revChanged = make(chan struct{})
+	db.revMu.Unlock()
+	return nil
+}
+
 // nextRev bumps and returns the global clip_rev counter within tx.
 func nextRev(tx *sql.Tx) (int64, error) {
 	var cur int64
@@ -205,7 +229,7 @@ func (db *DB) InsertClipboard(title, source string, data []byte) (id int64, ts i
 	if id, err = res.LastInsertId(); err != nil {
 		return 0, 0, err
 	}
-	return id, ts, tx.Commit()
+	return id, ts, db.commitRev(tx)
 }
 
 // UpdateClipboard keeps the existing title when title is nil.
@@ -233,7 +257,7 @@ func (db *DB) UpdateClipboard(id int64, title *string, data []byte) (bool, error
 	if n == 0 {
 		return false, nil
 	}
-	return true, tx.Commit()
+	return true, db.commitRev(tx)
 }
 
 func (db *DB) DeleteClipboard(id int64) (bool, error) {
@@ -263,7 +287,7 @@ func (db *DB) DeleteClipboard(id int64) (bool, error) {
 	if _, err := tx.Exec(`UPDATE meta SET value = ? WHERE key = 'last_del_rev'`, rev); err != nil {
 		return false, err
 	}
-	return true, tx.Commit()
+	return true, db.commitRev(tx)
 }
 
 // InsertAttachment stores an image for a note and bumps that note's rev (but
@@ -296,7 +320,7 @@ func (db *DB) InsertAttachment(noteID int64, mime, caption string, data []byte) 
 	if err != nil {
 		return 0, err
 	}
-	return aid, tx.Commit()
+	return aid, db.commitRev(tx)
 }
 
 // DeleteAttachment removes one image and bumps its owner note's rev. Returns
@@ -324,7 +348,7 @@ func (db *DB) DeleteAttachment(id int64) (bool, error) {
 	if _, err := tx.Exec(`DELETE FROM clip_attachment WHERE id = ?`, id); err != nil {
 		return false, err
 	}
-	return true, tx.Commit()
+	return true, db.commitRev(tx)
 }
 
 // UpdateAttachmentCaption sets one image's caption and bumps its owner note's
@@ -352,7 +376,7 @@ func (db *DB) UpdateAttachmentCaption(id int64, caption string) (bool, error) {
 	if _, err := tx.Exec(`UPDATE clip_attachment SET caption = ? WHERE id = ?`, caption, id); err != nil {
 		return false, err
 	}
-	return true, tx.Commit()
+	return true, db.commitRev(tx)
 }
 
 // GetAttachment returns one attachment's mime type and raw bytes.

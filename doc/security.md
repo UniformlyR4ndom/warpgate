@@ -103,7 +103,7 @@ Confidentiality is provided only by TLS, and only as far as no proxy intercepts 
 
 | Risk | Why it is accepted |
 |------|--------------------|
-| No size limits or quotas on uploads, clipboard notes or attachments in total, no cap on concurrent transfers | Authenticated clients are trusted, and large transfers are the point of the tool. Use a dedicated, quota-limited filesystem if this matters for a deployment. |
+| No size limits or quotas on uploads, clipboard notes or attachments in total, no cap on concurrent transfers or on held clipboard polls (`wait`, up to 25 s each) | Authenticated clients are trusted, and large transfers are the point of the tool. Use a dedicated, quota-limited filesystem if this matters for a deployment. |
 | A small compressed PDF upload can expand to a large file and allocate several times that in memory before size checks apply (the 256 MiB per-request limit of buffering transforms bounds the PDF received, not what it decompresses to) | Requires authentication. Memory use scales with the expanded size, much like uploading a large plain file. Bounding it would require isolating or patching the PDF library. |
 | The auth token is a replayable bearer credential; requests with unencrypted parameters are always accepted | Accepted for simplicity. Use TLS, and the IP firewall or mutual TLS, where capture is a concern. |
 | A captured token or encrypted request allows offline passphrase guessing | Each guess costs a 128 MiB scrypt run. Only a PAKE would prevent it, at the cost of heavy dependencies. Use a strong passphrase where capture is a concern. |

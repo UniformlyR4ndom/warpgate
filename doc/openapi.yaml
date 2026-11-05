@@ -954,6 +954,7 @@ paths:
         deletion happened since `since` (for deletion reconciliation); `reset` is true when
         `since` is ahead of the server (a reset/swapped DB), meaning the client should discard
         its state and take `changed` as a full snapshot. `since=0` returns a full snapshot.
+        With `wait`, an unchanged state is answered only once it changes (long polling).
 
         As with the other bodyless GET endpoints, pass the `e` query parameter to request an
         encrypted response (ignored under `-no-auth`).
@@ -974,6 +975,15 @@ paths:
           description: |
             If present (any value), the response body is an encrypted paramcrypt blob
             instead of plain JSON. See CLAUDE.md's "Parameter Encryption" section.
+        - name: wait
+          in: query
+          required: false
+          schema:
+            type: string
+          description: |
+            If present (any value) and nothing changed since `since`, the server holds the request
+            until the clipboard changes, a server-set timeout (25 s) passes, or the server shuts
+            down, then answers as without it. Without it the answer is immediate.
       responses:
         "200":
           description: The current rev and any changes since `since`.

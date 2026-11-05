@@ -5,6 +5,7 @@ import { apiFetch, authHeaders, jsonHeaders, encodeBody, decodeResponseJSON, par
 import { decrypt, buildTransformArgs, perRequestSecrets, encodeBytesForUpload, snapshotTransform } from './transform.js';
 import { textToBase64, base64ToText, triggerDownload, saveURL, safeFileName } from './util.js';
 import { makeRequestGuard } from './loadguard.js';
+import { makeClipPoller } from './clippoll.js';
 
 // Serializes overlapping auto-refresh polls (so a delayed one can't overwrite
 // newer notes or rewind the cursor) and drops a poll whose database changed
@@ -92,7 +93,7 @@ export function visibleClipItems() {
 
 // Full resync from scratch — the auth key may now point at a different DB.
 export function resetClipSync() {
-  clipGuard.bump();
+  bumpClip();
   state.clipCursor = 0;
   state.clipItems  = [];
   Object.keys(state.clipImages).forEach(revokeClipImage);
@@ -100,32 +101,49 @@ export function resetClipSync() {
   if (state.clipEditId !== null) resetClipDraft();
 }
 
-export async function pollClipboard() {
+function bumpClip() {
+  clipGuard.bump();
+  clipPoller.abort();
+}
+
+// With wait, the server holds the request until the clipboard changes or its
+// timeout passes.
+export async function pollClipboard(opts) {
+  var wait = !!(opts && opts.wait);
   var token = clipGuard.start();
-  if (token === null) return; // a poll is already in flight for this database
-  state.clipError = null;
+  if (token === null) return { status: 'skipped' }; // a poll is already in flight for this database
   try {
     var encrypted = paramEncryptEnabled();
-    var url = API_BASE + '/api/clip/state?since=' + state.clipCursor + (encrypted ? '&e=1' : '');
-    var res = await apiFetch(url, { headers: authHeaders() });
-    if (!clipGuard.fresh(token)) return;
-    if (!res.ok) throw new Error('HTTP ' + res.status);
+    var url = API_BASE + '/api/clip/state?since=' + state.clipCursor + (encrypted ? '&e=1' : '') + (wait ? '&wait' : '');
+    var res = await apiFetch(url, { headers: authHeaders(), signal: opts && opts.signal });
+    if (!clipGuard.fresh(token)) return { status: 'skipped' };
+    if (!res.ok) throw Object.assign(new Error('HTTP ' + res.status), { status: res.status });
     var data = await decodeResponseJSON(res, encrypted);
-    if (!clipGuard.fresh(token)) return;
+    if (!clipGuard.fresh(token)) return { status: 'skipped' };
     applyClipState(data);
+    state.clipError = null;
+    return { status: 'ok' };
   } catch(err) {
-    if (!clipGuard.fresh(token)) return;
-    state.clipError = 'Failed to load clipboard (' + err.message + ')';
+    if (!clipGuard.fresh(token) || err.name === 'AbortError') return { status: 'skipped' };
+    var suspect = !err.refused && !state.authFailed && err.status !== 401 && err.status !== 429;
+    // A suspect long-poll failure is checked by a plain poll before it is shown.
+    if (!(wait && suspect)) state.clipError = 'Failed to load clipboard (' + err.message + ')';
+    return { status: 'error', error: err.message, suspect: suspect };
   } finally {
     clipGuard.done(token);
   }
 }
 
+const clipPoller = makeClipPoller({ poll: pollClipboard });
+
+export function startClipPolling() { clipPoller.start(); }
+export function stopClipPolling() { clipPoller.stop(); }
+
 // Poll after a local change (create/edit/delete): mark a new generation so any
 // in-flight auto-refresh poll is dropped and this one isn't skipped as a
 // same-generation overlap, guaranteeing the change is reflected.
 export async function reloadClipboard() {
-  clipGuard.bump();
+  bumpClip();
   return pollClipboard();
 }
 

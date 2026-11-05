@@ -1,6 +1,6 @@
 // Tab navigation + the shared refresh dispatch. Tab-specific loaders are
 // wired in as each tab is ported.
-import { state } from './store.js';
+import { state, settings } from './store.js';
 import { load, reload } from './lib/download.js';
 import { refreshUpload } from './lib/upload.js';
 import { pollClipboard, resetClipSync } from './lib/clipboard.js';
@@ -20,16 +20,21 @@ export function visibleTabs() {
 }
 
 export function refreshActive() {
+  refreshListings();
+  if (state.tab === 'clipboard') pollClipboard();
+}
+
+// The clipboard runs its own poll loop while auto-refresh is on.
+export function refreshListings() {
   if (state.tab === 'download') load('dl');
   if (state.tab === 'upload') refreshUpload();
-  if (state.tab === 'clipboard') pollClipboard();
 }
 
 export function setTab(t) {
   state.tab = t;
   sessionStorage.setItem(TAB_STORAGE_KEY, t);
   if (t === 'upload') refreshUpload();
-  if (t === 'clipboard') pollClipboard();
+  if (t === 'clipboard' && !settings.autoRefresh) pollClipboard();
 }
 
 export function restoreTab() {

@@ -32,9 +32,9 @@ export async function apiFetch(url, opts, rawBytes) {
   }
   if (!rawBytes && isBlankRefusal(res)) {
     var admitted = await reRegister();
-    throw new Error(admitted
+    throw Object.assign(new Error(admitted
       ? 'Server refused the request; this IP has been registered again, retry'
-      : 'Server refused the request (IP not admitted, registration closed?)');
+      : 'Server refused the request (IP not admitted, registration closed?)'), { refused: true });
   }
   return res;
 }

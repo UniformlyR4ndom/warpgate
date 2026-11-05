@@ -94,7 +94,7 @@ accepted risks; update it when a security-relevant decision changes.
 | Upgrade  | `/api/files/ws/download`, `/api/ul/ws/download`, `/api/files/ws/upload` | in-band | WebSocket variants |
 | POST     | `/api/sim/download`, `/api/sim/upload` | Yes | Benchmark: synthesized download / hashed upload, no transform |
 | Upgrade  | `/api/sim/ws/download`, `/api/sim/ws/upload` | in-band | WebSocket variants |
-| GET      | `/api/clip/state`       | Yes  | Incremental sync; `since=<rev>` → `{rev,changed,ids,reset}` |
+| GET      | `/api/clip/state`       | Yes  | Incremental sync; `since=<rev>` → `{rev,changed,ids,reset}`; `wait`: long poll |
 | POST     | `/api/clip/new`         | Yes  | `{"title","data":"<base64>","source"}` (`title`, `source` optional) |
 | POST     | `/api/clip/edit`        | Yes  | `{"id","title","data"}`; omitted `title` keeps the stored one |
 | DELETE   | `/api/clip/delete`      | Yes  | `{"id"}` |
@@ -520,7 +520,11 @@ display timestamp).
   need no tombstones.
 - `reset`: `since > rev` (swapped DB); `since` counts as 0 and `changed` is a full snapshot, as with
   `since=0`.
-- `since == rev` returns only `{rev}`.
+- `since == rev` returns only `{rev}`; with the `wait` flag (presence) only after holding the request
+  until the next commit that bumps `clip_rev` (`DB.RevChanged`, a channel closed and replaced by
+  `commitRev`), `clipPollWait` (`defaultClipPollWait`, 25 s; a `Config` field for tests), the client
+  leaving, or shutdown (`Server.shuttingDown`, closed via `RegisterOnShutdown`, since `Shutdown`
+  waits for requests).
 Writes serialize, so the cursor only moves forward. Concurrent edits of one note: last writer wins.
 
 **Handlers**: `data` is base64, decoded in the handler. `title` and image `caption`
@@ -644,7 +648,7 @@ setting has a short `title` tooltip on its label and input that doesn't restate 
 | Auth      | Passphrase form (masked, 👁 not persisted; Set) or "Key ID: <fingerprint>" with Change / Clear (`components/auth.js`); Parameter obfuscation |
 | Benchmark | Benchmark tab: Size (1–1024 MB), Chunk size (≤ Size) |
 | Chunking  | Download: chunking, chunk size, reassembly. Upload: chunking and size (HTTP backend only). Chunk sizes ≤ 250 MB (`REQUEST_LIMIT_MB`) |
-| General   | Auto-refresh (1 s); Confirm note delete; Backend (HTTP/WS); WS frame size (WS only, clamped to the server); Content-Type override (download, HTTP only); Extension override (`settings.extOverride`, replace/append the saved file's extension for browsers that block types; `applyExtOverride`) |
+| General   | Auto-refresh (1 s; clipboard: long poll); Confirm note delete; Backend (HTTP/WS); WS frame size (WS only, clamped to the server); Content-Type override (download, HTTP only); Extension override (`settings.extOverride`, replace/append the saved file's extension for browsers that block types; `applyExtOverride`) |
 | Outbox    | Status, connect/reconnect/disconnect, "Push function" dialog; hidden without `showDirectoryPicker` |
 | Transform | Type and parameters (auto-generated keys/IVs) |
 
@@ -665,6 +669,12 @@ setting has a short `title` tooltip on its label and input that doesn't restate 
   `safeFileName` sanitizes, also for the note's `.txt` download.
 - **Sync**: `pollClipboard` → `applyClipState` against `clip/state?since=<clipCursor>`;
   `pruneClipImages` revokes unused URLs; an auth key change calls `resetClipSync` first.
+- **Auto-refresh** long polls (`makeClipPoller`, `lib/clippoll.js`) instead of the 1 s listing tick,
+  while the tab is active. Polls never start less than 1 s apart; errors back off up to 10 s. A local
+  change or key change (`bumpClip`) aborts the held request. A long poll that fails (network error,
+  bad status or body; not auth, `429` or the blank refusal) is retried plainly: if that succeeds,
+  long polling is blamed — `console.warn` with the error and elapsed time, 1 s polling, long polling
+  retried after 5 min (`console.info` once it works). The console gets only these mode changes.
 - **Search** (client-side; scope `settings.clipSearchScope`, query not persisted): `visibleClipItems`
   matches title, text and captions case-insensitively; hits render as `<span class="clip-hl">` text
   children — note content comes from untrusted machines.

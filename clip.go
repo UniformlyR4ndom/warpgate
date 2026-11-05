@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"net/http"
 	"strconv"
+	"time"
 	"unicode"
 	"unicode/utf8"
 )
@@ -139,6 +140,10 @@ type clipStateResponse struct {
 	Reset   bool       `json:"reset,omitempty"`
 }
 
+// defaultClipPollWait is how long a clip/state request with wait is held while
+// nothing changes; kept under the idle timeouts common in inspecting proxies.
+const defaultClipPollWait = 25 * time.Second
+
 func (s *Server) handleClipState(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -153,7 +158,19 @@ func (s *Server) handleClipState(w http.ResponseWriter, r *http.Request) {
 		}
 		since = n
 	}
+	revChanged := s.db.RevChanged()
 	rev, changed, ids, reset, err := s.db.ClipState(since)
+	if err == nil && rev == since && r.URL.Query().Has("wait") {
+		timer := time.NewTimer(s.cfg.clipPollWait)
+		select {
+		case <-revChanged:
+		case <-timer.C:
+		case <-r.Context().Done():
+		case <-s.shuttingDown:
+		}
+		timer.Stop()
+		rev, changed, ids, reset, err = s.db.ClipState(since)
+	}
 	if err != nil {
 		http.Error(w, "internal server error", http.StatusInternalServerError)
 		return

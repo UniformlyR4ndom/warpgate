@@ -1,11 +1,12 @@
 import { render } from './vendor/preact.module.js';
-import { effect } from './vendor/signals.module.js';
+import { effect, untracked } from './vendor/signals.module.js';
 import { html } from './components/html.js';
-import { settings } from './store.js';
+import { settings, state } from './store.js';
 import { initStore, serverSettingsLoaded } from './store.js';
 import { load } from './lib/download.js';
 import { initOutbox } from './lib/outbox.js';
-import { refreshActive, onAuthKeyChange, restoreTab } from './nav.js';
+import { refreshListings, onAuthKeyChange, restoreTab } from './nav.js';
+import { startClipPolling, stopClipPolling } from './lib/clipboard.js';
 import { App } from './components/app.js';
 import { GlobalWorkerOptions } from '../pdf.min.mjs';
 
@@ -29,11 +30,15 @@ async function boot() {
   await serverSettingsLoaded();
   restoreTab();
 
-  // Auto-refresh: poll the active tab every second while enabled.
+  // Auto-refresh: poll the active tab's listing every second while enabled.
   effect(function() {
     var on = settings.autoRefresh; // subscribe
     clearInterval(refreshTimer);
-    refreshTimer = on ? setInterval(refreshActive, 1000) : null;
+    refreshTimer = on ? setInterval(refreshListings, 1000) : null;
+  });
+  effect(function() {
+    var on = settings.autoRefresh && state.tab === 'clipboard'; // subscribe
+    untracked(on ? startClipPolling : stopClipPolling);
   });
 
   render(html`<${App} />`, document.getElementById('app'));
