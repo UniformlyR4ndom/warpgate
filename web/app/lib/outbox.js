@@ -16,20 +16,17 @@ var FAIL_AFTER_MS = 10000;
 var LEFTOVER_MS = 60 * 60 * 1000;
 var REMOVE_RETRY_MS = [0, 200, 500, 1000, 2000];
 
-var dir = null;
 var savedHandle = null;
-var generation = 0;
-var observer = null;
-var releaseLock = null;
-var kicked = false;
-var wake = null;
-var firstSeen = {};
+var current = null; // the watcher of the connected folder
+// Hash files this tab pushed whose files are not deleted yet: the record that
+// still holds when IndexedDB fails.
+var pushedHere = {};
 
 // --- persistence of the folder handle and of pushed-but-not-yet-deleted files
 
 var dbPromise = null;
 
-function kvStore(mode) {
+function openDB() {
   if (!dbPromise) {
     dbPromise = new Promise(function(resolve, reject) {
       var req = indexedDB.open('warpgate-outbox', 1);
@@ -38,15 +35,18 @@ function kvStore(mode) {
       req.onerror = function() { reject(req.error); };
     });
   }
-  return dbPromise.then(function(db) { return db.transaction('kv', mode).objectStore('kv'); });
+  return dbPromise;
 }
 
+// Resolves once the transaction has committed, not when its request succeeds.
 function kvRequest(mode, fn) {
-  return kvStore(mode).then(function(store) {
+  return openDB().then(function(db) {
     return new Promise(function(resolve, reject) {
-      var req = fn(store);
-      req.onsuccess = function() { resolve(req.result); };
-      req.onerror = function() { reject(req.error); };
+      var tx = db.transaction('kv', mode);
+      var req = fn(tx.objectStore('kv'));
+      tx.oncomplete = function() { resolve(req.result); };
+      tx.onerror = function() { reject(tx.error || req.error); };
+      tx.onabort = function() { reject(tx.error || new Error('IndexedDB transaction aborted')); };
     });
   });
 }
@@ -76,7 +76,7 @@ export async function connectOutbox() {
   try {
     handle = await window.showDirectoryPicker({ id: 'wgclip-outbox', mode: 'readwrite' });
   } catch (e) {
-    if (e.name !== 'AbortError') setError(e);
+    if (e.name !== 'AbortError') setError(null, e);
     return;
   }
   await kvSet('dir', handle);
@@ -97,48 +97,58 @@ export async function disconnectOutbox() {
 
 function start(handle) {
   stop();
-  var gen = generation;
-  dir = handle;
   savedHandle = null;
   state.outbox.folder = handle.name;
   state.outbox.status = 'other-tab';
-  // Only one tab of this origin processes the outbox; others wait in the queue.
+  var w = newWatcher(handle);
+  current = w;
+  // One watcher per origin: other tabs, and a watcher replacing this one, wait
+  // for the lock, which is held until the run (and any push in it) has ended.
   navigator.locks.request('warpgate-outbox', function() {
-    if (gen !== generation) return;
+    if (w.stopped) return;
     state.outbox.status = 'watching';
-    watch(gen);
-    return new Promise(function(resolve) { releaseLock = resolve; });
+    return w.run();
   });
 }
 
 function stop() {
-  generation++;
-  dir = null;
-  firstSeen = {};
-  if (observer) { observer.disconnect(); observer = null; }
-  if (releaseLock) { releaseLock(); releaseLock = null; }
-  kick();
+  if (current) { current.stop(); current = null; }
 }
 
-function setError(err) {
+function kick() {
+  if (current) current.kick();
+}
+
+function setError(w, err) {
+  if (w && w.stopped) return;
   state.outbox.status = 'error';
   state.outbox.error = err.message || String(err);
 }
 
 // --- watching
 
-function kick() {
-  kicked = true;
-  if (wake) wake();
+function newWatcher(folder) {
+  var w = { folder: folder, stopped: false, kicked: false, wake: null, observer: null, firstSeen: {} };
+  w.kick = function() {
+    w.kicked = true;
+    if (w.wake) w.wake();
+  };
+  w.stop = function() {
+    w.stopped = true;
+    if (w.observer) { w.observer.disconnect(); w.observer = null; }
+    w.kick();
+  };
+  w.run = function() { return watch(w); };
+  return w;
 }
 
 // Resolves after ms, or early on kick(). Called only after awaiting file system
 // calls, so hidden-tab throttling never sees a chain of timers.
-function sleep(ms) {
+function sleep(w, ms) {
   return new Promise(function(resolve) {
-    if (kicked) { resolve(); return; }
+    if (w.kicked) { resolve(); return; }
     var t = setTimeout(resolve, ms);
-    wake = function() { clearTimeout(t); resolve(); };
+    w.wake = function() { clearTimeout(t); resolve(); };
   });
 }
 
@@ -146,40 +156,37 @@ function delay(ms) {
   return new Promise(function(resolve) { setTimeout(resolve, ms); });
 }
 
-async function watch(gen) {
+async function watch(w) {
   if ('FileSystemObserver' in window) {
-    observer = new FileSystemObserver(kick);
-    try { await observer.observe(dir); } catch (e) { observer = null; }
+    w.observer = new FileSystemObserver(w.kick);
+    try { await w.observer.observe(w.folder); } catch (e) { w.observer = null; }
   }
-  while (gen === generation) {
-    kicked = false;
+  while (!w.stopped) {
+    w.kicked = false;
     if (state.outbox.status === 'watching' || state.outbox.status === 'error') {
       try {
         await delay(PICKUP_DELAY_MS);
-        await scan(gen);
-        if (gen === generation && state.outbox.status === 'error') state.outbox.status = 'watching';
+        await scan(w);
+        if (!w.stopped && state.outbox.status === 'error') state.outbox.status = 'watching';
       } catch (e) {
-        if (gen === generation) setError(e);
+        setError(w, e);
       }
     }
-    await sleep(SCAN_MS);
+    if (!w.stopped) await sleep(w, SCAN_MS);
   }
 }
 
-// folder is captured once per scan: a push still in flight when the user
-// switches folders must finish in the folder its files came from.
-async function scan(gen) {
-  var folder = dir;
+async function scan(w) {
   var files = {};
-  for await (var entry of folder.entries()) {
+  for await (var entry of w.folder.entries()) {
     if (entry[1].kind === 'file') files[entry[0]] = entry[1];
   }
   var names = Object.keys(files).sort();
   for (var i = 0; i < names.length; i++) {
-    if (gen !== generation || state.outbox.status === 'auth') return;
-    if (names[i].endsWith('.sha256')) await processPush(folder, names[i].slice(0, -'.sha256'.length), files);
+    if (w.stopped || state.outbox.status === 'auth') return;
+    if (names[i].endsWith('.sha256')) await processPush(w, names[i].slice(0, -'.sha256'.length), files);
   }
-  if (gen === generation) await removeLeftovers(folder, names, files);
+  if (!w.stopped) await removeLeftovers(w.folder, names, files);
 }
 
 // --- one push
@@ -190,28 +197,30 @@ function parseHashFile(text) {
   return m ? { hash: m[1].toLowerCase(), title: lines[1] || '' } : null;
 }
 
-async function processPush(folder, name, files) {
+async function processPush(w, name, files) {
+  var folder = w.folder;
   var hashName = name + '.sha256';
   var now = Date.now();
-  if (!firstSeen[hashName]) firstSeen[hashName] = now;
-  var waited = now - firstSeen[hashName];
+  if (!w.firstSeen[hashName]) w.firstSeen[hashName] = now;
+  var waited = now - w.firstSeen[hashName];
 
   // TextDecoder drops a leading UTF-8 BOM, which Windows PowerShell 5.1 always writes.
   var parsed = parseHashFile(new TextDecoder().decode(await (await files[hashName].getFile()).arrayBuffer()));
-  if (!parsed) return retryOrFail(name, files, waited, 'invalid hash file');
-  if (await kvGet('pushed:' + hashName).catch(function() { return null; }) === parsed.hash) {
+  if (!parsed) return retryOrFail(w, name, files, waited, 'invalid hash file');
+  if (pushedHere[hashName] === parsed.hash ||
+      await kvGet('pushed:' + hashName).catch(function() { return null; }) === parsed.hash) {
     return removePushed(folder, name);
   }
-  if (!files[name]) return retryOrFail(name, files, waited, 'content file missing');
+  if (!files[name]) return retryOrFail(w, name, files, waited, 'content file missing');
   var file = await files[name].getFile();
-  if (file.size > MAX_BYTES) return fail(name, files, 'too large: ' + file.size + ' bytes, limit ' + MAX_BYTES);
+  if (file.size > MAX_BYTES) return fail(w, name, files, 'too large: ' + file.size + ' bytes, limit ' + MAX_BYTES);
   var buf = await file.arrayBuffer();
-  if (await sha256Hex(buf) !== parsed.hash) return retryOrFail(name, files, waited, 'hash mismatch');
+  if (await sha256Hex(buf) !== parsed.hash) return retryOrFail(w, name, files, waited, 'hash mismatch');
   var text;
   try {
     text = new TextDecoder('utf-8', { fatal: true }).decode(buf);
   } catch (e) {
-    return fail(name, files, 'not UTF-8 text');
+    return fail(w, name, files, 'not UTF-8 text');
   }
 
   var title = sanitizeClipTitle(parsed.title);
@@ -219,24 +228,31 @@ async function processPush(folder, name, files) {
   try {
     id = await createNote(title, text, 'outbox');
   } catch (e) {
-    if (e.status === 401) { state.outbox.status = 'auth'; return; }
-    return retryOrFail(name, files, waited, 'server error (' + e.message + ')');
+    if (e.status === 401) { if (!w.stopped) state.outbox.status = 'auth'; return; }
+    return retryOrFail(w, name, files, waited, 'server error (' + e.message + ')');
   }
-  // Recorded before deleting, so a hash file that survives a failed delete is never pushed twice.
-  await kvSet('pushed:' + hashName, parsed.hash).catch(function() {});
-  delete firstSeen[hashName];
+  // Recorded before deleting, so a hash file that survives a failed delete
+  // isn't pushed again: in this tab even if IndexedDB fails, after a reload
+  // only if it didn't. A create whose response was lost is retried, though.
+  pushedHere[hashName] = parsed.hash;
+  delete w.firstSeen[hashName];
   addToast(true, 'Note #' + id + (title ? ' "' + title + '"' : '') + ' pushed from outbox');
+  try {
+    await kvSet('pushed:' + hashName, parsed.hash);
+  } catch (e) {
+    addToast(false, name + ': pushed, but recording that failed (' + (e && e.message) + '); it is pushed again after a reload if its files remain');
+  }
   reloadClipboard();
   await removePushed(folder, name);
 }
 
-function retryOrFail(name, files, waited, msg) {
+function retryOrFail(w, name, files, waited, msg) {
   if (waited < FAIL_AFTER_MS) return;
-  return fail(name, files, msg);
+  return fail(w, name, files, msg);
 }
 
-async function fail(name, files, msg) {
-  delete firstSeen[name + '.sha256'];
+async function fail(w, name, files, msg) {
+  delete w.firstSeen[name + '.sha256'];
   addToast(false, name + ': ' + msg);
   for (var i = 0; i < REMOVE_RETRY_MS.length; i++) {
     await delay(REMOVE_RETRY_MS[i]);
@@ -260,6 +276,7 @@ async function remove(folder, name) {
 // The hash file goes first: it is what triggers a push.
 async function removePushed(folder, name) {
   if (await remove(folder, name + '.sha256') && await remove(folder, name)) {
+    delete pushedHere[name + '.sha256'];
     await kvDel('pushed:' + name + '.sha256').catch(function() {});
   }
 }

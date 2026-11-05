@@ -659,13 +659,18 @@ git-ignored): `local/push-to-wgclip/push-to-clip.md`.
 - **Retries**: missing content, hash mismatch or a server error retry until 10 s after the hash file
   appeared (`FAIL_AFTER_MS`); too large or not UTF-8 fail at once. A `401` pauses
   (`status: 'auth'`) until the key changes.
-- **No duplicates**: name+hash is recorded in IndexedDB (`warpgate-outbox`, store `kv`, key
-  `pushed:<name>.sha256`) before deleting; a recorded hash file is only cleaned up. The store also
-  keeps the folder handle (`dir`).
+- **No duplicates**: name+hash is recorded before deleting, in the tab's memory (`pushedHere`) and
+  in IndexedDB (`warpgate-outbox`, store `kv`, key `pushed:<name>.sha256`; writes resolve on the
+  transaction's commit, a failed one raises a red toast); a recorded hash file is only cleaned up.
+  Not covered: a create the server stored but whose response was lost is retried, so it can
+  duplicate. The store also keeps the folder handle (`dir`).
 - **Leftovers**: `.failed` and orphaned `push-*` files are deleted after 1 h; other files are never
   touched.
 - **One tab** watches, under `navigator.locks.request('warpgate-outbox')`; others show
-  "Handled by another warpgate tab" and take over when it closes.
+  "Handled by another warpgate tab" and take over when it closes. Each connect creates a watcher
+  (`newWatcher`) owning its observer, timers and retry state; the lock is held until its run,
+  including a push in flight, has ended, so a replacement (another tab, or a reconnect in this one)
+  can't overlap it. Tests: `test/web/outbox.test.mjs`.
 - **Watching**: `FileSystemObserver` (if available) triggers a scan; a full scan runs every 5 s. No
   Worker needed, but Chrome throttles *chained* timers to once a minute after 5 min hidden, so every
   timer is set only after awaiting a file system call (`sleep` in the scan loop) — keep it that way.
