@@ -57,14 +57,7 @@ func (s *Server) handleSimUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if rc := http.NewResponseController(w); rc != nil {
-		_ = rc.SetReadDeadline(time.Now().Add(ulChunkProcessTimeout))
-	}
-
-	r.Body = http.MaxBytesReader(w, r.Body, simMaxTotalSize+multipartOverheadSlack)
-
-	if err := r.ParseMultipartForm(32 << 20); err != nil {
-		http.Error(w, "invalid multipart form or file too large", http.StatusBadRequest)
+	if !parseUploadForm(w, r, simMaxTotalSize+multipartOverheadSlack) {
 		return
 	}
 

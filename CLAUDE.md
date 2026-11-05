@@ -97,7 +97,7 @@ accepted risks; update it when a security-relevant decision changes.
 | POST     | `/api/clip/new`         | Yes  | `{"title","data":"<base64>","source"}` (`title`, `source` optional) |
 | POST     | `/api/clip/edit`        | Yes  | `{"id","title","data"}`; omitted `title` keeps the stored one |
 | DELETE   | `/api/clip/delete`      | Yes  | `{"id"}` |
-| POST     | `/api/clip/attachment`  | Yes  | Attach an image; multipart (`transform` part `{transform,args,note_id,mime,caption}` + `file`), ≤ 20 MiB |
+| POST     | `/api/clip/attachment`  | Yes  | Attach an image; multipart (`transform` part `{transform,args,note_id,mime,caption}` + `file`), image ≤ 20 MiB, body ≤ 20 MiB × 4/3 + 1 MiB |
 | POST     | `/api/clip/attachment/download` | Yes | Image bytes, transformed; `{id,transform,args,contentType?}` |
 | POST     | `/api/clip/attachment/edit`     | Yes | `{"id","caption"}` |
 | DELETE   | `/api/clip/attachment/delete`   | Yes | `{"id"}` |
@@ -236,10 +236,11 @@ mismatch a red one.
   So chunks must never be concurrent or out of order.
 - **Completion** leaves a "completed" marker with the last key, so a retried final request gets an
   idempotent answer.
-- **Failure** (transform error, write error, `ulChunkProcessTimeout`) deletes temp file and session;
-  the client starts over.
-- **Expiry**: `ulSweepExpired` removes sessions idle longer than `ulSessionIdleExpiry` (independent of
-  `ulChunkProcessTimeout`), deleting an incomplete session's temp file.
+- **Failure** (transform error, write error) deletes temp file and session; the client starts over.
+- **Stalls**: `parseUploadForm` (`uploadform.go`, shared with sim upload and clip attachments) fails
+  a body that sends nothing for `ulBodyIdleTimeout` (5 min), extending the read deadline on every
+  read, so a slow but progressing upload never times out; an over-limit body is a `413`.
+- **Expiry**: `ulSweepExpired` removes sessions idle longer than `ulSessionIdleExpiry`, deleting an incomplete session's temp file.
 - **WS uploads** hold the same per-target claim for the whole connection and supersede any session.
 
 **Targets** (`Server.ulTarget`): `dir` goes through `rootRelPath` and the temp-dir guard and must be

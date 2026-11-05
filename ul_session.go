@@ -12,10 +12,6 @@ const (
 	// completed-session marker) may sit with no activity before being
 	// purged.
 	ulSessionIdleExpiry = 300 * time.Second
-	// ulChunkProcessTimeout bounds how long a single chunk's request body
-	// may take to arrive before the client is presumed stalled. Independent
-	// of ulSessionIdleExpiry even though both are currently 300s.
-	ulChunkProcessTimeout = 300 * time.Second
 
 	ulSweepInterval = 30 * time.Second
 )

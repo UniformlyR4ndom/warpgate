@@ -225,15 +225,7 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Bounds how long this request's body may take to arrive; a client that
-	// stalls mid-send fails ParseMultipartForm below rather than holding a
-	// per-filename claim open indefinitely.
-	if rc := http.NewResponseController(w); rc != nil {
-		_ = rc.SetReadDeadline(time.Now().Add(ulChunkProcessTimeout))
-	}
-
-	if err := r.ParseMultipartForm(32 << 20); err != nil {
-		http.Error(w, "invalid multipart form", http.StatusBadRequest)
+	if !parseUploadForm(w, r, 0) {
 		return
 	}
 

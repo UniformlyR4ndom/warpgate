@@ -13,6 +13,11 @@ import (
 // clipAttachmentMaxSize caps a single stored image.
 const clipAttachmentMaxSize = 20 << 20 // 20 MiB
 
+// clipAttachmentMaxBody caps the request carrying one: room for a
+// clipAttachmentMaxSize image after html-b64's 4/3 expansion, or in a PDF,
+// plus multipart framing.
+const clipAttachmentMaxBody = clipAttachmentMaxSize/3*4 + 1<<20
+
 // validImageMime accepts a well-formed "image/..." content type.
 func validImageMime(s string) bool {
 	return strings.HasPrefix(s, "image/") && validContentType(s)
@@ -28,9 +33,7 @@ func (s *Server) handleClipAttachmentNew(w http.ResponseWriter, r *http.Request)
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	r.Body = http.MaxBytesReader(w, r.Body, clipAttachmentMaxSize+multipartOverheadSlack)
-	if err := r.ParseMultipartForm(32 << 20); err != nil {
-		http.Error(w, "invalid multipart form", http.StatusBadRequest)
+	if !parseUploadForm(w, r, clipAttachmentMaxBody) {
 		return
 	}
 

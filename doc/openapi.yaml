@@ -637,7 +637,7 @@ paths:
                 $ref: '#/components/schemas/UploadResponse'
         "400":
           description: |
-            Invalid request — malformed multipart form, invalid transform args, unusable
+            Invalid request — malformed multipart form (or a body that stalls for 5 minutes), invalid transform args, unusable
             filename (same rules as `/api/ul/mkdir` names), an invalid `dir` (path traversal, a `.warpgate-tmp` segment), or an
             unrecognized `continuation-key`.
         "401":
@@ -830,7 +830,7 @@ paths:
             bad `X-Auth`). A malformed part under `-no-auth` is `400`; an oversize one is `413`.
             See CLAUDE.md's "Parameter Encryption" section.
         "413":
-          description: The `transform` part exceeds the parameter-body size limit.
+          description: The `transform` part exceeds the parameter-body size limit, or the body exceeds `simMaxTotalSize` (1024 MiB) plus 64 KiB of multipart framing.
         "404":
           description: Upload not configured (server started without `-ul-root`).
         "405":
@@ -1208,7 +1208,7 @@ paths:
         "405":
           description: Method not allowed.
         "413":
-          description: The `transform` part exceeds the parameter-body size limit, or the image exceeds the 20 MiB cap.
+          description: The `transform` part exceeds the parameter-body size limit, the body exceeds 20 MiB × 4/3 + 1 MiB (room for an html-b64-encoded maximum image), or the decoded image exceeds 20 MiB.
 
   /api/clip/attachment/download:
     post:
