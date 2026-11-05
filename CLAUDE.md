@@ -286,8 +286,9 @@ per transfer; one connection carries one file. Control messages are JSON text fr
 - **Auth in-band**: browsers can't set headers on the handshake, so these routes skip `withAuth`; the
   first message's `auth` field carries the derived token. Invalid → `{"ok":false,"error":"unauthorized"}`
   and close 1008.
-- **Limits** (`Server.upgradeWS`): before auth, read limit `maxParamBodySize` and `wsAuthTimeout`
-  (10 s) for the first message; `Server.authorizeWS` lifts the deadline. Then `wsIdleTimeout` (5 min):
+- **Limits** (`Server.upgradeWS`): before auth, read limit `maxParamBodySize` and the auth timeout
+  (`defaultWSAuthTimeout`, 10 s) for the first message; `Server.authorizeWS` lifts the deadline. Then
+  the idle timeout (`defaultWSIdleTimeout`, 5 min; both per-server `Config` fields so tests can shorten them):
   `wsReadMessage` renews it whenever data arrives, `wsWriteMessage` bounds each write, so a dead
   connection releases its claim and temp files. Upload endpoints raise the read limit to the frame
   size (larger → close 1009). Buffers are a fixed `wsBufferSize` (64 KiB).

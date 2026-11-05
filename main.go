@@ -46,6 +46,10 @@ type Config struct {
 	IPRegMax       int
 	IPRegWindow    time.Duration
 	TrustedProxies string
+
+	// Zero means defaultWSAuthTimeout / defaultWSIdleTimeout.
+	wsAuthTimeout time.Duration
+	wsIdleTimeout time.Duration
 }
 
 func registerFlags(fs *flag.FlagSet, cfg *Config, wsFrameMaxStr, completionShell *string) {

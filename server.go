@@ -80,6 +80,12 @@ func NewServer(cfg Config, db *DB) (srv *Server, err error) {
 	if cfg.WSFrameMax < wsFrameSizeMin {
 		cfg.WSFrameMax = wsFrameSizeMin
 	}
+	if cfg.wsAuthTimeout == 0 {
+		cfg.wsAuthTimeout = defaultWSAuthTimeout
+	}
+	if cfg.wsIdleTimeout == 0 {
+		cfg.wsIdleTimeout = defaultWSIdleTimeout
+	}
 
 	s := &Server{
 		cfg:     cfg,

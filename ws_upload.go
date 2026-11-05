@@ -103,7 +103,7 @@ func (s *Server) handleWSUpload(w http.ResponseWriter, r *http.Request) {
 
 	var spooled int64
 	for {
-		mt, p, err := wsReadMessage(conn)
+		mt, p, err := s.wsReadMessage(conn)
 		if err != nil {
 			if !websocket.IsCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway) {
 				log.Printf("ws upload: reading message for %q: %v", filename, err)

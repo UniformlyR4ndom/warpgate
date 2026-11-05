@@ -76,7 +76,7 @@ func (s *Server) handleSimWSDownload(w http.ResponseWriter, r *http.Request) {
 		for {
 			n, rerr := io.ReadFull(reader, frameBuf)
 			if n > 0 {
-				if werr := wsWriteMessage(conn, websocket.BinaryMessage, frameBuf[:n]); werr != nil {
+				if werr := s.wsWriteMessage(conn, websocket.BinaryMessage, frameBuf[:n]); werr != nil {
 					log.Printf("sim ws download: writing frame: %v", werr)
 					return
 				}

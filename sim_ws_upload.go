@@ -52,7 +52,7 @@ func (s *Server) handleSimWSUpload(w http.ResponseWriter, r *http.Request) {
 	var total int64
 
 	for {
-		mt, p, err := wsReadMessage(conn)
+		mt, p, err := s.wsReadMessage(conn)
 		if err != nil {
 			if !websocket.IsCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway) {
 				log.Printf("sim ws upload: reading message: %v", err)

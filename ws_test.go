@@ -747,11 +747,7 @@ func expectWSClose(t *testing.T, conn *websocket.Conn, code int) {
 }
 
 func TestWSAuthTimeout(t *testing.T) {
-	old := wsAuthTimeout
-	wsAuthTimeout = 100 * time.Millisecond
-	t.Cleanup(func() { wsAuthTimeout = old })
-
-	ts := newSimTestServer(t, Config{Root: t.TempDir(), Key: "k", WSFrameMax: 1 << 20})
+	ts := newSimTestServer(t, Config{Root: t.TempDir(), Key: "k", WSFrameMax: 1 << 20, wsAuthTimeout: 100 * time.Millisecond})
 	conn, _, err := websocket.DefaultDialer.Dial(wsURL(ts, "/api/files/ws/download"), nil)
 	if err != nil {
 		t.Fatalf("dial: %v", err)
@@ -905,12 +901,9 @@ func TestWSUploadIntoSubdir(t *testing.T) {
 }
 
 func TestWSIdleUploadReleasesClaim(t *testing.T) {
-	old := wsIdleTimeout
-	wsIdleTimeout = 200 * time.Millisecond
-	t.Cleanup(func() { wsIdleTimeout = old })
-
 	ulRoot := t.TempDir()
-	ts := newSimTestServer(t, Config{Root: t.TempDir(), UlRoot: ulRoot, NoAuth: true, WSFrameMax: 1 << 20})
+	ts := newSimTestServer(t, Config{Root: t.TempDir(), UlRoot: ulRoot, NoAuth: true, WSFrameMax: 1 << 20,
+		wsIdleTimeout: 200 * time.Millisecond})
 	start := func() *websocket.Conn {
 		conn, _, err := websocket.DefaultDialer.Dial(wsURL(ts, "/api/files/ws/upload"), nil)
 		if err != nil {
@@ -935,28 +928,30 @@ func TestWSIdleUploadReleasesClaim(t *testing.T) {
 		t.Fatalf("server did not close the idle upload: %v", err)
 	}
 
-	// Poll: the handler releases the claim after closing the connection.
-	deadline := time.Now().Add(5 * time.Second)
-	for {
-		tmp, _ := os.ReadDir(filepath.Join(ulRoot, ulTmpDirName))
-		if len(tmp) == 0 {
-			break
+	// The handler releases the claim and deletes its temp file after the
+	// connection ends, which the client doesn't see.
+	waitTmpEmpty := func() {
+		deadline := time.Now().Add(5 * time.Second)
+		for {
+			tmp, _ := os.ReadDir(filepath.Join(ulRoot, ulTmpDirName))
+			if len(tmp) == 0 {
+				return
+			}
+			if time.Now().After(deadline) {
+				t.Fatalf("temp files left after close: %d", len(tmp))
+			}
+			time.Sleep(10 * time.Millisecond)
 		}
-		if time.Now().After(deadline) {
-			t.Fatalf("temp files left after idle close: %d", len(tmp))
-		}
-		time.Sleep(10 * time.Millisecond)
 	}
+	waitTmpEmpty()
 	start().Close()
+	waitTmpEmpty()
 }
 
 func TestWSSlowFrameNotCutOff(t *testing.T) {
-	old := wsIdleTimeout
-	wsIdleTimeout = 300 * time.Millisecond
-	t.Cleanup(func() { wsIdleTimeout = old })
-
 	ulRoot := t.TempDir()
-	ts := newSimTestServer(t, Config{Root: t.TempDir(), UlRoot: ulRoot, NoAuth: true, WSFrameMax: 1 << 20})
+	ts := newSimTestServer(t, Config{Root: t.TempDir(), UlRoot: ulRoot, NoAuth: true, WSFrameMax: 1 << 20,
+		wsIdleTimeout: 300 * time.Millisecond})
 	conn, _, err := websocket.DefaultDialer.Dial(wsURL(ts, "/api/files/ws/upload"), nil)
 	if err != nil {
 		t.Fatalf("dial: %v", err)
@@ -971,7 +966,7 @@ func TestWSSlowFrameNotCutOff(t *testing.T) {
 	}
 
 	// One masked binary frame (all-zero mask key), trickled out over ~1 s:
-	// longer than wsIdleTimeout in total, but never idle that long.
+	// longer than the idle timeout in total, but never idle that long.
 	payload := bytes.Repeat([]byte("slow"), 250)
 	frame := append([]byte{0x82, 0x80 | 126, byte(len(payload) >> 8), byte(len(payload)), 0, 0, 0, 0}, payload...)
 	for i := 0; i < len(frame); i += 100 {

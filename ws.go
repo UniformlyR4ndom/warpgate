@@ -19,14 +19,15 @@ const (
 	wsBufferSize = 64 << 10
 )
 
-// wsAuthTimeout bounds how long a fresh connection may take to send its
-// authenticating first control message. A var so tests can shorten it.
-var wsAuthTimeout = 10 * time.Second
-
-// wsIdleTimeout closes an authenticated connection once no data has arrived
-// for this long, or once a single outgoing message has taken this long to
-// send. A var so tests can shorten it.
-var wsIdleTimeout = 5 * time.Minute
+const (
+	// defaultWSAuthTimeout bounds how long a fresh connection may take to send
+	// its authenticating first control message.
+	defaultWSAuthTimeout = 10 * time.Second
+	// defaultWSIdleTimeout closes an authenticated connection once no data has
+	// arrived for this long, or once a single outgoing message has taken this
+	// long to send.
+	defaultWSIdleTimeout = 5 * time.Minute
+)
 
 // wsAck is the JSON envelope sent in response to control messages
 // (the initial request and, for uploads, the final "done" message).
@@ -50,14 +51,14 @@ type wsAck struct {
 
 // upgradeWS upgrades the request and applies the pre-auth limits: control
 // messages are capped at maxParamBodySize and the first one must arrive
-// within wsAuthTimeout.
+// within the auth timeout.
 func (s *Server) upgradeWS(w http.ResponseWriter, r *http.Request) (*websocket.Conn, error) {
 	conn, err := s.wsUpgrader.Upgrade(w, r, nil)
 	if err != nil {
 		return nil, err
 	}
 	conn.SetReadLimit(maxParamBodySize)
-	_ = conn.SetReadDeadline(time.Now().Add(wsAuthTimeout))
+	_ = conn.SetReadDeadline(time.Now().Add(s.cfg.wsAuthTimeout))
 	return conn, nil
 }
 
@@ -115,7 +116,7 @@ func readWSHandshake[T any](s *Server, conn *websocket.Conn, r *http.Request) (T
 
 // readWSControl reads and decodes a control message after authentication.
 func readWSControl[T any](s *Server, conn *websocket.Conn) (T, bool, error) {
-	mt, p, err := wsReadMessage(conn)
+	mt, p, err := s.wsReadMessage(conn)
 	if err != nil {
 		var v T
 		return v, false, err
@@ -139,30 +140,31 @@ func decodeWSControl[T any](s *Server, mt int, p []byte) (T, bool, error) {
 	return v, encrypted, nil
 }
 
-// wsReadMessage reads one message, failing once no data has arrived for
-// wsIdleTimeout, so a large frame on a slow link is not cut off.
-func wsReadMessage(conn *websocket.Conn) (int, []byte, error) {
-	_ = conn.SetReadDeadline(time.Now().Add(wsIdleTimeout))
+// wsReadMessage reads one message, failing once no data has arrived for the
+// idle timeout, so a large frame on a slow link is not cut off.
+func (s *Server) wsReadMessage(conn *websocket.Conn) (int, []byte, error) {
+	_ = conn.SetReadDeadline(time.Now().Add(s.cfg.wsIdleTimeout))
 	mt, r, err := conn.NextReader()
 	if err != nil {
 		return mt, nil, err
 	}
-	p, err := io.ReadAll(idleReader{conn, r})
+	p, err := io.ReadAll(idleReader{conn, r, s.cfg.wsIdleTimeout})
 	return mt, p, err
 }
 
 type idleReader struct {
-	conn *websocket.Conn
-	r    io.Reader
+	conn    *websocket.Conn
+	r       io.Reader
+	timeout time.Duration
 }
 
 func (ir idleReader) Read(p []byte) (int, error) {
-	_ = ir.conn.SetReadDeadline(time.Now().Add(wsIdleTimeout))
+	_ = ir.conn.SetReadDeadline(time.Now().Add(ir.timeout))
 	return ir.r.Read(p)
 }
 
-func wsWriteMessage(conn *websocket.Conn, mt int, data []byte) error {
-	_ = conn.SetWriteDeadline(time.Now().Add(wsIdleTimeout))
+func (s *Server) wsWriteMessage(conn *websocket.Conn, mt int, data []byte) error {
+	_ = conn.SetWriteDeadline(time.Now().Add(s.cfg.wsIdleTimeout))
 	return conn.WriteMessage(mt, data)
 }
 
@@ -181,7 +183,7 @@ func (s *Server) writeWSOK(conn *websocket.Conn, encrypted bool, v any) error {
 		}
 		body = []byte(blob)
 	}
-	return wsWriteMessage(conn, websocket.TextMessage, body)
+	return s.wsWriteMessage(conn, websocket.TextMessage, body)
 }
 
 // writeWSError sends a {"ok":false,"error":...} control message followed by

@@ -185,7 +185,7 @@ func (s *Server) handleWSDownload(w http.ResponseWriter, r *http.Request, root *
 		for {
 			n, rerr := io.ReadFull(reader, frameBuf)
 			if n > 0 {
-				if werr := wsWriteMessage(conn, websocket.BinaryMessage, frameBuf[:n]); werr != nil {
+				if werr := s.wsWriteMessage(conn, websocket.BinaryMessage, frameBuf[:n]); werr != nil {
 					log.Printf("ws download: writing frame for %q: %v", req.Path, werr)
 					return
 				}
