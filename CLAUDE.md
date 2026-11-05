@@ -119,6 +119,13 @@ so an unadmitted client can't probe for a valid prefix.
 The frontend derives `API_BASE` (`web/app/store.js`) from `location.pathname`; `wgcli` takes the
 prefix as part of `-url`.
 
+### Lifecycle
+
+`NewServer` closes whatever it opened when it fails. `Server.Close` (idempotent) stops the upload
+sweeper and closes the roots. `ListenAndServe(ctx)` shuts down when `ctx` ends, giving requests
+`shutdownGrace` (5 s; WebSocket connections aren't waited for); `main` ends it on SIGINT/SIGTERM,
+then closes server and database.
+
 ### Filesystem confinement
 
 The route fixes the root, never a request field: `registerBrowse` (`server.go`) registers the same

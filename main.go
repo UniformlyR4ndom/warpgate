@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
@@ -8,7 +9,10 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 	"time"
 
 	"warpgate/internal/bytesize"
@@ -192,7 +196,16 @@ func main() {
 	}
 	log.Printf("WebSocket frame size ceiling: %d bytes", cfg.WSFrameMax)
 	logConnectToken(cfg, srv)
-	log.Fatal(srv.ListenAndServe())
+
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	err = srv.ListenAndServe(ctx)
+	srv.Close()
+	if err != nil {
+		db.Close()
+		log.Fatal(err)
+	}
+	log.Print("shut down")
 }
 
 // checkDBPath rejects DSN syntax the SQLite driver would interpret differently

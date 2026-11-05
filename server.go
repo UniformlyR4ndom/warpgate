@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"crypto/subtle"
 	"crypto/tls"
@@ -12,6 +13,7 @@ import (
 	"net/netip"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -43,16 +45,23 @@ type Server struct {
 
 	uploadSessions    *sessionStore[*ulSession]
 	simUploadSessions *sessionStore[*simUlSession]
+
+	stopSweep chan struct{} // nil when the sweeper isn't running
+	sweepDone chan struct{}
+	closeOnce sync.Once
 }
 
 const (
 	httpReadHeaderTimeout = 30 * time.Second
 	httpIdleTimeout       = 2 * time.Minute
+	// shutdownGrace is how long in-flight requests may run after a shutdown
+	// signal; WebSocket connections are not waited for.
+	shutdownGrace = 5 * time.Second
 )
 
 var deriveKey = authhash.DeriveKey
 
-func NewServer(cfg Config, db *DB) (*Server, error) {
+func NewServer(cfg Config, db *DB) (srv *Server, err error) {
 	absRoot, err := filepath.Abs(cfg.Root)
 	if err != nil {
 		return nil, fmt.Errorf("resolving root: %w", err)
@@ -84,6 +93,12 @@ func NewServer(cfg Config, db *DB) (*Server, error) {
 		},
 		authLimit: newAuthLimiter(),
 	}
+	defer func() {
+		if err != nil {
+			s.Close()
+			srv = nil
+		}
+	}()
 	if s.kdfSalt, err = db.KDFSalt(); err != nil {
 		return nil, err
 	}
@@ -165,6 +180,8 @@ func NewServer(cfg Config, db *DB) (*Server, error) {
 		s.mux.Handle("/api/files/ws/upload", http.HandlerFunc(s.handleWSUpload))
 		s.mux.Handle("/api/sim/upload", s.withAuth(s.handleSimUpload))
 		s.mux.Handle("/api/sim/ws/upload", http.HandlerFunc(s.handleSimWSUpload))
+		s.stopSweep = make(chan struct{})
+		s.sweepDone = make(chan struct{})
 		go s.ulSweepExpired()
 	}
 	return s, nil
@@ -177,22 +194,36 @@ func (s *Server) registerBrowse(prefix string, root *os.Root) {
 	s.mux.Handle(prefix+"ws/download", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { s.handleWSDownload(w, r, root) }))
 }
 
-// Close releases the server's directory handles.
+// Close stops the background sweeper and releases the directory handles. Any
+// later call is a no-op. Temp files of unfinished uploads are cleared at the
+// next start.
 func (s *Server) Close() {
-	s.root.Close()
-	if s.ulRoot != nil {
-		s.ulRoot.Close()
-	}
+	s.closeOnce.Do(func() {
+		if s.stopSweep != nil {
+			close(s.stopSweep)
+			<-s.sweepDone
+		}
+		s.root.Close()
+		if s.ulRoot != nil {
+			s.ulRoot.Close()
+		}
+	})
 }
 
-// ulSweepExpired runs for the life of the server, purging idle
-// chunked-upload sessions from both the real-upload and sim-upload stores.
+// ulSweepExpired purges idle chunked-upload sessions from both the real-upload
+// and sim-upload stores until Close.
 func (s *Server) ulSweepExpired() {
+	defer close(s.sweepDone)
 	ticker := time.NewTicker(ulSweepInterval)
 	defer ticker.Stop()
-	for range ticker.C {
-		s.uploadSessions.sweepExpired(s.abortUploadSession)
-		s.simUploadSessions.sweepExpired(nil) // nothing to clean up beyond the map entry
+	for {
+		select {
+		case <-s.stopSweep:
+			return
+		case <-ticker.C:
+			s.uploadSessions.sweepExpired(s.abortUploadSession)
+			s.simUploadSessions.sweepExpired(nil) // nothing to clean up beyond the map entry
+		}
 	}
 }
 
@@ -248,7 +279,8 @@ func (s *Server) handler() http.Handler {
 	return withCSP(h)
 }
 
-func (s *Server) ListenAndServe() error {
+// ListenAndServe serves until ctx is done, then shuts down gracefully.
+func (s *Server) ListenAndServe(ctx context.Context) error {
 	h := s.handler()
 	httpSrv := &http.Server{
 		Addr:              s.cfg.Addr,
@@ -277,7 +309,24 @@ func (s *Server) ListenAndServe() error {
 			}
 			httpSrv.TLSConfig = tlsCfg
 		}
-		return httpSrv.ListenAndServeTLS(s.cfg.Cert, s.cfg.CertKey)
 	}
-	return httpSrv.ListenAndServe()
+	errc := make(chan error, 1)
+	go func() {
+		if s.cfg.Cert != "" {
+			errc <- httpSrv.ListenAndServeTLS(s.cfg.Cert, s.cfg.CertKey)
+		} else {
+			errc <- httpSrv.ListenAndServe()
+		}
+	}()
+	select {
+	case err := <-errc:
+		return err
+	case <-ctx.Done():
+	}
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownGrace)
+	defer cancel()
+	if err := httpSrv.Shutdown(shutdownCtx); err != nil {
+		_ = httpSrv.Close()
+	}
+	return nil
 }
