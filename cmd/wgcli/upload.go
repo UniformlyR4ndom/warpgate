@@ -167,6 +167,31 @@ func uploadHTTP(g *globalFlags, o xferOpts, localPath, dir, name string) (upload
 // via the continuation-key protocol described in CLAUDE.md's "Uploads"
 // section. HTTP only — there is no WS equivalent of
 // chunked upload.
+// exactReader reads want bytes from r and fails if r ends sooner, so a source
+// file that shrinks mid-upload aborts the request instead of completing short.
+type exactReader struct {
+	r    io.Reader
+	want int64
+}
+
+func (e *exactReader) Read(p []byte) (int, error) {
+	if e.want <= 0 {
+		return 0, io.EOF
+	}
+	if int64(len(p)) > e.want {
+		p = p[:e.want]
+	}
+	n, err := e.r.Read(p)
+	e.want -= int64(n)
+	if err == io.EOF && e.want > 0 {
+		return n, fmt.Errorf("local file shrank during upload: %w", io.ErrUnexpectedEOF)
+	}
+	if err == io.EOF {
+		err = nil
+	}
+	return n, err
+}
+
 func uploadHTTPChunked(g *globalFlags, o xferOpts, localPath, dir, name string) (uploadResult, string, error) {
 	info, err := g.local.Stat(localPath)
 	if err != nil {
@@ -191,7 +216,8 @@ func uploadHTTPChunked(g *globalFlags, o xferOpts, localPath, dir, name string) 
 		}
 		done := transferred+reqSize >= size
 
-		encoded, err := o.transformer.Transform(io.LimitReader(src, reqSize))
+		chunk := &exactReader{r: src, want: reqSize}
+		encoded, err := o.transformer.Transform(chunk)
 		if err != nil {
 			return uploadResult{}, "", fmt.Errorf("encoding chunk at offset %d: %w", transferred, err)
 		}
