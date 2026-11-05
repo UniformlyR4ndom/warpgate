@@ -123,8 +123,8 @@ func (s *Server) handleWSDownload(w http.ResponseWriter, r *http.Request, root *
 			writeWSClose(conn, websocket.CloseNormalClosure, "")
 			return
 		}
-		if chunkReq.Size <= 0 || chunkReq.Start < 0 {
-			s.writeWSError(conn, encrypted, websocket.CloseInternalServerErr, "start must be non-negative and size positive")
+		if !validRange(chunkReq.Start, chunkReq.Size) {
+			s.writeWSError(conn, encrypted, websocket.CloseInternalServerErr, errInvalidRange)
 			return
 		}
 

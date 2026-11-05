@@ -66,8 +66,8 @@ func (s *Server) handleSimWSDownload(w http.ResponseWriter, r *http.Request) {
 			writeWSClose(conn, websocket.CloseNormalClosure, "")
 			return
 		}
-		if chunkReq.Start < 0 || chunkReq.Size <= 0 {
-			s.writeWSError(conn, encrypted, websocket.CloseInternalServerErr, "size must be positive")
+		if !validRange(chunkReq.Start, chunkReq.Size) {
+			s.writeWSError(conn, encrypted, websocket.CloseInternalServerErr, errInvalidRange)
 			return
 		}
 

@@ -51,6 +51,16 @@ func TestDownloadContentType(t *testing.T) {
 			wantCT:     "application/octet-stream",
 		},
 		{
+			name:       "rejects negative start",
+			body:       downloadRequest{Path: "f.txt", Start: -1, Size: 2, Transform: "id"},
+			wantStatus: http.StatusBadRequest,
+		},
+		{
+			name:       "rejects zero size",
+			body:       downloadRequest{Path: "f.txt", Size: 0, Transform: "id"},
+			wantStatus: http.StatusBadRequest,
+		},
+		{
 			name:       "rejects control characters",
 			body:       downloadRequest{Path: "f.txt", Size: 11, Transform: "id", ContentType: "text/html\r\nX-Injected: yes"},
 			wantStatus: http.StatusBadRequest,

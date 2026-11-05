@@ -20,6 +20,12 @@ type downloadRequest struct {
 	ContentType string          `json:"contentType"`
 }
 
+const errInvalidRange = "start must be non-negative and size positive"
+
+func validRange(start, size int64) bool {
+	return start >= 0 && size > 0
+}
+
 // maxContentTypeLen bounds a client-supplied Content-Type override; actual
 // MIME types are well under this, so it only rejects garbage input.
 const maxContentTypeLen = 255
@@ -65,8 +71,8 @@ func (s *Server) handleDownload(w http.ResponseWriter, r *http.Request, root *os
 		return
 	}
 
-	if req.Size <= 0 {
-		http.Error(w, "size must be positive", http.StatusBadRequest)
+	if !validRange(req.Start, req.Size) {
+		http.Error(w, errInvalidRange, http.StatusBadRequest)
 		return
 	}
 
@@ -106,11 +112,9 @@ func (s *Server) handleDownload(w http.ResponseWriter, r *http.Request, root *os
 	}
 	defer f.Close()
 
-	if req.Start > 0 {
-		if _, err := f.Seek(req.Start, io.SeekStart); err != nil {
-			http.Error(w, "internal error", http.StatusInternalServerError)
-			return
-		}
+	if _, err := f.Seek(req.Start, io.SeekStart); err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
 	}
 
 	reader, err := transformer.Transform(io.LimitReader(f, req.Size))

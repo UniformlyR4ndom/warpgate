@@ -31,12 +31,8 @@ func (s *Server) handleSimDownload(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	if req.Start < 0 {
-		http.Error(w, "start must not be negative", http.StatusBadRequest)
-		return
-	}
-	if req.Size <= 0 {
-		http.Error(w, "size must be positive", http.StatusBadRequest)
+	if !validRange(req.Start, req.Size) {
+		http.Error(w, errInvalidRange, http.StatusBadRequest)
 		return
 	}
 
