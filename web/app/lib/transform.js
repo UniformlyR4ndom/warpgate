@@ -2,7 +2,7 @@
 // per-request arg building.
 import { settings } from '../store.js';
 import { getDocument } from '../../pdf.min.mjs';
-import { hexToBytes, applyXOR, binaryStringToBytes, bytesToBinaryString, randomHex } from './util.js';
+import { hexToBytes, applyXOR, binaryStringToBytes, bytesToBinaryString, randomHex, REQUEST_LIMIT_MB } from './util.js';
 
 function decryptAESCTR(tx, buffer) {
   var key  = Array.from(hexToBytes(tx.aesCtr.key));
@@ -104,6 +104,17 @@ function createPDFWithAttachment(fileBytes, filename) {
 
 // Applies tx's transform to bytes (a whole file or one upload chunk),
 // resolving to {data: Blob, args}.
+// pdf and html-b64 are encoded and decoded as whole documents, so a request
+// with them is held in memory at once; the others can be processed piecewise.
+export function transformBuffers(type) {
+  return type === 'pdf' || type === 'html-b64';
+}
+
+export function requestLimitError(name, type, hint) {
+  return '"' + name + '" is over ' + REQUEST_LIMIT_MB + ' MB, the most ' + type +
+    ' handles in one request: ' + hint;
+}
+
 export async function encodeBytesForUpload(tx, bytes, filename) {
   if (tx.type === 'xor') {
     var encoded = applyXOR(bytes, hexToBytes(tx.xor.key));

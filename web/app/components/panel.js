@@ -10,9 +10,9 @@ const TIP = {
   bsize: "Total size of the synthetic file transferred by the benchmark (1-1024 MB). Nothing is read from or written to disk - all data is synthesized.",
   bchunk: "Splits the benchmark transfer into multiple requests of this size, simulating a chunked transfer: {start,size} requests for download, chunked-upload sessions for upload (HTTP backend only; Websocket upload always sends the whole file as one connection's frames).",
   dlchunk: "Split a file download into multiple sequential requests instead of one, useful for very large files or flaky connections.",
-  dlsize: "Size of each downloaded chunk, in megabytes.",
+  dlsize: "Size of each downloaded chunk, in megabytes (at most 250).",
   ulchunk: "Split a file upload into multiple sequential requests instead of one, useful for very large files or flaky connections. HTTP POST backend only.",
-  ulsize: "Size of each uploaded chunk, in megabytes.",
+  ulsize: "Size of each uploaded chunk, in megabytes (at most 250).",
   auto: "Reload the current tab's list every second.",
   confirm: "Ask for confirmation before deleting a clipboard note.",
   backend: "Transport used for downloads, uploads, and the benchmark tab. WebSocket uses one connection per file with a configurable wire frame size.",
@@ -88,7 +88,7 @@ export function Panel() {
               <label class="auto-label" title=${TIP.dlchunk}><input type="checkbox" ...${check(settings.chunking, 'enabled')} /> Enable chunking</label>
               ${settings.chunking.enabled && html`<div>
                 <label title=${TIP.dlsize}>Chunk size (MB)</label>
-                <input type="number" ...${num(settings.chunking, 'chunkSize')} min="1" title=${TIP.dlsize} />
+                <input type="number" ...${num(settings.chunking, 'chunkSize')} min="1" max="250" title=${TIP.dlsize} />
                 <label class="auto-label ${state.hasFileSystemAccess ? '' : 'disabled'}"
                        title=${state.hasFileSystemAccess ? 'Write chunks directly to a single file on disk as they arrive (File System Access API) instead of downloading each chunk as a separate file.' : 'File System Access API is required for efficient reassembly'}>
                   <input type="checkbox" ...${check(settings.chunking, 'reassemble')} disabled=${!state.hasFileSystemAccess} /> Reassemble chunks
@@ -100,7 +100,7 @@ export function Panel() {
                 <label class="auto-label" title=${TIP.ulchunk}><input type="checkbox" ...${check(settings.uploadChunking, 'enabled')} /> Enable chunking</label>
                 ${settings.uploadChunking.enabled && html`<div>
                   <label title=${TIP.ulsize}>Chunk size (MB)</label>
-                  <input type="number" ...${num(settings.uploadChunking, 'chunkSizeMB')} min="1" title=${TIP.ulsize} />
+                  <input type="number" ...${num(settings.uploadChunking, 'chunkSizeMB')} min="1" max="250" title=${TIP.ulsize} />
                 </div>`}
               </div>` : html`<div class="upload-empty">Chunked upload is only available on the HTTP POST backend.</div>`}
             </div>`}

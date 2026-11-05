@@ -1,7 +1,7 @@
 import { deepSignal } from './vendor/deepsignal.module.js';
 import { signal, effect } from './vendor/signals.module.js';
 import { deriveKey, authToken, fingerprint, labelBytes } from './lib/authhash.js';
-import { bytesToHex, hexToBytes, positiveOr } from './lib/util.js';
+import { bytesToHex, hexToBytes, chunkSizeMB } from './lib/util.js';
 
 export const API_BASE = window.location.pathname.replace(/\/[^/]*$/, '');
 
@@ -147,8 +147,8 @@ function oneOf(obj, key, choices) {
 }
 
 function normalizeSettings() {
-  settings.chunking.chunkSize = positiveOr(settings.chunking.chunkSize, 100);
-  settings.uploadChunking.chunkSizeMB = positiveOr(settings.uploadChunking.chunkSizeMB, 100);
+  settings.chunking.chunkSize = chunkSizeMB(settings.chunking.chunkSize, 100);
+  settings.uploadChunking.chunkSizeMB = chunkSizeMB(settings.uploadChunking.chunkSizeMB, 100);
   oneOf(settings, 'backend', backendTypes);
   oneOf(settings.transform, 'type', transformTypes);
   oneOf(settings, 'clipSearchScope', clipSearchScopes);

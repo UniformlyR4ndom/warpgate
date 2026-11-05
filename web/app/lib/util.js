@@ -70,8 +70,17 @@ export function positiveOr(n, fallback) {
 // to defaultMB when the setting is empty, zero, negative, NaN, or so small it
 // floors to zero bytes — any of which would otherwise stall the chunking loop
 // (no forward progress) or make it no-op.
+// The most one request (or chunk) carries wherever the browser holds it in
+// memory whole; the server allows a little more (256 MiB).
+export var REQUEST_LIMIT_MB = 250;
+export var REQUEST_LIMIT_BYTES = REQUEST_LIMIT_MB * 1024 * 1024;
+
+export function chunkSizeMB(mb, defaultMB) {
+  return Math.min(positiveOr(mb, defaultMB), REQUEST_LIMIT_MB);
+}
+
 export function chunkBytesFromMB(mb, defaultMB) {
-  var bytes = Math.floor(positiveOr(mb, defaultMB) * 1024 * 1024);
+  var bytes = Math.floor(chunkSizeMB(mb, defaultMB) * 1024 * 1024);
   return bytes >= 1 ? bytes : defaultMB * 1024 * 1024;
 }
 

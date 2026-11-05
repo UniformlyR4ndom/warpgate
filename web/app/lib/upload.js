@@ -5,10 +5,11 @@ import { authHeaders, jsonHeaders, encodeBody, decodeResponseJSON, assertOk,
          paramEncryptEnabled, apiFetch, apiWSOpen, noteWSAck, sendWSControl, wsDecryptFor } from './api.js';
 import { load, reload } from './download.js';
 import { wsNextJSON, sendWSBinary } from './ws.js';
-import { encodeBytesForUpload, encodeForUpload, uploadFilename, snapshotTransform } from './transform.js';
+import { encodeBytesForUpload, encodeForUpload, uploadFilename, snapshotTransform,
+         transformBuffers, requestLimitError } from './transform.js';
 import { addTransfer, removeTransfer, makeTransferProgress, updateIfChanged } from './transfers.js';
 import { addToast } from './notices.js';
-import { sha256Hex, chunkBytesFromMB } from './util.js';
+import { sha256Hex, chunkBytesFromMB, REQUEST_LIMIT_BYTES } from './util.js';
 
 export async function loadUploadDir() {
   try {
@@ -63,7 +64,12 @@ export async function uploadFiles(files) {
   var dir = state.ulFlat ? '' : state.browse.ul.segments.join('/');
   var tx = snapshotTransform();
   var backend = settings.backend;
+  var whole = backend === 'ws' || !settings.uploadChunking.enabled;
   var promises = Array.from(files).map(async function(file) {
+    if (whole && transformBuffers(tx.type) && file.size > REQUEST_LIMIT_BYTES) {
+      addToast(false, requestLimitError(file.name, tx.type, 'turn on upload chunking (HTTP backend)'));
+      return;
+    }
     var transfer   = addTransfer('upload', file.name, 'ul');
     var onProgress = makeTransferProgress(transfer, file.size);
     try {

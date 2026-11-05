@@ -580,7 +580,9 @@ render.
 `wsOpen`, so nothing arriving between reads is lost; a read fails after 5 min without a message.
 Chunked downloads can be reassembled via File System Access
 (`showSaveFilePicker`, secure context only). `uploadFiles` uploads in parallel;
-`uploadFileHTTPChunked` sends chunks strictly in sequence. `encodeBytesForUpload` is the one encoder
+`uploadFileHTTPChunked` sends chunks strictly in sequence. A single request with pdf/html-b64 (`transformBuffers`) carries at most
+250 MB (`REQUEST_LIMIT_BYTES`, a little under the server's 256 MiB): larger files are refused before
+any request (`requestLimitError`), never switched to chunking silently. `encodeBytesForUpload` is the one encoder
 for files, chunks and clipboard images. Listings update only on change (`updateIfChanged`), keeping
 scroll position under auto-refresh.
 
@@ -625,7 +627,7 @@ setting has a short `title` tooltip on its label and input that doesn't restate 
 |-----------|----------|
 | Auth      | Passphrase form (masked, 👁 not persisted; Set) or "Key ID: <fingerprint>" with Change / Clear (`components/auth.js`); Parameter obfuscation |
 | Benchmark | Benchmark tab: Size (1–1024 MB), Chunk size (≤ Size) |
-| Chunking  | Download: chunking, chunk size, reassembly. Upload: chunking and size (HTTP backend only) |
+| Chunking  | Download: chunking, chunk size, reassembly. Upload: chunking and size (HTTP backend only). Chunk sizes ≤ 250 MB (`REQUEST_LIMIT_MB`) |
 | General   | Auto-refresh (1 s); Confirm note delete; Backend (HTTP/WS); WS frame size (WS only, clamped to the server); Content-Type override (download, HTTP only); Extension override (`settings.extOverride`, replace/append the saved file's extension for browsers that block types; `applyExtOverride`) |
 | Outbox    | Status, connect/reconnect/disconnect, "Push function" dialog; hidden without `showDirectoryPicker` |
 | Transform | Type and parameters (auto-generated keys/IVs) |

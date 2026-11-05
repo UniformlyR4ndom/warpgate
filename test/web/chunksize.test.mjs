@@ -4,7 +4,7 @@
 // reassembly path open and close an empty file. chunkBytesFromMB guarantees a
 // positive integer byte count; positiveOr sanitizes a persisted/typed setting.
 import assert from 'node:assert/strict';
-import { positiveOr, chunkBytesFromMB, chunkRanges } from '../../web/app/lib/util.js';
+import { positiveOr, chunkBytesFromMB, chunkRanges, chunkSizeMB } from '../../web/app/lib/util.js';
 
 let failures = 0;
 function test(name, fn) {
@@ -68,6 +68,13 @@ test('chunkRanges covers the file exactly, with a short last chunk', () => {
 test('chunkRanges requests nothing for an empty file', () => {
   assert.deepEqual(chunkRanges(0, 10), []);
   assert.deepEqual(chunkRanges(0, 0), []);
+});
+
+test('chunk sizes are capped at the 250 MB request limit', () => {
+  assert.equal(chunkSizeMB(1000, 100), 250);
+  assert.equal(chunkSizeMB(250, 100), 250);
+  assert.equal(chunkSizeMB(0, 100), 100);
+  assert.equal(chunkBytesFromMB(1000, 100), 250 * MB);
 });
 
 if (failures) { console.error('\n' + failures + ' test(s) failed'); process.exit(1); }

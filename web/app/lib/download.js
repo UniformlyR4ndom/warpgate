@@ -5,9 +5,10 @@ import { API_BASE, state, settings } from '../store.js';
 import { jsonHeaders, encodeBody, decodeResponseJSON, assertOk,
          paramEncryptEnabled, apiFetch, apiWSOpen, noteWSAck, sendWSControl, wsDecryptFor, closeWSSession } from './api.js';
 import { wsNextJSON, receiveWSBinary, readBodyWithProgress } from './ws.js';
-import { decrypt, buildTransformArgs, perRequestSecrets, resolveContentTypeOverride, snapshotTransform } from './transform.js';
+import { decrypt, buildTransformArgs, perRequestSecrets, resolveContentTypeOverride, snapshotTransform,
+         transformBuffers, requestLimitError } from './transform.js';
 import { authKeyHash } from '../store.js';
-import { padIndex, triggerDownload, applyExtOverride, chunkBytesFromMB, chunkRanges } from './util.js';
+import { padIndex, triggerDownload, applyExtOverride, chunkBytesFromMB, chunkRanges, REQUEST_LIMIT_BYTES } from './util.js';
 import { addTransfer, removeTransfer, makeTransferProgress, updateIfChanged } from './transfers.js';
 import { makeRequestGuard } from './loadguard.js';
 
@@ -130,6 +131,10 @@ export async function downloadFile(root, entry) {
     wsFrameBytes: settings.wsFrameSizeKB * 1024,
     contentType:  resolveContentTypeOverride(),
   };
+  if (!chunking.enabled && transformBuffers(opts.tx.type) && entry.size > REQUEST_LIMIT_BYTES) {
+    b.error = requestLimitError(entry.name, opts.tx.type, 'turn on chunking');
+    return;
+  }
   var wsSession  = { ws: null, password: null, htmlB64Key: null };
   var transfer   = addTransfer('download', entry.name, root);
   var onProgress = makeTransferProgress(transfer, entry.size);
