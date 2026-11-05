@@ -1,6 +1,7 @@
 package main
 
 import (
+	"crypto/tls"
 	"flag"
 	"io"
 	"net"
@@ -202,5 +203,42 @@ func TestHTTPClientReusesConnections(t *testing.T) {
 	}
 	if n := conns.Load(); n != 1 {
 		t.Errorf("10 sequential requests opened %d connections, want 1", n)
+	}
+}
+
+func TestHTTP2Flag(t *testing.T) {
+	ts := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	ts.EnableHTTP2 = true
+	ts.StartTLS()
+	defer ts.Close()
+
+	for _, h2 := range []bool{false, true} {
+		g := &globalFlags{url: ts.URL, http2: h2, tlsConfig: &tls.Config{InsecureSkipVerify: true}}
+		resp, err := g.httpClient().Get(ts.URL)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if want := map[bool]int{false: 1, true: 2}[h2]; resp.ProtoMajor != want {
+			t.Errorf("-http2=%v: got HTTP/%d, want HTTP/%d", h2, resp.ProtoMajor, want)
+		}
+		if len(g.tlsConfig.NextProtos) != 0 {
+			t.Errorf("-http2=%v: shared TLS config got NextProtos %v, would break the WS dialer", h2, g.tlsConfig.NextProtos)
+		}
+	}
+
+	h1 := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	defer h1.Close()
+	g := &globalFlags{url: h1.URL, http2: true, tlsConfig: &tls.Config{InsecureSkipVerify: true}}
+	if resp, err := g.httpClient().Get(h1.URL); err == nil {
+		resp.Body.Close()
+		t.Errorf("-http2 against an HTTP/1.1-only server succeeded with HTTP/%d", resp.ProtoMajor)
+	}
+
+	fs := flag.NewFlagSet("test", flag.ContinueOnError)
+	g = addGlobalFlags(fs)
+	t.Setenv("WGCLI_NO_ROOT", "1")
+	if err := parseFlags(fs, g, []string{"-http2", "-url", "http://localhost:8080"}); err == nil {
+		t.Error("-http2 with an http URL was accepted")
 	}
 }

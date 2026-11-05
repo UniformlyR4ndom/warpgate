@@ -30,6 +30,7 @@ type globalFlags struct {
 	authK      string
 	insecure   bool
 	paramCrypt bool
+	http2      bool
 	certFile   string
 	certKey    string
 	json       bool
@@ -64,6 +65,7 @@ var globalEnv = map[string]string{
 	"auth-k":      "WGCLI_AUTH_K",
 	"insecure":    "WGCLI_INSECURE",
 	"param-crypt": "WGCLI_PARAM_CRYPT",
+	"http2":       "WGCLI_HTTP2",
 	"cert":        "WGCLI_CERT",
 	"cert-key":    "WGCLI_CERT_KEY",
 	"json":        "WGCLI_JSON",
@@ -89,6 +91,7 @@ func addGlobalFlags(fs *flag.FlagSet) *globalFlags {
 	fs.StringVar(&g.authK, "auth-k", "", "derived key as printed by \"wgcli derive-key\"; overrides -auth-key (env WGCLI_AUTH_K)")
 	fs.BoolVar(&g.insecure, "insecure", false, "skip TLS certificate verification (self-signed test certs) (env WGCLI_INSECURE)")
 	fs.BoolVar(&g.paramCrypt, "param-crypt", false, "encrypt request parameters (paths, names, transform keys; not file data) and decrypt the matching responses, with keys derived from the auth key (env WGCLI_PARAM_CRYPT)")
+	fs.BoolVar(&g.http2, "http2", false, "use HTTP/2 only, failing if the server doesn't negotiate it; needs https (WebSocket stays HTTP/1.1) (env WGCLI_HTTP2)")
 	fs.StringVar(&g.certFile, "cert", "", "PEM client certificate (chain) for servers requiring TLS client auth; needs -cert-key (env WGCLI_CERT)")
 	fs.StringVar(&g.certKey, "cert-key", "", "PEM private key for -cert (env WGCLI_CERT_KEY)")
 	fs.BoolVar(&g.json, "json", false, "print the result as one JSON document on stdout (env WGCLI_JSON)")
@@ -147,6 +150,9 @@ func parseFlags(fs *flag.FlagSet, g *globalFlags, args []string) error {
 	g.tlsConfig = &tls.Config{InsecureSkipVerify: g.insecure}
 	if err := g.applyConnectToken(set["url"]); err != nil {
 		return err
+	}
+	if g.http2 && !strings.HasPrefix(strings.ToLower(g.url), "https://") {
+		return errors.New("-http2 needs an https URL")
 	}
 	if g.certFile != "" {
 		cert, err := tls.LoadX509KeyPair(g.certFile, g.certKey)
@@ -390,8 +396,15 @@ func (g *globalFlags) httpClient() *http.Client {
 func (g *globalFlags) transport() *http.Transport {
 	g.transportOnce.Do(func() {
 		t := http.DefaultTransport.(*http.Transport).Clone()
-		t.TLSClientConfig = g.tlsConfig
-		t.ForceAttemptHTTP2 = false
+		// A clone: enabling HTTP/2 rewrites NextProtos, which would break the WS
+		// dialer sharing g.tlsConfig.
+		t.TLSClientConfig = g.tlsConfig.Clone()
+		t.Protocols = new(http.Protocols)
+		if g.http2 {
+			t.Protocols.SetHTTP2(true)
+		} else {
+			t.Protocols.SetHTTP1(true)
+		}
 		g.httpTransport = t
 	})
 	return g.httpTransport

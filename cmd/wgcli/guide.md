@@ -47,6 +47,7 @@ Global flags, accepted by every command; each falls back to its environment vari
 | `-param-crypt` | `WGCLI_PARAM_CRYPT` | Encrypt request parameters (paths, names, transform keys); needs a key |
 | `-json` | `WGCLI_JSON` | Print the result as one JSON document on stdout |
 | `-insecure` | `WGCLI_INSECURE` | Skip TLS certificate verification |
+| `-http2` | `WGCLI_HTTP2` | HTTP requests over HTTP/2 only (fails if the server or a TLS-terminating proxy won't negotiate it); needs `https`. Default HTTP/1.1, which uploads faster on high-latency links; WebSocket stays HTTP/1.1 |
 | `-cert`, `-cert-key` | `WGCLI_CERT`, `WGCLI_CERT_KEY` | PEM client certificate and key, for servers requiring one |
 | `-root` | `WGCLI_ROOT` | Local working directory, which must exist: every local path a command takes (uploads, `-f`, `-attach`, downloads, `-o`) stays within it. Relative paths are relative to it, not to the current directory; an absolute path under it works too; a path leading outside it fails. Excludes `-no-root` |
 | `-no-root` | `WGCLI_NO_ROOT` | Read and write files anywhere, opting out of the `-root` requirement; relative paths are relative to the current directory |

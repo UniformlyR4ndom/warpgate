@@ -196,7 +196,8 @@ def frame_and_chunk_size(size: int) -> tuple[int, int]:
 
 
 class ServerProcess:
-    def __init__(self, binary: Path, root: Path, ul_root: Path, db: Path, listen: str, auth_key: str, log_path: Path):
+    def __init__(self, binary: Path, root: Path, ul_root: Path, db: Path, listen: str, auth_key: str, log_path: Path,
+                 extra_args: list[str] | None = None):
         self.log_path = log_path
         self._log_file = open(log_path, "w")
         self.proc = subprocess.Popen(
@@ -207,6 +208,7 @@ class ServerProcess:
                 "-db", str(db),
                 "-listen", listen,
                 "-auth-key", auth_key,
+                *(extra_args or []),
             ],
             stdout=self._log_file,
             stderr=subprocess.STDOUT,
@@ -235,6 +237,19 @@ class ServerProcess:
                 self.proc.kill()
                 self.proc.wait()
         self._log_file.close()
+
+
+def generate_cert(cert_dir: Path) -> tuple[Path, Path]:
+    """Self-signed cert for 127.0.0.1 from Go's own generator, so the suite needs nothing but go."""
+    cert_dir.mkdir(parents=True, exist_ok=True)
+    # Same cwd for both calls: inside the repo, go may switch to the module's toolchain.
+    goroot = subprocess.run(["go", "env", "GOROOT"], cwd=cert_dir, capture_output=True, text=True, check=True).stdout.strip()
+    gen = Path(goroot) / "src" / "crypto" / "tls" / "generate_cert.go"
+    subprocess.run(
+        ["go", "run", str(gen), "--host", "127.0.0.1", "--ecdsa-curve", "P256"],
+        cwd=cert_dir, check=True, capture_output=True,
+    )
+    return cert_dir / "cert.pem", cert_dir / "key.pem"
 
 
 def build_binaries(bin_dir: Path) -> tuple[Path, Path]:
@@ -277,14 +292,16 @@ def run_download_test(
     wgcli_bin: Path, base_url: str, auth_key: str,
     root_dir: Path, download_dir: Path,
     size_label: str, size: int, transform: str, backend: str,
-    keep: bool, param_crypt: bool = False,
+    keep: bool, param_crypt: bool = False, cli_extra: list[str] | None = None, tag: str = "",
 ) -> TestResult:
     fname = f"file_{size_label}.bin"
     src = root_dir / fname
-    out = download_dir / f"dl_{backend}_{transform}_{size_label}{'_pc' if param_crypt else ''}.bin"
+    out = download_dir / f"dl_{backend}_{transform}_{size_label}{'_pc' if param_crypt else ''}{'_' + tag if tag else ''}.bin"
     name = f"download {backend:4s} {transform:8s} {size_label}"
     if param_crypt:
         name += " [param-crypt]"
+    if tag:
+        name += f" [{tag}]"
 
     frame_size, chunk_size = frame_and_chunk_size(size)
     args = [
@@ -297,6 +314,7 @@ def run_download_test(
         args += ["--frame-size", str(frame_size)]
     if param_crypt:
         args.append("-param-crypt")
+    args += cli_extra or []
     args.append(fname)
 
     t0 = time.time()
@@ -315,15 +333,17 @@ def run_upload_test(
     wgcli_bin: Path, base_url: str, auth_key: str,
     root_dir: Path, upload_dir: Path,
     size_label: str, size: int, transform: str, backend: str,
-    param_crypt: bool = False,
+    param_crypt: bool = False, cli_extra: list[str] | None = None, tag: str = "",
 ) -> TestResult:
     fname = f"file_{size_label}.bin"
     src = root_dir / fname
-    remote_name = f"ul_{backend}_{transform}_{size_label}{'_pc' if param_crypt else ''}.bin"
+    remote_name = f"ul_{backend}_{transform}_{size_label}{'_pc' if param_crypt else ''}{'_' + tag if tag else ''}.bin"
     stored = upload_dir / remote_name
     name = f"upload   {backend:4s} {transform:8s} {size_label}"
     if param_crypt:
         name += " [param-crypt]"
+    if tag:
+        name += f" [{tag}]"
 
     frame_size, _ = frame_and_chunk_size(size)
     args = [
@@ -336,6 +356,7 @@ def run_upload_test(
         args += ["--frame-size", str(frame_size)]
     if param_crypt:
         args.append("-param-crypt")
+    args += cli_extra or []
     args.append(str(src))
 
     t0 = time.time()
@@ -435,12 +456,14 @@ def run_disguise_tests(base_url: str, auth_key: str, root_dir: Path, size_label:
 
 def run_sim_download_test(
     wgcli_bin: Path, base_url: str, auth_key: str, size_label: str, size: int, backend: str,
+    cli_extra: list[str] | None = None, tag: str = "",
 ) -> TestResult:
-    name = f"sim download {backend:4s} {size_label}"
+    name = f"sim download {backend:4s} {size_label}" + (f" [{tag}]" if tag else "")
     frame_size, chunk_size = frame_and_chunk_size(size)
     args = [
         "sim", "download", "-url", base_url, "-auth-key", auth_key,
         "--total-size", str(size), "--chunk-size", str(chunk_size), "--backend", backend,
+        *(cli_extra or []),
     ]
     if backend == "ws":
         args += ["--frame-size", str(frame_size)]
@@ -454,13 +477,14 @@ def run_sim_download_test(
 
 def run_sim_upload_test(
     wgcli_bin: Path, base_url: str, auth_key: str, size_label: str, size: int, backend: str,
-    chunked: bool = False,
+    chunked: bool = False, cli_extra: list[str] | None = None, tag: str = "",
 ) -> TestResult:
-    name = f"sim upload   {backend:4s} {size_label}" + (" chunked" if chunked else "")
+    name = f"sim upload   {backend:4s} {size_label}" + (" chunked" if chunked else "") + (f" [{tag}]" if tag else "")
     frame_size, chunk_size = frame_and_chunk_size(size)
     args = [
         "sim", "upload", "-url", base_url, "-auth-key", auth_key,
         "--total-size", str(size), "--backend", backend,
+        *(cli_extra or []),
     ]
     if chunked:
         args += ["--chunk-size", str(chunk_size)]
@@ -620,12 +644,15 @@ def run_param_crypt_wire_tests(wgcli_bin: Path) -> list[TestResult]:
 # ---------------------------------------------------------------------------
 
 
-def run_clipboard_tests(wgcli_bin: Path, base_url: str, auth_key: str, param_crypt: bool = False) -> list[TestResult]:
+def run_clipboard_tests(
+    wgcli_bin: Path, base_url: str, auth_key: str, param_crypt: bool = False,
+    cli_extra: list[str] | None = None, tag: str = "",
+) -> list[TestResult]:
     results: list[TestResult] = []
-    common = ["-url", base_url, "-auth-key", auth_key]
+    common = ["-url", base_url, "-auth-key", auth_key, *(cli_extra or [])]
     if param_crypt:
         common.append("-param-crypt")
-    label_suffix = " [param-crypt]" if param_crypt else ""
+    label_suffix = (" [param-crypt]" if param_crypt else "") + (f" [{tag}]" if tag else "")
 
     def check(name: str, proc: subprocess.CompletedProcess, expect_ok: bool = True) -> bool:
         ok = (proc.returncode == 0) == expect_ok
@@ -875,6 +902,37 @@ def run_ul_tree_tests(wgcli_bin: Path, base_url: str, auth_key: str, root_dir: P
 # ---------------------------------------------------------------------------
 
 
+def run_http2_tests(
+    wgcli_bin: Path, base_url: str, auth_key: str, root_dir: Path, upload_dir: Path, download_dir: Path,
+    matrix: list[tuple[str, int, list[str]]], keep: bool,
+) -> list[TestResult]:
+    """A reduced matrix against the TLS server with wgcli -http2, which fails unless HTTP/2 is negotiated."""
+    h2 = ["-http2", "-insecure"]
+    tag = "h2"
+    results: list[TestResult] = []
+    for label, size, transforms in matrix:
+        for t in transforms:
+            results.append(run_download_test(wgcli_bin, base_url, auth_key, root_dir, download_dir, label, size, t, "http", keep, cli_extra=h2, tag=tag))
+            results.append(run_upload_test(wgcli_bin, base_url, auth_key, root_dir, upload_dir, label, size, t, "http", cli_extra=h2, tag=tag))
+        _, chunk_size = frame_and_chunk_size(size)
+        results.append(run_upload_test(
+            wgcli_bin, base_url, auth_key, root_dir, upload_dir, label, size, "xor", "http",
+            cli_extra=[*h2, "-chunk-size", str(chunk_size)], tag="h2 chunked",
+        ))
+        results.append(run_sim_download_test(wgcli_bin, base_url, auth_key, label, size, "http", cli_extra=h2, tag=tag))
+        results.append(run_sim_upload_test(wgcli_bin, base_url, auth_key, label, size, "http", cli_extra=h2, tag=tag))
+        results.append(run_sim_upload_test(wgcli_bin, base_url, auth_key, label, size, "http", chunked=True, cli_extra=h2, tag=tag))
+
+    label, size, _ = matrix[0]
+    results.append(run_download_test(wgcli_bin, base_url, auth_key, root_dir, download_dir, label, size, "xor", "http", keep, param_crypt=True, cli_extra=h2, tag=tag))
+    results.append(run_upload_test(wgcli_bin, base_url, auth_key, root_dir, upload_dir, label, size, "xor", "http", param_crypt=True, cli_extra=h2, tag=tag))
+    results.append(run_download_test(wgcli_bin, base_url, auth_key, root_dir, download_dir, label, size, "id", "ws", keep, cli_extra=h2, tag="h2 flag set"))
+    results.append(run_upload_test(wgcli_bin, base_url, auth_key, root_dir, upload_dir, label, size, "id", "ws", cli_extra=h2, tag="h2 flag set"))
+    results.append(run_download_test(wgcli_bin, base_url, auth_key, root_dir, download_dir, label, size, "id", "http", keep, cli_extra=["-insecure"], tag="tls http/1.1"))
+    results += run_clipboard_tests(wgcli_bin, base_url, auth_key, cli_extra=h2, tag=tag)
+    return results
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--workdir", help="base directory for generated files (default: /tmp/ramdisk if it's a tmpfs mount, else the OS temp dir)")
@@ -887,6 +945,7 @@ def main() -> int:
     parser.add_argument("--keep", action="store_true", help="don't delete the run directory or downloaded files on exit (server is still stopped)")
     parser.add_argument("--port", type=int, default=0, help="server port (default: an automatically chosen free port)")
     parser.add_argument("--auth-key", default=None, help="auth key to use (default: a random one)")
+    parser.add_argument("--http2-max-size", default="100M", help="largest size tier the reduced HTTP/2 pass runs (default: 100M)")
     args = parser.parse_args()
 
     sizes = [(label, parse_size(label)) for label in args.sizes.split(",")]
@@ -923,9 +982,23 @@ def main() -> int:
         f"127.0.0.1:{port}", auth_key, run_dir / "server.log",
     )
 
+    tls_port = find_free_port()
+    while tls_port == port:
+        tls_port = find_free_port()
+    tls_url = f"https://127.0.0.1:{tls_port}"
+    tls_upload_dir = run_dir / "uploads_tls"
+    tls_upload_dir.mkdir()
+    cert, cert_key = generate_cert(run_dir / "tls")
+    tls_server = ServerProcess(
+        warpgate_bin, root_dir, tls_upload_dir, run_dir / "db_tls.sqlite",
+        f"127.0.0.1:{tls_port}", auth_key, run_dir / "server_tls.log",
+        extra_args=["-cert", str(cert), "-cert-key", str(cert_key)],
+    )
+
     results: list[TestResult] = []
     try:
         server.wait_ready("127.0.0.1", port)
+        tls_server.wait_ready("127.0.0.1", tls_port)
         print(f"server ready at {base_url}\n")
 
         for label, size in sizes:
@@ -1006,8 +1079,20 @@ def main() -> int:
             print_result(r)
             results.append(r)
 
+        print()
+        print(f"HTTP/2 over TLS (reduced matrix, wgcli -http2, {tls_url}):")
+        h2_max = parse_size(args.http2_max_size)
+        h2_matrix = []
+        for label, n in [(label, n) for label, n in sizes if n <= h2_max] or sizes[:1]:
+            ts = small_transforms if n <= threshold else large_transforms
+            h2_matrix.append((label, n, [t for t in ts if t in ("id", "xor", "pdf", "html-b64")] or ts[:1]))
+        for r in run_http2_tests(wgcli_bin, tls_url, auth_key, root_dir, tls_upload_dir, download_dir, h2_matrix, args.keep):
+            print_result(r)
+            results.append(r)
+
     finally:
         server.stop()
+        tls_server.stop()
         if not args.keep:
             shutil.rmtree(run_dir, ignore_errors=True)
 

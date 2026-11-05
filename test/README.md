@@ -62,9 +62,19 @@ Sim endpoints, `ul-list`, the upload directory tree, clipboard CRUD, the `--para
 all always run regardless of the matrix configuration — sim reuses the same `--sizes`/`--backends`
 lists as the download/upload matrix, but has no transform axis (the endpoints take none).
 
+## HTTP/2 pass
+
+A second server instance runs with TLS (a self-signed cert for `127.0.0.1` from Go's bundled
+`crypto/tls/generate_cert.go`) and its own upload directory and DB. Against it, a reduced matrix runs
+with `wgcli -http2`, which fails unless HTTP/2 is negotiated: HTTP downloads/uploads (`id`, `xor`,
+`pdf`, `html-b64`, as far as the size tier allows), a chunked upload, sim download/upload (plain and
+chunked), one `--param-crypt` round trip, the clipboard tests, WS with `-http2` set (WS itself stays
+HTTP/1.1), and one HTTP/1.1-over-TLS download. Sizes above `--http2-max-size` (default `100M`) are
+skipped.
+
 ## What's still not covered
 
-`-no-auth` mode, TLS/mutual TLS (`-cert`/`-client-root`/`-client-fp`), the `contentType` override on
+`-no-auth` mode, mutual TLS (`-client-root`/`-client-fp`), the `contentType` override on
 `/api/files/download` (wgcli has no flag for it), `/api/public/checkin`/`/api/public/settings` (no
 wgcli command exists for either), and chunked-upload protocol edge cases beyond the happy path
 (stale/replayed `continuation-key`, the concurrent-request `409` lock, session expiry, the
