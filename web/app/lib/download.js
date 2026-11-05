@@ -11,6 +11,7 @@ import { authKeyHash } from '../store.js';
 import { padIndex, triggerDownload, applyExtOverride, chunkBytesFromMB, chunkRanges, REQUEST_LIMIT_BYTES } from './util.js';
 import { addTransfer, removeTransfer, makeTransferProgress, updateIfChanged } from './transfers.js';
 import { makeRequestGuard } from './loadguard.js';
+import { addToast } from './notices.js';
 
 // The server fixes each route to one root.
 const API_PREFIX = { dl: '/api/files/', ul: '/api/ul/' };
@@ -111,7 +112,7 @@ async function fetchChunkWS(opts, wsSession, prefix, path, start, size, onRaw) {
     sendWSControl(ws, {
       auth: authKeyHash.value, path: path, transform: opts.tx.type,
       args: buildTransformArgs(opts.tx, s.password, s.htmlB64Key),
-      frameSize: opts.wsFrameBytes,
+      frameSize: opts.wsFrameBytes, hash: opts.verify,
     });
     var ack = noteWSAck(await wsNextJSON(ws, wsDecryptFor(encrypted)));
     if (!ack.ok) { ws.close(); throw new Error(ack.error || 'download failed'); }
@@ -119,6 +120,7 @@ async function fetchChunkWS(opts, wsSession, prefix, path, start, size, onRaw) {
     wsSession.password = s.password;
     wsSession.htmlB64Key = s.htmlB64Key;
     wsSession.encrypted = encrypted;
+    wsSession.sha256 = ack.sha256 || '';
   }
 
   sendWSControl(wsSession.ws, { start: start, size: size });
@@ -126,6 +128,34 @@ async function fetchChunkWS(opts, wsSession, prefix, path, start, size, onRaw) {
   if (!chunkAck.ok) throw new Error(chunkAck.error || 'download failed');
   await receiveWSFrames(wsSession.ws, chunkAck.chunkSize, onRaw);
   return { password: wsSession.password, htmlB64Key: wsSession.htmlB64Key };
+}
+
+// The server's SHA-256 of the file at path, '' if it sends none.
+async function fetchServerHash(prefix, path) {
+  var encrypted = paramEncryptEnabled();
+  var res = await apiFetch(API_BASE + prefix + 'list', {
+    method: 'POST', headers: jsonHeaders(), body: encodeBody({ path: path, hash: true }),
+  });
+  assertOk(res);
+  var data = await decodeResponseJSON(res, encrypted);
+  return (data && data[0] && data[0].sha256) || '';
+}
+
+var READ_BACK_BYTES = 16 * 1024 * 1024;
+
+// Hashes what was actually stored. Reading it back also detects a Blob the
+// browser couldn't hold (its blob storage limit), reported as unreadable.
+async function hashStored(blob, unreadable) {
+  var h = sha256.create();
+  try {
+    for (var off = 0; off < blob.size; off += READ_BACK_BYTES) {
+      h.update(new Uint8Array(await blob.slice(off, off + READ_BACK_BYTES).arrayBuffer()));
+    }
+  } catch(err) {
+    if (err && err.name === 'NotReadableError') throw new Error(unreadable);
+    throw err;
+  }
+  return h.hex();
 }
 
 export async function downloadFile(root, entry) {
@@ -141,23 +171,26 @@ export async function downloadFile(root, entry) {
     backend:      settings.backend,
     wsFrameBytes: settings.wsFrameSizeKB * 1024,
     contentType:  resolveContentTypeOverride(),
+    verify:       !chunking.enabled || chunking.reassemble,
   };
   if (!chunking.enabled && transformBuffers(opts.tx.type) && entry.size > REQUEST_LIMIT_BYTES) {
     b.error = requestLimitError(entry.name, opts.tx.type, 'turn on chunking');
     return;
   }
-  var wsSession  = { ws: null, password: null, htmlB64Key: null };
+  var wsSession  = { ws: null, password: null, htmlB64Key: null, sha256: '' };
   var transfer   = addTransfer('download', entry.name, root);
   var onProgress = makeTransferProgress(transfer, entry.size);
   var saveName   = applyExtOverride(entry.name, settings.extOverride.ext, settings.extOverride.mode);
 
   var chunkBytes = chunking.enabled ? chunkBytesFromMB(chunking.chunkSize, 100) : entry.size;
-  var sink = !chunking.enabled ? wholeFileSink(saveName)
-    : chunking.reassemble && state.hasFileSystemAccess ? writableSink(saveName)
-    : separateChunksSink(saveName);
+  var sink = !chunking.enabled ? blobSink(saveName)
+    : !chunking.reassemble ? separateChunksSink(saveName)
+    : state.hasFileSystemAccess ? writableSink(saveName)
+    : blobSink(saveName);
   try {
     await sink.open();
     var ranges = chunkRanges(entry.size, chunkBytes);
+    var expected = opts.verify && ranges.length && opts.backend !== 'ws' ? await fetchServerHash(prefix, path) : '';
     for (var i = 0; i < ranges.length; i++) {
       var r = ranges[i];
       var decoded = 0;
@@ -173,7 +206,18 @@ export async function downloadFile(root, entry) {
       await stage.drain();
       await sink.endChunk(i);
     }
-    await sink.close();
+    var stored = await sink.close();
+    if (opts.verify && ranges.length) {
+      if (opts.backend === 'ws') expected = wsSession.sha256;
+      var got = await hashStored(stored, sink.unreadable);
+      if (expected && got !== expected) {
+        var changed = opts.backend !== 'ws' && await fetchServerHash(prefix, path).then(function(h) { return h !== expected; }, function() { return false; });
+        throw new Error((changed ? 'the file changed on the server during the download' : 'the data was altered in transit') +
+          ' (SHA-256 mismatch)' + (sink.keepsMismatch ? '; the saved file is corrupt' : '; nothing was saved'));
+      }
+    }
+    await sink.commit();
+    if (opts.verify) addToast(true, '"' + entry.name + '" downloaded' + (expected || !ranges.length ? ' (verified)' : ' (unverified)'));
   } catch(err) {
     sink.abort();
     if (!(err && err.name === 'AbortError')) b.error = 'Download failed: ' + (err.status ? 'HTTP ' + err.status : err);
@@ -210,18 +254,23 @@ function makeStager(flush) {
   };
 }
 
-// Where downloaded data goes, in blocks (write) and per chunk (endChunk). Each
-// produces exactly one file for an empty download, which needs no request.
-// Data kept for one file is held as Blob parts, which the browser may move
-// out of the page's memory.
-function wholeFileSink(saveName) {
+// Where downloaded data goes, in blocks (write) and per chunk (endChunk). close
+// returns what was stored as one file, for verification, and commit then
+// saves it. Each produces exactly one file for an empty download, which needs
+// no request. Data kept for one file is held as Blob parts, which the browser
+// may move out of the page's memory.
+function blobSink(saveName) {
   var parts = [];
+  var blob = null;
   return {
+    unreadable: 'the browser could not hold the whole file (its blob storage limit); turn off ' +
+      'reassembly to save separate chunks, or use a browser with File System Access',
     open:     async function() {},
     write:    async function(d) { parts.push(new Blob([d])); },
     endChunk: async function() {},
-    close:    async function() { triggerDownload(new Blob(parts), saveName); },
-    abort:    function() { parts = []; },
+    close:    async function() { blob = new Blob(parts); parts = []; return blob; },
+    commit:   async function() { triggerDownload(blob, saveName); },
+    abort:    function() { parts = []; blob = null; },
   };
 }
 
@@ -236,21 +285,26 @@ function separateChunksSink(saveName) {
       parts = [];
       written++;
     },
-    close:    async function() { if (!written) triggerDownload(new Uint8Array(0), saveName); },
+    close:    async function() { return null; },
+    commit:   async function() { if (!written) triggerDownload(new Uint8Array(0), saveName); },
     abort:    function() { parts = []; },
   };
 }
 
 function writableSink(saveName) {
+  var handle = null;
   var writable = null;
   return {
+    keepsMismatch: true,
+    unreadable: 'the saved file could not be read back for verification',
     open: async function() {
-      var handle = await window.showSaveFilePicker({ suggestedName: saveName });
+      handle = await window.showSaveFilePicker({ suggestedName: saveName });
       writable = await handle.createWritable();
     },
     write:    function(d) { return writable.write(d); },
     endChunk: async function() {},
-    close:    function() { return writable.close(); },
+    close:    async function() { await writable.close(); writable = null; return handle.getFile(); },
+    commit:   async function() {},
     abort:    function() { if (writable) writable.abort().catch(function() {}); },
   };
 }

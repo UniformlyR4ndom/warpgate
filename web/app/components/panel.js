@@ -11,6 +11,8 @@ const TIP = {
   bchunk: "Splits the benchmark transfer into multiple requests of this size, simulating a chunked transfer: {start,size} requests for download, chunked-upload sessions for upload (HTTP backend only; Websocket upload always sends the whole file as one connection's frames).",
   dlchunk: "Split a file download into multiple sequential requests instead of one, useful for very large files or flaky connections.",
   dlsize: "Size of each downloaded chunk, in megabytes (at most 250).",
+  reasmFSA: "Save one verified file, written to disk as chunks arrive (File System Access), instead of each chunk as a separate file.",
+  reasmBlob: "Save one verified file, collected in the browser's blob storage and saved at the end, instead of each chunk as a separate file. Very large files can exceed the browser's limit.",
   ulchunk: "Split a file upload into multiple sequential requests instead of one, useful for very large files or flaky connections. HTTP POST backend only.",
   ulsize: "Size of each uploaded chunk, in megabytes (at most 250).",
   auto: "Reload the current tab's list every second.",
@@ -89,9 +91,8 @@ export function Panel() {
               ${settings.chunking.enabled && html`<div>
                 <label title=${TIP.dlsize}>Chunk size (MB)</label>
                 <input type="number" ...${num(settings.chunking, 'chunkSize')} min="1" max="250" title=${TIP.dlsize} />
-                <label class="auto-label ${state.hasFileSystemAccess ? '' : 'disabled'}"
-                       title=${state.hasFileSystemAccess ? 'Write chunks directly to a single file on disk as they arrive (File System Access API) instead of downloading each chunk as a separate file.' : 'File System Access API is required for efficient reassembly'}>
-                  <input type="checkbox" ...${check(settings.chunking, 'reassemble')} disabled=${!state.hasFileSystemAccess} /> Reassemble chunks
+                <label class="auto-label" title=${state.hasFileSystemAccess ? TIP.reasmFSA : TIP.reasmBlob}>
+                  <input type="checkbox" ...${check(settings.chunking, 'reassemble')} /> Reassemble chunks
                 </label>
               </div>`}
             </div>`}

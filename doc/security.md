@@ -31,7 +31,8 @@ matching content signatures; they provide **neither confidentiality nor integrit
   file content (with `xor` and `aes-ctr`, flipping a bit of the payload flips the same bit of the
   file). wgcli detects this by comparing each transfer's SHA-256 with the server's; the hash itself
   is protected only with parameter encryption, which authenticates responses. The browser checks
-  uploads only (`reportUpload`), not downloads.
+  uploads (`reportUpload`) and single-file downloads; downloads saved as separate chunk files aren't
+  checked.
 - Without parameter encryption, the transform keys travel in the request next to the payload.
 
 Parameter encryption hides keys, paths and filenames from an inspecting proxy and authenticates

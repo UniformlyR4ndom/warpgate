@@ -582,9 +582,14 @@ Downloads decode piecewise as data arrives for id/xor/aes-ctr (`newStreamCodec`,
 carries the XOR key position / AES counter across the pieces of one request), and in one piece per
 request for pdf/html-b64. Decoded data is batched into 4 MiB blocks (`makeStager`) for the output
 (`wholeFileSink`, `separateChunksSink`, `writableSink`); data for one file is kept as Blob parts,
-which the browser can move out of the page's memory. Chunked downloads can be reassembled via File
-System Access
-(`showSaveFilePicker`, secure context only). `uploadFiles` uploads in parallel;
+which the browser can move out of the page's memory. Single-file downloads (chunking off, or
+"Reassemble chunks") are verified: the server's SHA-256 (`list` with `hash`; WS: handshake `hash`) is
+compared with a read-back hash of what was stored (`hashStored`, js-sha256 in 16 MiB slices), and only
+a match is saved (`commit`), with a green "verified" toast. Reading back also catches a Blob beyond
+the browser's blob storage limit (`NotReadableError`, measured in Chromium at ~2 GB in memory plus
+~10% of the profile drive). Separate chunk files aren't verified. Chunked downloads can be
+reassembled via File System Access
+(`showSaveFilePicker`, secure context only) or, without it, as Blob parts saved at the end. `uploadFiles` uploads in parallel;
 `uploadFileHTTPChunked` sends chunks strictly in sequence. A single request with pdf/html-b64 (`transformBuffers`) carries at most
 250 MB (`REQUEST_LIMIT_BYTES`, a little under the server's 256 MiB): larger files are refused before
 any request (`requestLimitError`), never switched to chunking silently. `encodeBytesForUpload` is the one encoder
