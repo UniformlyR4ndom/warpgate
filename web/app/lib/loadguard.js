@@ -8,8 +8,7 @@
 // "Context" is whatever makes a response valid: a directory root's current
 // path, or the clipboard's current database. bump() marks a context change;
 // start() claims the slot (or returns null to skip); fresh(token) reports
-// whether the context still matches; done(token) releases the slot. token()
-// reads the context without claiming the slot, for reads that may overlap.
+// whether the context still matches; done(token) releases the slot.
 export function makeRequestGuard() {
   var context = 0; // incremented on every context change
   var running = -1; // the context of the in-flight request, or -1 if none
@@ -20,7 +19,6 @@ export function makeRequestGuard() {
       running = context;
       return context;
     },
-    token() { return context; },
     fresh(token) { return token === context; },
     done(token) { if (running === token) running = -1; },
   };

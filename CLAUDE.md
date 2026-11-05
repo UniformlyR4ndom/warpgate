@@ -657,7 +657,8 @@ setting has a short `title` tooltip on its label and input that doesn't restate 
   are editable (`state.clipCaptionEdits`); both apply on Update.
 - **Thumbnails** are fetched once (`ensureAttachment`), decoded with the current transform and
   cached as object URLs in `state.clipImages`; a result is kept only if its `'loading'` entry
-  survived and `clipGuard`'s context is unchanged (`token()`), and ⚠ retries a failed load; `<img>` renders only once a `blob:` URL exists. Click
+  survived and it is still the id's latest load (`attachmentLoads`; a DB reset or prune
+  drops it, a clipboard reload doesn't), and ⚠ retries a failed load; `<img>` renders only once a `blob:` URL exists. Click
   opens the lightbox. ⬇ saves the cached image as `attachmentFileName` (caption, else title with
   `-<n>` for several images, else `note-<id>-<n>`, plus an extension from the mime type);
   `safeFileName` sanitizes, also for the note's `.txt` download.

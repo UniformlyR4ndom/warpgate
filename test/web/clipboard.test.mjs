@@ -8,7 +8,7 @@
 // The network boundary (api.js) and the store are stubbed via the loader; the
 // real transform/util/loadguard run.
 import assert from 'node:assert/strict';
-import { submitClip, editClip, resetClipDraft, resetClipSync, ensureAttachment, retryAttachment } from '../../web/app/lib/clipboard.js';
+import { submitClip, editClip, resetClipDraft, resetClipSync, ensureAttachment, retryAttachment, reloadClipboard } from '../../web/app/lib/clipboard.js';
 import { state, settings } from './stub-store.mjs';
 import { mock, ok, fail } from './stub-api.mjs';
 
@@ -195,6 +195,21 @@ await test('a failed attachment load can be retried', async () => {
   retryAttachment(7);
   await ensureAttachment({ id: 7, mime: 'image/png' });
   assert.ok(String(state.clipImages[7]).startsWith('blob:'), 'loaded after retry: ' + state.clipImages[7]);
+});
+
+await test('an attachment load survives a clipboard reload', async () => {
+  resetState();
+  var release;
+  var gate = new Promise(function(r) { release = r; });
+  mock.reset(function(url) {
+    if (url.includes('/api/clip/state')) return ok({ rev: 0 });
+    return gate.then(imageResponse);
+  });
+  var p = ensureAttachment({ id: 8, mime: 'image/png' });
+  await reloadClipboard();
+  release();
+  await p;
+  assert.ok(String(state.clipImages[8]).startsWith('blob:'), 'cached: ' + state.clipImages[8]);
 });
 
 if (failures) { console.error('\n' + failures + ' test(s) failed'); process.exit(1); }

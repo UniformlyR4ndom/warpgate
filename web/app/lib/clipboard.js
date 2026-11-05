@@ -10,6 +10,9 @@ import { makeRequestGuard } from './loadguard.js';
 // newer notes or rewind the cursor) and drops a poll whose database changed
 // under it (auth key / DB swap).
 const clipGuard = makeRequestGuard();
+// Attachment id -> its current load; a load whose entry was replaced or
+// removed meanwhile is discarded.
+const attachmentLoads = new Map();
 
 export async function copyClip(b64) {
   await navigator.clipboard.writeText(base64ToText(b64));
@@ -156,6 +159,7 @@ function pruneClipImages() {
 }
 
 function revokeClipImage(id) {
+  attachmentLoads.delete(String(id));
   var v = state.clipImages[id];
   if (isBlobURL(v)) {
     try { URL.revokeObjectURL(v); } catch(e) {}
@@ -173,7 +177,8 @@ export function isBlobURL(v) {
 // change the same id may name another image.
 export async function ensureAttachment(att) {
   if (state.clipImages[att.id] !== undefined) return;
-  var token = clipGuard.token();
+  var load = {};
+  attachmentLoads.set(String(att.id), load);
   state.clipImages[att.id] = 'loading';
   var result;
   try {
@@ -194,7 +199,9 @@ export async function ensureAttachment(att) {
   } catch(err) {
     result = 'error';
   }
-  if (clipGuard.fresh(token) && state.clipImages[att.id] === 'loading') {
+  var current = attachmentLoads.get(String(att.id)) === load;
+  if (current) attachmentLoads.delete(String(att.id));
+  if (current && state.clipImages[att.id] === 'loading') {
     state.clipImages[att.id] = result;
   } else if (isBlobURL(result)) {
     try { URL.revokeObjectURL(result); } catch(e) {}
