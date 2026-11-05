@@ -324,7 +324,7 @@ among them) can drop the connection on large frames. So the client picks `frameS
 
 **Upload protocol:**
 1. C→S `{"auth","filename","dir","transform","args","frameSize"}` (`dir` optional)
-2. S→C `{"ok":true}` or error
+2. S→C `{"ok":true,"frameSize":N}` (the resolved frame size; send no larger frames) or error
 3. C→S binary messages of ≤ `frameSize` (transport pieces, not separately decodable)
 4. C→S `{"done":true}`
 5. S→C `{"ok":true,"name":"<dir/filename>","sha256"}`, normal close
@@ -355,7 +355,7 @@ filesystem I/O.
 `{"start","size"}` (`wsChunkRequest`) or `{"done":true}`, each answered with binary messages of
 ≤ `frameSize` (no `chunkSize` ack: sizes match without a transform). Errors as above.
 
-**WS upload:** C→S `{"auth","frameSize"}`; S→C `{"ok":true}`; binary messages, hashed as they arrive
+**WS upload:** C→S `{"auth","frameSize"}`; S→C `{"ok":true,"frameSize"}`; binary messages, hashed as they arrive
 (the running total is checked against `simMaxTotalSize` on each); C→S `{"done":true}`; S→C
 `{"ok":true,"hash"}`, close.
 

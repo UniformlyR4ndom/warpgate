@@ -534,6 +534,27 @@ func TestWSUploadFrameSizeValidation(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(ulRoot, "x.bin")); err == nil {
 		t.Fatalf("file should not have been created after frameSize rejection")
 	}
+
+	for _, c := range []struct {
+		path      string
+		handshake any
+	}{
+		{"/api/files/ws/upload", wsUploadRequest{Filename: "x.bin", Transform: "id"}},
+		{"/api/sim/ws/upload", wsSimUploadRequest{}},
+	} {
+		conn, _, err := websocket.DefaultDialer.Dial(wsURL(ts, c.path), nil)
+		if err != nil {
+			t.Fatalf("dial: %v", err)
+		}
+		if err := conn.WriteJSON(c.handshake); err != nil {
+			t.Fatalf("writing request: %v", err)
+		}
+		var ack wsAck
+		if err := conn.ReadJSON(&ack); err != nil || !ack.OK || ack.FrameSize != 1024*1024 {
+			t.Fatalf("%s: unset frameSize ack = %+v, %v; want the ceiling", c.path, ack, err)
+		}
+		conn.Close()
+	}
 }
 
 func TestWSDownloadAuthFailure(t *testing.T) {
@@ -784,7 +805,7 @@ func TestWSUploadFrameLimit(t *testing.T) {
 				t.Fatalf("writing handshake: %v", err)
 			}
 			var ack wsAck
-			if err := conn.ReadJSON(&ack); err != nil || !ack.OK {
+			if err := conn.ReadJSON(&ack); err != nil || !ack.OK || ack.FrameSize != 1024 {
 				t.Fatalf("handshake ack: %+v, %v", ack, err)
 			}
 			if err := conn.WriteMessage(websocket.BinaryMessage, make([]byte, 1024)); err != nil {

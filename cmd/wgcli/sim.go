@@ -376,12 +376,13 @@ func simUploadWS(g *globalFlags, totalSize, frameSize int64) error {
 	}{g.authToken(), frameSize}); err != nil {
 		return fmt.Errorf("sending initial request: %w", err)
 	}
-	if _, err := readWSAck(conn, g); err != nil {
+	hs, err := readWSAck(conn, g)
+	if err != nil {
 		return err
 	}
 
 	start := time.Now()
-	if err := writeWSBinaryFrames(conn, bytes.NewReader(buf), frameSize); err != nil {
+	if err := writeWSBinaryFrames(conn, bytes.NewReader(buf), wsUploadFrameSize(frameSize, hs.FrameSize)); err != nil {
 		return err
 	}
 
@@ -407,7 +408,7 @@ func runSimUpload(args []string) error {
 	totalSize := sizeFlag(fs, "total-size", 0, "size in bytes of the synthetic buffer to upload (required)")
 	chunkSize := sizeFlag(fs, "chunk-size", 0, "chunk size in bytes for chunked upload via the continuation-key protocol (0 = one-shot; http backend only)")
 	backend := fs.String("backend", "http", "transport: http|ws")
-	frameSize := sizeFlag(fs, "frame-size", 0, "WS frame size in bytes (ws backend only; 0 = 1 MiB default)")
+	frameSize := sizeFlag(fs, "frame-size", 0, "WS frame size in bytes (ws backend only; 0 = 1 MiB or the server ceiling if lower)")
 	if err := parseFlags(fs, g, args); err != nil {
 		return err
 	}

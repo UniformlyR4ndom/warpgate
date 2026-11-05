@@ -44,6 +44,8 @@ type wsAck struct {
 	// bytes to read — needed because that length isn't always equal to the
 	// requested plaintext chunk size (e.g. pdf, html-b64).
 	ChunkSize int64 `json:"chunkSize,omitempty"`
+	// FrameSize is the frame size the server accepts, in upload handshake acks.
+	FrameSize int `json:"frameSize,omitempty"`
 }
 
 // upgradeWS upgrades the request and applies the pre-auth limits: control

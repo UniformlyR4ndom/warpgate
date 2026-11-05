@@ -266,10 +266,11 @@ func uploadWS(g *globalFlags, o xferOpts, localPath, dir, name string) (uploadRe
 	}{g.authToken(), name, dir, o.transformName, o.transformArgs, o.frameSize}); err != nil {
 		return fail(fmt.Errorf("sending initial request: %w", err))
 	}
-	if _, err := readWSAck(conn, g); err != nil {
+	hs, err := readWSAck(conn, g)
+	if err != nil {
 		return fail(err)
 	}
-	if err := writeWSBinaryFrames(conn, encoded, o.frameSize); err != nil {
+	if err := writeWSBinaryFrames(conn, encoded, wsUploadFrameSize(o.frameSize, hs.FrameSize)); err != nil {
 		return fail(err)
 	}
 	if err := writeWSJSON(conn, g, struct {
@@ -302,7 +303,7 @@ func runUpload(args []string) error {
 	iv := fs.String("iv", "", "hex IV (aes-ctr, 16 bytes); random if omitted")
 	filename := fs.String("filename", "", "attachment filename embedded in the PDF (pdf transform only)")
 	backend := fs.String("backend", "http", "transport: http|ws")
-	frameSize := sizeFlag(fs, "frame-size", 0, "WS frame size in bytes (ws backend only; 0 = 1 MiB default)")
+	frameSize := sizeFlag(fs, "frame-size", 0, "WS frame size in bytes (ws backend only; 0 = 1 MiB or the server ceiling if lower)")
 	chunkSize := sizeFlag(fs, "chunk-size", 0, "chunk size in bytes for chunked upload via the continuation-key protocol (0 = one-shot; http backend only)")
 	if err := parseFlags(fs, g, args); err != nil {
 		return err

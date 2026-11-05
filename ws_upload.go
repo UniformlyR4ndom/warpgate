@@ -97,7 +97,7 @@ func (s *Server) handleWSUpload(w http.ResponseWriter, r *http.Request) {
 	}
 	defer raw.Close()
 
-	if err := s.writeWSOK(conn, encrypted, wsAck{OK: true}); err != nil {
+	if err := s.writeWSOK(conn, encrypted, wsAck{OK: true, FrameSize: frameSize}); err != nil {
 		return
 	}
 

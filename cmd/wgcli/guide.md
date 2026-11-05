@@ -122,7 +122,7 @@ invalid values are reported.
 JSON: `{"url","tls","pinned","registered","uploads","ulFlat","auth":"ok"|"disabled","keyId",
 "transfer":{"transform","backend","paramCrypt","downloadChunkSize","uploadChunkSize","frameSize","chunkSource","frameSource"}}`.
 `registered` is true when this run registered the IP. `uploadChunkSize` 0 means one request per
-file; `frameSize` 0 means the server's maximum (download) or 1 MiB (upload); `chunkSource` and
+file; `frameSize` 0 means the server's maximum (download) or 1 MiB capped at it (upload); `chunkSource` and
 `frameSource` are `env` or `default`.
 
 ### wgcli list [-ul] [-r] [-hash] [path]
@@ -168,7 +168,7 @@ special files are skipped. Example: `upload -r -p -dir results/2026 ./report` gi
 is replaced without warning**, except that with several paths or `-r` identical files are skipped
 (`-force`: upload anyway). The server's SHA-256 of each stored file is compared with the local
 one. `-chunk-size` splits each file into sequential requests (HTTP only; default: one request);
-`-backend http|ws`; `-frame-size` (0 = 1 MiB). Transform flags: `-transform`, `-key`, `-iv`,
+`-backend http|ws`; `-frame-size` (0 = 1 MiB, or the server ceiling if lower). Transform flags: `-transform`, `-key`, `-iv`,
 `-filename`. JSON, one file: `{"path","name","bytes","sha256","verified","transform","seconds"}` (`name`:
 stored path); several: as for `download`, entries `{"path","name","bytes","sha256","verified"}`.
 

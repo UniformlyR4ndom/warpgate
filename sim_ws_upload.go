@@ -44,7 +44,7 @@ func (s *Server) handleSimWSUpload(w http.ResponseWriter, r *http.Request) {
 	}
 	conn.SetReadLimit(int64(frameSize))
 
-	if err := s.writeWSOK(conn, encrypted, wsAck{OK: true}); err != nil {
+	if err := s.writeWSOK(conn, encrypted, wsAck{OK: true, FrameSize: frameSize}); err != nil {
 		return
 	}
 

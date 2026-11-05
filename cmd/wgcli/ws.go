@@ -20,6 +20,7 @@ type wsAck struct {
 	Hash      string `json:"hash,omitempty"`
 	SHA256    string `json:"sha256,omitempty"`
 	ChunkSize int64  `json:"chunkSize,omitempty"`
+	FrameSize int64  `json:"frameSize,omitempty"`
 }
 
 // wsChunkRequest mirrors the server's wsChunkRequest (ws_download.go).
@@ -103,6 +104,15 @@ func readWSAck(conn *websocket.Conn, g *globalFlags) (wsAck, error) {
 		return ack, fmt.Errorf("server error: %s", ack.Error)
 	}
 	return ack, nil
+}
+
+// wsUploadFrameSize picks the upload frame size from the size requested in the
+// handshake (0 = unset) and the one the server acked.
+func wsUploadFrameSize(requested, acked int64) int64 {
+	if requested > 0 {
+		return acked
+	}
+	return min(acked, defaultWSFrameSize)
 }
 
 // writeWSBinaryFrames splits r into frameSize-sized binary WS frames (1 MiB
