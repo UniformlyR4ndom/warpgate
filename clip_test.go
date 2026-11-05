@@ -466,3 +466,33 @@ func TestHandleClipAttachmentCaption(t *testing.T) {
 		t.Fatalf("stored caption = %q", got)
 	}
 }
+
+// More notes than SQLite's bound-parameter limit (32766).
+func TestClipStateLargeSnapshot(t *testing.T) {
+	db, err := OpenDB(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	const n = 33000
+	if _, err := db.sql.Exec(`WITH RECURSIVE seq(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM seq WHERE i < ?)
+		INSERT INTO clipboard (timestamp, data, title, rev) SELECT 0, '', '', 1 FROM seq`, n); err != nil {
+		t.Fatal(err)
+	}
+	noteID := mustInsert(t, db, "with image", "")
+	if _, err := db.InsertAttachment(noteID, "image/png", "", []byte("png")); err != nil {
+		t.Fatal(err)
+	}
+
+	_, changed, _, _, err := db.ClipState(0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(changed) != n+1 {
+		t.Fatalf("len(changed) = %d, want %d", len(changed), n+1)
+	}
+	if last := changed[len(changed)-1]; last.ID != noteID || len(last.Attachments) != 1 {
+		t.Fatalf("last note = %+v", last)
+	}
+}

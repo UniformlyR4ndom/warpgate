@@ -6,7 +6,6 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -431,20 +430,15 @@ func queryNotes(tx *sql.Tx, since int64) ([]NoteMeta, error) {
 	if len(notes) == 0 {
 		return notes, nil
 	}
-	if err := attachMeta(tx, notes, index); err != nil {
+	if err := attachMeta(tx, since, notes, index); err != nil {
 		return nil, err
 	}
 	return notes, nil
 }
 
-func attachMeta(tx *sql.Tx, notes []NoteMeta, index map[int64]int) error {
-	ids := make([]any, len(notes))
-	for i, n := range notes {
-		ids[i] = n.ID
-	}
-	q := `SELECT note_id, id, mime, size, caption FROM clip_attachment WHERE note_id IN (?` +
-		strings.Repeat(`,?`, len(ids)-1) + `) ORDER BY id`
-	rows, err := tx.Query(q, ids...)
+func attachMeta(tx *sql.Tx, since int64, notes []NoteMeta, index map[int64]int) error {
+	rows, err := tx.Query(`SELECT a.note_id, a.id, a.mime, a.size, a.caption FROM clip_attachment a
+		JOIN clipboard c ON c.id = a.note_id WHERE c.rev > ? ORDER BY a.id`, since)
 	if err != nil {
 		return err
 	}
