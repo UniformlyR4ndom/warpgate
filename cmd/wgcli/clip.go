@@ -538,15 +538,15 @@ func writeReplyFile(g *globalFlags, name string, note clipNoteMeta) error {
 			return err
 		}
 	}
-	f, err := g.local.Create(name)
+	f, err := g.local.CreateOutput(name)
 	if err != nil {
 		return err
 	}
+	defer f.Discard()
 	if _, err := f.Write(data); err != nil {
-		_ = f.Close()
 		return err
 	}
-	return f.Close()
+	return f.Commit()
 }
 
 func runClipEdit(args []string) error {

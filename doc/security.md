@@ -114,5 +114,5 @@ Confidentiality is provided only by TLS, and only as far as no proxy intercepts 
 | `-no-auth` exposes all of the above to anyone who can reach the server | Explicit operator choice; combine with the IP firewall or mutual TLS. |
 | Hard links and bind mounts inside a served root are not detected | Only someone with local access to the host can create them, and the host is trusted. |
 | Clipboard images are accepted by their declared `image/*` type without checking their bytes | They are displayed via `<img>` from `blob:` URLs, never as documents, so the declared type doesn't let them execute. |
-| `wgcli` buffers responses without size or time limits; a killed download leaves its `.wgpart` temporary file behind | The client trusts the server it is pointed at; output paths are chosen by the user. |
+| `wgcli` buffers responses without size or time limits; a killed download leaves its `<name>.<random>.wgpart` temporary file behind | The client trusts the server it is pointed at; output paths are chosen by the user. |
 | The key in `sessionStorage` is readable by any script of the same origin; outbox state in IndexedDB is origin-wide | Serve each instance on its own origin. The path prefix is not an origin boundary. |

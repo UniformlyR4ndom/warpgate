@@ -148,16 +148,15 @@ func getClipAttachment(g *globalFlags, id int64, out, transformName string, args
 	if err != nil {
 		return fmt.Errorf("decoding attachment: %w", err)
 	}
-	f, err := g.local.Create(out)
+	f, err := g.local.CreateOutput(out)
 	if err != nil {
 		return err
 	}
-	defer f.Close()
+	defer f.Discard()
 	if _, err := io.Copy(f, reader); err != nil {
 		return err
 	}
-	// A write error can surface only at Close.
-	return f.Close()
+	return f.Commit()
 }
 
 func runClipAttach(args []string) error {

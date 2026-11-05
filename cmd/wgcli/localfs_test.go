@@ -42,21 +42,23 @@ func TestLocalFSConfine(t *testing.T) {
 	if err := l.MkdirAll("sub", 0o755); err != nil {
 		t.Fatal(err)
 	}
-	f, err := l.Create("sub/f")
+	f, err := l.CreateOutput("sub/f")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, err := f.WriteString("hi"); err != nil {
 		t.Fatal(err)
 	}
-	f.Close()
+	if err := f.Commit(); err != nil {
+		t.Fatal(err)
+	}
 	if b, err := l.ReadFile("sub/f"); err != nil || string(b) != "hi" {
 		t.Errorf("ReadFile = %q, %v", b, err)
 	}
 
 	// A path escaping the root is refused, directly or through a symlink.
-	if _, err := l.Create(filepath.Join(filepath.Dir(dir), "evil")); err == nil {
-		t.Error("Create outside the root succeeded")
+	if _, err := l.CreateOutput(filepath.Join(filepath.Dir(dir), "evil")); err == nil {
+		t.Error("CreateOutput outside the root succeeded")
 	}
 	outside := filepath.Join(t.TempDir(), "secret")
 	if err := os.WriteFile(outside, []byte("x"), 0o644); err != nil {
@@ -130,11 +132,62 @@ func TestLocalFSRequireRoot(t *testing.T) {
 	if err := l.MkdirAll("x", 0o755); !errors.Is(err, errNoRoot) {
 		t.Errorf("MkdirAll without a root = %v; want errNoRoot", err)
 	}
-	if _, err := l.Create(filepath.Join(dir, "x")); !errors.Is(err, errNoRoot) {
-		t.Errorf("Create without a root = %v; want errNoRoot", err)
+	if _, err := l.CreateOutput(filepath.Join(dir, "x")); !errors.Is(err, errNoRoot) {
+		t.Errorf("CreateOutput without a root = %v; want errNoRoot", err)
 	}
 
 	if _, err := openLocalFS(dir, true); err == nil {
 		t.Error("openLocalFS with both a root and -no-root succeeded; want an error")
+	}
+}
+
+func TestCreateOutput(t *testing.T) {
+	dir := t.TempDir()
+	l, err := openLocalFS(dir, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	write := func(name, content string) {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	read := func(name string) string {
+		b, err := os.ReadFile(filepath.Join(dir, name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(b)
+	}
+	write("out", "old")
+	write("out.wgpart", "unrelated")
+
+	a, err := l.CreateOutput("out")
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := l.CreateOutput("out")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = a.WriteString("from a")
+	_, _ = b.WriteString("from b")
+	b.Discard()
+	if got := read("out"); got != "old" {
+		t.Errorf("after Discard, out = %q", got)
+	}
+	if err := a.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	a.Discard()
+	if got := read("out"); got != "from a" {
+		t.Errorf("after Commit, out = %q", got)
+	}
+	if got := read("out.wgpart"); got != "unrelated" {
+		t.Errorf("unrelated out.wgpart = %q", got)
+	}
+	entries, _ := os.ReadDir(dir)
+	if len(entries) != 2 {
+		t.Errorf("left %d files behind, want out and out.wgpart only", len(entries))
 	}
 }

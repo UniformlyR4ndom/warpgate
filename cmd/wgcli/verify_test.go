@@ -54,8 +54,8 @@ func TestDownloadVerify(t *testing.T) {
 	if got, err := os.ReadFile(out); err != nil || string(got) != string(content) {
 		t.Errorf("after the altered download, %s = %q, %v", out, got, err)
 	}
-	if _, err := os.Stat(out + ".wgpart"); !os.IsNotExist(err) {
-		t.Errorf("altered download left %s.wgpart behind", out)
+	if entries, _ := os.ReadDir(filepath.Dir(out)); len(entries) != 1 {
+		t.Errorf("altered download left a temporary file behind: %d entries", len(entries))
 	}
 	if err := runDownload([]string{"-url", alteringServer(t, content, true).URL, "-o", out, "-no-verify", "f.bin"}); err != nil {
 		t.Fatalf("-no-verify: %v", err)

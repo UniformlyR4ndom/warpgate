@@ -82,30 +82,32 @@ func checkDownload(g *globalFlags, prefix, remotePath, want, got string, recheck
 	return false, fmt.Errorf("verification failed: data altered in transit (SHA-256 %s, server has %s)", got, want)
 }
 
-// downloadFile downloads remotePath to out via out+".wgpart", so out
-// appears only complete and verified. entry, if known, saves a lookup.
+// downloadFile downloads remotePath to out, which appears only complete and
+// verified. entry, if known, saves a lookup.
 func downloadFile(g *globalFlags, o xferOpts, remotePath, out string, entry *listEntry) (fileResult, error) {
-	tmp := out + ".wgpart"
+	f, err := g.local.CreateOutput(out)
+	if err != nil {
+		return fileResult{}, err
+	}
+	defer f.Discard()
 	var size int64
 	var sum string
 	var verified bool
-	var err error
 	if o.ws {
-		size, sum, verified, err = downloadWS(g, o, remotePath, tmp)
+		size, sum, verified, err = downloadWS(g, o, remotePath, f)
 	} else {
-		size, sum, verified, err = downloadHTTP(g, o, remotePath, tmp, entry)
+		size, sum, verified, err = downloadHTTP(g, o, remotePath, f, entry)
 	}
 	if err == nil {
-		err = g.local.Rename(tmp, out)
+		err = f.Commit()
 	}
 	if err != nil {
-		_ = g.local.Remove(tmp)
 		return fileResult{}, err
 	}
 	return fileResult{Path: remotePath, Out: out, Bytes: size, SHA256: sum, Verified: verified}, nil
 }
 
-func downloadHTTP(g *globalFlags, o xferOpts, remotePath, dst string, entry *listEntry) (size int64, sum string, verified bool, err error) {
+func downloadHTTP(g *globalFlags, o xferOpts, remotePath string, f io.Writer, entry *listEntry) (size int64, sum string, verified bool, err error) {
 	if entry == nil || (o.verify && entry.SHA256 == "") {
 		e, err := fetchFileEntry(g, o.prefix, remotePath, o.verify)
 		if err != nil {
@@ -115,11 +117,6 @@ func downloadHTTP(g *globalFlags, o xferOpts, remotePath, dst string, entry *lis
 	}
 	size = *entry.Size
 
-	f, err := g.local.Create(dst)
-	if err != nil {
-		return 0, "", false, err
-	}
-	defer f.Close()
 	h := sha256.New()
 	w := io.MultiWriter(f, h)
 
@@ -146,10 +143,6 @@ func downloadHTTP(g *globalFlags, o xferOpts, remotePath, dst string, entry *lis
 		transferred += reqSize
 	}
 
-	// A write error can surface only at Close.
-	if err := f.Close(); err != nil {
-		return 0, "", false, err
-	}
 	sum = hex.EncodeToString(h.Sum(nil))
 	if o.verify {
 		if verified, err = checkDownload(g, o.prefix, remotePath, entry.SHA256, sum, true); err != nil {
@@ -159,7 +152,7 @@ func downloadHTTP(g *globalFlags, o xferOpts, remotePath, dst string, entry *lis
 	return size, sum, verified, nil
 }
 
-func downloadWS(g *globalFlags, o xferOpts, remotePath, dst string) (size int64, sum string, verified bool, err error) {
+func downloadWS(g *globalFlags, o xferOpts, remotePath string, f io.Writer) (size int64, sum string, verified bool, err error) {
 	conn, err := g.dialWS(o.prefix + "ws/download")
 	if err != nil {
 		return 0, "", false, err
@@ -183,11 +176,6 @@ func downloadWS(g *globalFlags, o xferOpts, remotePath, dst string) (size int64,
 	}
 	size = ack.Size
 
-	f, err := g.local.Create(dst)
-	if err != nil {
-		return 0, "", false, err
-	}
-	defer f.Close()
 	h := sha256.New()
 	w := io.MultiWriter(f, h)
 
@@ -238,9 +226,6 @@ func downloadWS(g *globalFlags, o xferOpts, remotePath, dst string) (size int64,
 	}
 
 	_ = writeWSJSON(conn, g, wsChunkRequest{Done: true})
-	if err := f.Close(); err != nil {
-		return 0, "", false, err
-	}
 	sum = hex.EncodeToString(h.Sum(nil))
 	if o.verify {
 		// The server hashed the file it served from, so a mismatch can only

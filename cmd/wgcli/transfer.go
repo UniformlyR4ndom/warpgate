@@ -259,7 +259,6 @@ func downloadMany(g *globalFlags, o xferOpts, args []string, outDir string, recu
 					continue
 				}
 				if local, err := hashLocal(g.local, it.local); err == nil && local == remote.SHA256 {
-					_ = g.local.Remove(it.local + ".wgpart") // left by a killed earlier run
 					sum.skip(it.remote, "unchanged")
 					continue
 				}

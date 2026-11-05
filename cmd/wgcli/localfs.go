@@ -1,6 +1,8 @@
 package main
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -71,18 +73,74 @@ func (l *localFS) outside(p string) error {
 	return fmt.Errorf("%s is outside the working directory (WGCLI_ROOT %s)", p, l.absRoot)
 }
 
-func (l *localFS) Create(name string) (*os.File, error) {
+func (l *localFS) openFile(name string, flag int, perm os.FileMode) (*os.File, error) {
 	if l.require {
 		return nil, errNoRoot
 	}
 	if l.root == nil {
-		return os.Create(name)
+		return os.OpenFile(name, flag, perm)
 	}
 	r, err := l.rel(name)
 	if err != nil {
 		return nil, err
 	}
-	return l.root.Create(r)
+	return l.root.OpenFile(r, flag, perm)
+}
+
+// outputFile is written under a temporary name and replaces its target only
+// on Commit, so the target holds either its previous content or the complete
+// new one.
+type outputFile struct {
+	*os.File
+	l        *localFS
+	tmp, out string
+	done     bool
+}
+
+// CreateOutput creates a new, uniquely named sibling of out to write into;
+// it never opens an existing file.
+func (l *localFS) CreateOutput(out string) (*outputFile, error) {
+	for {
+		var b [8]byte
+		if _, err := rand.Read(b[:]); err != nil {
+			return nil, err
+		}
+		tmp := out + "." + hex.EncodeToString(b[:]) + ".wgpart"
+		f, err := l.openFile(tmp, os.O_RDWR|os.O_CREATE|os.O_EXCL, 0o666)
+		if errors.Is(err, fs.ErrExist) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		return &outputFile{File: f, l: l, tmp: tmp, out: out}, nil
+	}
+}
+
+// Commit closes the file and renames it over the target.
+func (o *outputFile) Commit() error {
+	if o.done {
+		return errors.New("output file already committed or discarded")
+	}
+	o.done = true
+	err := o.Close()
+	if err == nil {
+		err = o.l.Rename(o.tmp, o.out)
+	}
+	if err != nil {
+		_ = o.l.Remove(o.tmp)
+	}
+	return err
+}
+
+// Discard closes and deletes the file unless it was committed.
+func (o *outputFile) Discard() {
+	if o.done {
+		return
+	}
+	o.done = true
+	o.Close()
+	_ = o.l.Remove(o.tmp)
 }
 
 func (l *localFS) Open(name string) (*os.File, error) {

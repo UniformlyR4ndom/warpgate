@@ -140,7 +140,7 @@ directories are created. One file: `-o` is the local file, or a directory (exist
 `/`) to put it in under its own name. Several paths or `-r` (directories with their contents): `-o` is a directory, and
 each path lands in it under its own name (`download -r -o ./c docs logs` gives `./c/docs/…` and
 `./c/logs/…`). Files
-are written as `<name>.wgpart` and renamed only when complete and verified (SHA-256 against the
+are written as `<name>.<random>.wgpart` and renamed only when complete and verified (SHA-256 against the
 server's; `-no-verify` skips that), so a failed download never leaves a partial or altered file.
 When two paths would land on the same local file (e.g. `a/x` and `b/x`), both fail instead of one
 silently overwriting the other; `-parents` keeps each file's full remote directory path under `-o`
