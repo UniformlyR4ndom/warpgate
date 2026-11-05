@@ -212,5 +212,25 @@ await test('an attachment load survives a clipboard reload', async () => {
   assert.ok(String(state.clipImages[8]).startsWith('blob:'), 'cached: ' + state.clipImages[8]);
 });
 
+await test('switching notes during an update keeps the submitted draft', async () => {
+  var note1 = { id: 1, title: '', data: btoa('one'), attachments: [{ id: 11, caption: 'keep this caption' }] };
+  var note2 = { id: 2, title: '', data: btoa('two'), attachments: [{ id: 21, caption: '' }] };
+  resetState({ clipItems: [note1, note2] });
+  editClip(note1);
+  var release;
+  var gate = new Promise(function(r) { release = r; });
+  mock.reset(function(url) {
+    if (url.endsWith('/api/clip/edit')) return gate.then(function() { return ok({}); });
+    if (url.includes('/api/clip/state')) return ok({ rev: 0 });
+    return ok({});
+  });
+  var p = submitClip();
+  editClip(note2);
+  release();
+  await p;
+  assert.equal(mock.count('/api/clip/attachment/edit'), 0, 'no caption is rewritten');
+  assert.equal(state.clipError, null);
+});
+
 if (failures) { console.error('\n' + failures + ' test(s) failed'); process.exit(1); }
 console.log('\nall clipboard submit tests passed');

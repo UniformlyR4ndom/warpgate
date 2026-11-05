@@ -281,6 +281,9 @@ export async function submitClip() {
   state.clipSubmitting = true;
   state.clipError = null;
   var editing = state.clipEditId !== null;
+  var removedIds = state.clipRemovedAttachments.slice();
+  var captionEdits = Object.assign({}, state.clipCaptionEdits);
+  var editedItem = editing && state.clipItems.find(function(it) { return it.id === state.clipEditId; });
   try {
     var noteId = state.clipEditId;
     if (editing) {
@@ -293,15 +296,14 @@ export async function submitClip() {
       // instead of creating a duplicate.
       state.clipEditId = noteId;
     }
-    for (var r = 0; r < state.clipRemovedAttachments.length; r++) {
-      await apiDeleteAttachment(state.clipRemovedAttachments[r]);
+    for (var r = 0; r < removedIds.length; r++) {
+      await apiDeleteAttachment(removedIds[r]);
     }
-    var editedItem = editing && state.clipItems.find(function(it) { return it.id === noteId; });
     var editedAtts = (editedItem && editedItem.attachments) || [];
     for (var c = 0; c < editedAtts.length; c++) {
       var att = editedAtts[c];
-      var caption = sanitizeClipTitle(state.clipCaptionEdits[att.id] || '');
-      if (!isAttachmentRemoved(att.id) && caption !== (att.caption || '')) {
+      var caption = sanitizeClipTitle(captionEdits[att.id] || '');
+      if (removedIds.indexOf(att.id) === -1 && caption !== (att.caption || '')) {
         await apiEditAttachmentCaption(att.id, caption);
       }
     }
@@ -321,6 +323,7 @@ export async function submitClip() {
 }
 
 export function editClip(item) {
+  if (state.clipSubmitting) return;
   resetClipDraft();
   state.clipText   = base64ToText(item.data);
   state.clipTitle  = item.title;

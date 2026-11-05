@@ -89,12 +89,12 @@ function Thumb(props) {
         ${loaded && !props.editing && html`
           <button class="clip-thumb-dl" onClick=${() => downloadAttachment(item, att)} title="Download image">${DOWNLOAD_ICON}</button>`}
         ${props.editing && html`
-          <button class="clip-thumb-del" onClick=${() => toggleRemoveAttachment(att.id)}
+          <button class="clip-thumb-del" onClick=${() => toggleRemoveAttachment(att.id)} disabled=${state.clipSubmitting}
                   title=${removed ? 'Keep image (will no longer be removed on Update)' : 'Remove image on Update'}>${removed ? '↺' : '✕'}</button>`}
       </div>
       ${props.editing ? html`
         <input type="text" class="clip-caption-input" ...${text(state.clipCaptionEdits, att.id)} maxlength="200"
-               placeholder="Caption" disabled=${removed}
+               placeholder="Caption" disabled=${removed || state.clipSubmitting}
                title=${state.clipCaptionEdits[att.id] || 'Caption (optional); also used as the download file name'}
                onKeyDown=${captionKey} />` : att.caption && html`
         <div class="clip-caption" title=${att.caption}><${Segments} segs=${props.segs} /></div>`}
@@ -129,7 +129,8 @@ function Note(props) {
         <button class="clip-action" onClick=${() => copyClip(item.data)} title="Copy to clipboard">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
         </button>
-        <button class="clip-action" onClick=${() => props.onEdit(item)} title="Edit note">
+        <button class="clip-action" onClick=${() => props.onEdit(item)} title="Edit note"
+                disabled=${state.clipSubmitting}>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"></path></svg>
         </button>
       </div>
