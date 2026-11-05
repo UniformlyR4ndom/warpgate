@@ -228,8 +228,8 @@ an explicit `"ul-done":false` starts chunking.
 Every completing response (one-shot, final chunk, completed replay, WS final ack) carries
 `sha256`: `publishUpload` hashes the temp file right before the rename; the session keeps it for
 replays. wgcli compares it with the local file and fails on a mismatch. The browser UI compares it
-too (`reportUpload`, needs `crypto.subtle`): a match raises a green "uploaded and verified" toast, a
-mismatch a red one.
+too (`reportUpload`, with a js-sha256 hash taken while reading the file, so also over plain HTTP): a
+match raises a green "uploaded (verified)" toast, a mismatch a red one.
 
 `ul_session.go` (`sessionStore`, generic over the session payload) and `upload.go`
 (`uploadFirstChunk`, `uploadContinuation`) implement it:
@@ -592,8 +592,12 @@ reassembled via File System Access
 (`showSaveFilePicker`, secure context only) or, without it, as Blob parts saved at the end. `uploadFiles` uploads in parallel;
 `uploadFileHTTPChunked` sends chunks strictly in sequence. A single request with pdf/html-b64 (`transformBuffers`) carries at most
 250 MB (`REQUEST_LIMIT_BYTES`, a little under the server's 256 MiB): larger files are refused before
-any request (`requestLimitError`), never switched to chunking silently. `encodeBytesForUpload` is the one encoder
-for files, chunks and clipboard images. Listings update only on change (`updateIfChanged`), keeping
+any request (`requestLimitError`), never switched to chunking silently. Uploads never read a file whole:
+`encodeRange` reads it in 8 MiB slices (`readSlices`, hashing each) and builds one request's file
+part, with id the `File` slice itself, with xor/aes-ctr encoded Blob parts, with pdf/html-b64 the
+range encoded whole (`encodeBytesForUpload`, also used for clipboard images). WS uploads with a
+streaming transform feed one codec for the whole connection, block by block (a multiple of the frame
+size). Listings update only on change (`updateIfChanged`), keeping
 scroll position under auto-refresh.
 
 **File browser** (`components/browser.js`, `lib/download.js`): one per root in `state.browse`

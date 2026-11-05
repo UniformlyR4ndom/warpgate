@@ -92,7 +92,7 @@ export function wsWaitForDrain(ws, maxBuffered) {
 }
 
 export async function sendWSBinary(ws, buffer, frameSize, onProgress) {
-  var bytes = new Uint8Array(buffer);
+  var bytes = buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer);
   for (var offset = 0; offset < bytes.length; offset += frameSize) {
     await wsWaitForDrain(ws, frameSize);
     if (ws.readyState !== WebSocket.OPEN) throw new Error('WebSocket closed during send');

@@ -11,6 +11,7 @@ const require = createRequire(import.meta.url);
 
 globalThis.window = { crypto: globalThis.crypto };
 globalThis.aesjs = require(join(here, '..', '..', 'web', 'aes.js'));
+globalThis.sha256 = require(join(here, '..', '..', 'web', 'sha256.js'));
 
 register('./loader.mjs', import.meta.url);
 
@@ -20,4 +21,5 @@ await import('./ws.test.mjs');
 await import('./chunksize.test.mjs');
 await import('./streamcodec.test.mjs');
 await import('./clipboard.test.mjs');
+await import('./upload.test.mjs');
 await import('./outbox.test.mjs');

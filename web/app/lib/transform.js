@@ -164,11 +164,6 @@ export async function encodeBytesForUpload(tx, bytes, filename) {
   return { data: new Blob([bytes]), args: {} };
 }
 
-export async function encodeForUpload(tx, file) {
-  var buf = await file.arrayBuffer();
-  return encodeBytesForUpload(tx, new Uint8Array(buf), uploadFilename(tx, file));
-}
-
 // Name the file is embedded under inside an uploaded PDF.
 export function uploadFilename(tx, file) {
   return tx.pdf.filename || file.name;

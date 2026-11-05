@@ -27,3 +27,9 @@ export async function apiFetch(url, opts) {
 
 export function ok(json) { return { ok: true, status: 200, _json: json || {} }; }
 export function fail(status) { return { ok: false, status: status }; }
+
+export async function apiWSOpen(path) { return mock.wsOpen(path); }
+export function noteWSAck(ack) { return ack; }
+export function sendWSControl(ws, obj) { ws.send(JSON.stringify(obj)); }
+export function wsDecryptFor() { return null; }
+export function closeWSSession() {}
