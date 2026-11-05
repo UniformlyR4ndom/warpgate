@@ -8,7 +8,7 @@
 // The network boundary (api.js) and the store are stubbed via the loader; the
 // real transform/util/loadguard run.
 import assert from 'node:assert/strict';
-import { submitClip } from '../../web/app/lib/clipboard.js';
+import { submitClip, editClip, resetClipDraft, resetClipSync } from '../../web/app/lib/clipboard.js';
 import { state, settings } from './stub-store.mjs';
 import { mock, ok, fail } from './stub-api.mjs';
 
@@ -104,6 +104,51 @@ await test('a retry whose attachment was already deleted succeeds (404 tolerated
   await submitClip();
   assert.equal(state.clipError, null, 'a 404 on an already-deleted attachment is not an error');
   assert.equal(state.clipEditId, null, 'the edit completes');
+});
+
+function trackRevokes() {
+  var revoked = [];
+  var orig = URL.revokeObjectURL;
+  URL.revokeObjectURL = function(u) { revoked.push(u); };
+  return { revoked: revoked, restore: function() { URL.revokeObjectURL = orig; } };
+}
+
+await test('cancel discards the whole draft and revokes pending images', async () => {
+  resetState({ clipText: 't', clipTitle: 'x', clipEditId: 3, clipRemovedAttachments: [1],
+    clipCaptionEdits: { 1: 'c' }, pendingAttachments: [pendingImage('a'), pendingImage('b')] });
+  var r = trackRevokes();
+  try { resetClipDraft(); } finally { r.restore(); }
+  assert.deepEqual(r.revoked, ['mock://a', 'mock://b']);
+  assert.equal(state.pendingAttachments.length, 0);
+  assert.equal(state.clipEditId, null);
+  assert.equal(state.clipText + state.clipTitle, '');
+  assert.deepEqual(state.clipRemovedAttachments, []);
+  assert.deepEqual(state.clipCaptionEdits, {});
+});
+
+await test('editing another note does not carry over pending images', async () => {
+  resetState({ clipEditId: 1, pendingAttachments: [pendingImage('a')] });
+  var r = trackRevokes();
+  try {
+    editClip({ id: 2, title: 'two', data: btoa('second'), attachments: [{ id: 9, caption: 'cap' }] });
+  } finally { r.restore(); }
+  assert.deepEqual(r.revoked, ['mock://a']);
+  assert.equal(state.pendingAttachments.length, 0);
+  assert.equal(state.clipEditId, 2);
+  assert.equal(state.clipText, 'second');
+  assert.deepEqual(state.clipCaptionEdits, { 9: 'cap' });
+});
+
+await test('a database change drops an edit draft but keeps a new-note draft', async () => {
+  resetState({ clipEditId: 4, clipText: 'edit' });
+  resetClipSync();
+  assert.equal(state.clipEditId, null);
+  assert.equal(state.clipText, '');
+
+  resetState({ clipText: 'new note', pendingAttachments: [pendingImage('a')] });
+  resetClipSync();
+  assert.equal(state.clipText, 'new note');
+  assert.equal(state.pendingAttachments.length, 1);
 });
 
 if (failures) { console.error('\n' + failures + ' test(s) failed'); process.exit(1); }

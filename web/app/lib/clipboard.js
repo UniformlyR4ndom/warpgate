@@ -93,6 +93,8 @@ export function resetClipSync() {
   state.clipCursor = 0;
   state.clipItems  = [];
   Object.keys(state.clipImages).forEach(revokeClipImage);
+  // An edit refers to note and attachment ids of the previous database.
+  if (state.clipEditId !== null) resetClipDraft();
 }
 
 export async function pollClipboard() {
@@ -289,7 +291,7 @@ export async function submitClip() {
       await uploadAttachment(noteId, state.pendingAttachments[0]);
       removePendingAttachment(0);
     }
-    cancelEdit();
+    resetClipDraft();
     await reloadClipboard();
   } catch(err) {
     state.clipError = (editing ? 'Failed to update note (' : 'Failed to submit note (') + err.message + ')';
@@ -299,16 +301,17 @@ export async function submitClip() {
 }
 
 export function editClip(item) {
+  resetClipDraft();
   state.clipText   = base64ToText(item.data);
   state.clipTitle  = item.title;
   state.clipEditId = item.id;
-  state.clipRemovedAttachments = [];
   var captions = {};
   (item.attachments || []).forEach(function(a) { captions[a.id] = a.caption || ''; });
   state.clipCaptionEdits = captions;
 }
 
-export function cancelEdit() {
+export function resetClipDraft() {
+  while (state.pendingAttachments.length) removePendingAttachment(0);
   state.clipText   = '';
   state.clipTitle  = '';
   state.clipEditId = null;

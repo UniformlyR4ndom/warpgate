@@ -2,7 +2,7 @@ import { html, text, sel } from './html.js';
 import { useRef, useEffect } from '../vendor/hooks.module.js';
 import { state, settings } from '../store.js';
 import { formatTS, saveURL } from '../lib/util.js';
-import { visibleClipItems, submitClip, canSubmitClip, cancelEdit, editClip, deleteClip, copyClip, downloadClip,
+import { visibleClipItems, submitClip, canSubmitClip, resetClipDraft, editClip, deleteClip, copyClip, downloadClip,
          handleClipPaste, removePendingAttachment, ensureAttachment, openAttachment, isBlobURL,
          isAttachmentRemoved, toggleRemoveAttachment, downloadAttachment } from '../lib/clipboard.js';
 
@@ -21,11 +21,11 @@ function Segments(props) {
 function Composer(props) {
   var editing = state.clipEditId !== null;
   function onTitleKey(e) {
-    if (e.key === 'Escape') { e.preventDefault(); cancelEdit(); }
+    if (e.key === 'Escape') { e.preventDefault(); resetClipDraft(); }
     if (e.key === 'Enter')  { e.preventDefault(); props.textareaRef.current.focus(); }
   }
   function onTextKey(e) {
-    if (e.key === 'Escape') { e.preventDefault(); cancelEdit(); }
+    if (e.key === 'Escape') { e.preventDefault(); resetClipDraft(); }
   }
   return html`
     <div class="clip-compose">
@@ -50,7 +50,7 @@ function Composer(props) {
         </div>`}
       <div class="clip-btn-row">
         <button class="choose-btn" onClick=${submitClip} disabled=${!canSubmitClip() || state.clipSubmitting}>${editing ? 'Update' : 'Submit'}</button>
-        ${editing && html`<button class="choose-btn" onClick=${cancelEdit} disabled=${state.clipSubmitting}>Cancel</button>`}
+        ${editing && html`<button class="choose-btn" onClick=${resetClipDraft} disabled=${state.clipSubmitting}>Cancel</button>`}
       </div>
     </div>`;
 }
