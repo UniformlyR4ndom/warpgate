@@ -67,7 +67,7 @@ transport (HTTP POST or WebSocket) and frame/chunk size a proxy lets through.
 Go module `warpgate` (Go 1.25.0) at the repo root; the frontend in `web/` is embedded into the
 binary. `cmd/wgcli` is a CLI client for the HTTP/WS API, for testing and scripted/agent use (flags
 fall back to `WGCLI_*` env vars and may follow positional arguments; transform keys default to
-random). `wgcli guide` prints its usage guide (`cmd/wgcli/guide.md`, embedded; `guide_test.go`
+random; one HTTP transport per invocation, honoring `HTTP(S)_PROXY` like the WS dialer). `wgcli guide` prints its usage guide (`cmd/wgcli/guide.md`, embedded; `guide_test.go`
 fails when a command or flag is missing from it or the guide names a flag that doesn't exist).
 `internal/transform`, `internal/authhash`, `internal/paramcrypt`, `internal/connecttoken`,
 `internal/bytesize` (sizes with `K`/`M` suffix) and `internal/filename` (name rules) are shared by

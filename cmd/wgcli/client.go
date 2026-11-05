@@ -41,6 +41,9 @@ type globalFlags struct {
 	token      *connecttoken.Token
 	tlsConfig  *tls.Config
 
+	transportOnce sync.Once
+	httpTransport *http.Transport
+
 	fromEnv map[string]bool // flags whose value came from the environment
 
 	keyResolved bool
@@ -382,10 +385,22 @@ func (g *globalFlags) httpClient() *http.Client {
 	return g.client(true)
 }
 
+// transport is shared by every HTTP request of the invocation, so chunk loops
+// and polls reuse their connection. It honors HTTP(S)_PROXY and NO_PROXY.
+func (g *globalFlags) transport() *http.Transport {
+	g.transportOnce.Do(func() {
+		t := http.DefaultTransport.(*http.Transport).Clone()
+		t.TLSClientConfig = g.tlsConfig
+		t.ForceAttemptHTTP2 = false
+		g.httpTransport = t
+	})
+	return g.httpTransport
+}
+
 // client refuses to follow redirects: Go would resend X-Auth to any host, and
 // the server never redirects API requests.
 func (g *globalFlags) client(autoRegister bool) *http.Client {
-	t := blankPageTransport{base: &http.Transport{TLSClientConfig: g.tlsConfig}}
+	t := blankPageTransport{base: g.transport()}
 	if autoRegister {
 		t.g = g
 	}

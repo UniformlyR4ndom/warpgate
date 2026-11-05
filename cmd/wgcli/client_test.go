@@ -2,6 +2,8 @@ package main
 
 import (
 	"flag"
+	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"slices"
@@ -169,5 +171,36 @@ func TestTransferEnvDefaults(t *testing.T) {
 	g = addGlobalFlags(fs)
 	if err := parseFlags(fs, g, nil); err != nil {
 		t.Errorf("command without the flags: %v", err)
+	}
+}
+
+func TestHTTPClientReusesConnections(t *testing.T) {
+	var conns atomic.Int32
+	ts := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	ts.Config.ConnState = func(_ net.Conn, s http.ConnState) {
+		if s == http.StateNew {
+			conns.Add(1)
+		}
+	}
+	ts.Start()
+	defer ts.Close()
+
+	g := &globalFlags{url: ts.URL}
+	for i := 0; i < 5; i++ {
+		resp, err := g.httpClient().Get(ts.URL)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, _ = io.Copy(io.Discard, resp.Body)
+		resp.Body.Close()
+		resp, err = g.client(false).Get(ts.URL)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, _ = io.Copy(io.Discard, resp.Body)
+		resp.Body.Close()
+	}
+	if n := conns.Load(); n != 1 {
+		t.Errorf("10 sequential requests opened %d connections, want 1", n)
 	}
 }

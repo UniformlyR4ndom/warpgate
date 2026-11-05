@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"io"
+	"net/http"
 	"net/url"
 	"strings"
 
@@ -53,7 +54,7 @@ func (g *globalFlags) dialWS(path string) (*websocket.Conn, error) {
 	if err != nil {
 		return nil, err
 	}
-	dialer := websocket.Dialer{TLSClientConfig: g.tlsConfig}
+	dialer := websocket.Dialer{TLSClientConfig: g.tlsConfig, Proxy: http.ProxyFromEnvironment}
 	conn, resp, err := dialer.Dial(target, nil)
 	if err != nil && resp != nil && isBlankPage(resp) {
 		if regErr := g.autoRegister(); regErr != nil {

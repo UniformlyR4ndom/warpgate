@@ -125,7 +125,7 @@ func (g *globalFlags) register(target string) (needed bool, err error) {
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	client := &http.Client{
-		Transport:     &http.Transport{TLSClientConfig: g.tlsConfig},
+		Transport:     g.transport(),
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 	}
 	resp, err := client.Do(req)

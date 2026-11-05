@@ -59,6 +59,8 @@ Global flags, accepted by every command; each falls back to its environment vari
   `../` path can't read or clobber files elsewhere by accident. It guards against mistakes; it is no
   sandbox. `-cert`/`-cert-key` are read wherever they are.
 - Booleans in variables: `1`/`true`/`0`/`false`. A flag beats its variable.
+- HTTP and WS requests go through the proxy in `HTTPS_PROXY`/`HTTP_PROXY` (minus `NO_PROXY`), as
+  for most CLI tools; localhost is never proxied.
 
 Keep the settings in a file and source it before each command (shell state often doesn't persist
 between commands):
