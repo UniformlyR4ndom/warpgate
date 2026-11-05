@@ -102,8 +102,8 @@ export async function sendWSBinary(ws, buffer, frameSize, onProgress) {
   }
 }
 
-export async function receiveWSBinary(ws, totalLen, onProgress) {
-  var out = new Uint8Array(totalLen);
+// Hands each binary message of totalLen bytes in all to onFrame, in order.
+export async function receiveWSFrames(ws, totalLen, onFrame) {
   var received = 0;
   while (received < totalLen) {
     var raw = await wsNextMessage(ws);
@@ -112,36 +112,32 @@ export async function receiveWSBinary(ws, totalLen, onProgress) {
       throw new Error(msg.error || 'download failed');
     }
     var piece = new Uint8Array(raw);
+    received += piece.byteLength;
+    await onFrame(piece);
+  }
+}
+
+export async function receiveWSBinary(ws, totalLen, onProgress) {
+  var out = new Uint8Array(totalLen);
+  var received = 0;
+  await receiveWSFrames(ws, totalLen, function(piece) {
     out.set(piece, received);
     received += piece.byteLength;
     if (onProgress) onProgress(piece.byteLength);
-  }
+  });
   return out;
 }
 
-// Reads a fetch Response body incrementally so callers can report progress
-// as bytes arrive.
-export async function readBodyWithProgress(response, onProgress) {
+// Hands a fetch Response body to onPiece as it arrives.
+export async function readBodyPieces(response, onPiece) {
   if (!response.body || !response.body.getReader) {
-    var buf = await response.arrayBuffer();
-    if (onProgress) onProgress(buf.byteLength);
-    return buf;
+    await onPiece(new Uint8Array(await response.arrayBuffer()));
+    return;
   }
   var reader = response.body.getReader();
-  var chunks = [];
-  var received = 0;
   while (true) {
     var result = await reader.read();
     if (result.done) break;
-    chunks.push(result.value);
-    received += result.value.byteLength;
-    if (onProgress) onProgress(result.value.byteLength);
+    await onPiece(result.value);
   }
-  var out = new Uint8Array(received);
-  var offset = 0;
-  for (var i = 0; i < chunks.length; i++) {
-    out.set(chunks[i], offset);
-    offset += chunks[i].byteLength;
-  }
-  return out.buffer;
 }

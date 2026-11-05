@@ -4,9 +4,9 @@
 import { API_BASE, state, settings } from '../store.js';
 import { jsonHeaders, encodeBody, decodeResponseJSON, assertOk,
          paramEncryptEnabled, apiFetch, apiWSOpen, noteWSAck, sendWSControl, wsDecryptFor, closeWSSession } from './api.js';
-import { wsNextJSON, receiveWSBinary, readBodyWithProgress } from './ws.js';
+import { wsNextJSON, receiveWSFrames, readBodyPieces } from './ws.js';
 import { decrypt, buildTransformArgs, perRequestSecrets, resolveContentTypeOverride, snapshotTransform,
-         transformBuffers, requestLimitError } from './transform.js';
+         transformBuffers, requestLimitError, newStreamCodec } from './transform.js';
 import { authKeyHash } from '../store.js';
 import { padIndex, triggerDownload, applyExtOverride, chunkBytesFromMB, chunkRanges, REQUEST_LIMIT_BYTES } from './util.js';
 import { addTransfer, removeTransfer, makeTransferProgress, updateIfChanged } from './transfers.js';
@@ -70,12 +70,23 @@ export function navigateTo(root, index) {
   reload(root);
 }
 
-async function fetchChunk(opts, wsSession, prefix, path, start, size, onProgress) {
-  if (opts.backend === 'ws') { return fetchChunkWS(opts, wsSession, prefix, path, start, size, onProgress); }
-  return fetchChunkHTTP(opts, prefix, path, start, size, onProgress);
+// Fetches one range and hands its decoded bytes to emit: piecewise as they
+// arrive for streaming transforms, in one piece for the others.
+async function fetchChunk(opts, wsSession, prefix, path, start, size, onProgress, emit) {
+  var codec = newStreamCodec(opts.tx);
+  var whole = [];
+  function onRaw(piece) {
+    onProgress(piece.byteLength);
+    if (codec) return emit(codec(piece));
+    whole.push(piece);
+  }
+  var secrets = opts.backend === 'ws'
+    ? await fetchChunkWS(opts, wsSession, prefix, path, start, size, onRaw)
+    : await fetchChunkHTTP(opts, prefix, path, start, size, onRaw);
+  if (!codec) await emit(await decrypt(opts.tx, await new Blob(whole).arrayBuffer(), secrets.password, secrets.htmlB64Key));
 }
 
-async function fetchChunkHTTP(opts, prefix, path, start, size, onProgress) {
+async function fetchChunkHTTP(opts, prefix, path, start, size, onRaw) {
   var s = perRequestSecrets(opts.tx);
   var body = {
     path: path, start: start, size: size,
@@ -88,11 +99,11 @@ async function fetchChunkHTTP(opts, prefix, path, start, size, onProgress) {
     body:    encodeBody(body),
   }, true);
   assertOk(res);
-  var buffer = await readBodyWithProgress(res, onProgress);
-  return decrypt(opts.tx, buffer, s.password, s.htmlB64Key);
+  await readBodyPieces(res, onRaw);
+  return s;
 }
 
-async function fetchChunkWS(opts, wsSession, prefix, path, start, size, onProgress) {
+async function fetchChunkWS(opts, wsSession, prefix, path, start, size, onRaw) {
   if (!wsSession.ws) {
     var s = perRequestSecrets(opts.tx);
     var ws = await apiWSOpen(prefix + 'ws/download');
@@ -113,8 +124,8 @@ async function fetchChunkWS(opts, wsSession, prefix, path, start, size, onProgre
   sendWSControl(wsSession.ws, { start: start, size: size });
   var chunkAck = await wsNextJSON(wsSession.ws, wsDecryptFor(wsSession.encrypted));
   if (!chunkAck.ok) throw new Error(chunkAck.error || 'download failed');
-  var received = await receiveWSBinary(wsSession.ws, chunkAck.chunkSize, onProgress);
-  return decrypt(opts.tx, received.buffer, wsSession.password, wsSession.htmlB64Key);
+  await receiveWSFrames(wsSession.ws, chunkAck.chunkSize, onRaw);
+  return { password: wsSession.password, htmlB64Key: wsSession.htmlB64Key };
 }
 
 export async function downloadFile(root, entry) {
@@ -149,12 +160,18 @@ export async function downloadFile(root, entry) {
     var ranges = chunkRanges(entry.size, chunkBytes);
     for (var i = 0; i < ranges.length; i++) {
       var r = ranges[i];
-      var data = await fetchChunk(opts, wsSession, prefix, path, r.start, r.size, onProgress);
-      if (data.byteLength !== r.size) {
-        throw new Error('chunk at offset ' + r.start + ' decoded to ' + data.byteLength + ' bytes instead of ' + r.size +
+      var decoded = 0;
+      var stage = makeStager(sink.write);
+      await fetchChunk(opts, wsSession, prefix, path, r.start, r.size, onProgress, function(bytes) {
+        decoded += bytes.byteLength;
+        return stage.push(bytes);
+      });
+      if (decoded !== r.size) {
+        throw new Error('chunk at offset ' + r.start + ' decoded to ' + decoded + ' bytes instead of ' + r.size +
           ': the file changed on the server; download again');
       }
-      await sink.write(data, i);
+      await stage.drain();
+      await sink.endChunk(i);
     }
     await sink.close();
   } catch(err) {
@@ -166,25 +183,61 @@ export async function downloadFile(root, entry) {
   }
 }
 
-// Where downloaded chunks go. Each produces exactly one file for an empty
-// download, which needs no request at all.
-function wholeFileSink(saveName) {
-  var data = new Uint8Array(0);
+var STAGE_BYTES = 4 * 1024 * 1024;
+
+// Collects decoded pieces, which can be a few KB each, into blocks of
+// STAGE_BYTES for flush.
+function makeStager(flush) {
+  var buf = new Uint8Array(STAGE_BYTES);
+  var n = 0;
   return {
-    open:  async function() {},
-    write: async function(d) { data = d; },
-    close: async function() { triggerDownload(data, saveName); },
-    abort: function() {},
+    push: async function(bytes) {
+      for (var off = 0; off < bytes.length;) {
+        var k = Math.min(bytes.length - off, buf.length - n);
+        buf.set(bytes.subarray(off, off + k), n);
+        n += k;
+        off += k;
+        if (n === buf.length) await this.drain();
+      }
+    },
+    drain: async function() {
+      if (!n) return;
+      var full = buf.subarray(0, n);
+      buf = new Uint8Array(STAGE_BYTES);
+      n = 0;
+      await flush(full);
+    },
+  };
+}
+
+// Where downloaded data goes, in blocks (write) and per chunk (endChunk). Each
+// produces exactly one file for an empty download, which needs no request.
+// Data kept for one file is held as Blob parts, which the browser may move
+// out of the page's memory.
+function wholeFileSink(saveName) {
+  var parts = [];
+  return {
+    open:     async function() {},
+    write:    async function(d) { parts.push(new Blob([d])); },
+    endChunk: async function() {},
+    close:    async function() { triggerDownload(new Blob(parts), saveName); },
+    abort:    function() { parts = []; },
   };
 }
 
 function separateChunksSink(saveName) {
+  var parts = [];
   var written = 0;
   return {
-    open:  async function() {},
-    write: async function(d, i) { triggerDownload(d, saveName + '.' + padIndex(i)); written++; },
-    close: async function() { if (!written) triggerDownload(new Uint8Array(0), saveName); },
-    abort: function() {},
+    open:     async function() {},
+    write:    async function(d) { parts.push(new Blob([d])); },
+    endChunk: async function(i) {
+      triggerDownload(new Blob(parts), saveName + '.' + padIndex(i));
+      parts = [];
+      written++;
+    },
+    close:    async function() { if (!written) triggerDownload(new Uint8Array(0), saveName); },
+    abort:    function() { parts = []; },
   };
 }
 
@@ -195,8 +248,9 @@ function writableSink(saveName) {
       var handle = await window.showSaveFilePicker({ suggestedName: saveName });
       writable = await handle.createWritable();
     },
-    write: function(d) { return writable.write(d); },
-    close: function() { return writable.close(); },
-    abort: function() { if (writable) writable.abort().catch(function() {}); },
+    write:    function(d) { return writable.write(d); },
+    endChunk: async function() {},
+    close:    function() { return writable.close(); },
+    abort:    function() { if (writable) writable.abort().catch(function() {}); },
   };
 }

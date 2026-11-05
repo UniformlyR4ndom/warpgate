@@ -578,7 +578,12 @@ render.
 (`{ws, password, htmlB64Key, encrypted}`) keeps one WS connection per file, closed by
 `closeWSSession`. WS reads (`wsNextMessage`, `lib/ws.js`) take from a per-socket queue attached in
 `wsOpen`, so nothing arriving between reads is lost; a read fails after 5 min without a message.
-Chunked downloads can be reassembled via File System Access
+Downloads decode piecewise as data arrives for id/xor/aes-ctr (`newStreamCodec`, `transform.js`;
+carries the XOR key position / AES counter across the pieces of one request), and in one piece per
+request for pdf/html-b64. Decoded data is batched into 4 MiB blocks (`makeStager`) for the output
+(`wholeFileSink`, `separateChunksSink`, `writableSink`); data for one file is kept as Blob parts,
+which the browser can move out of the page's memory. Chunked downloads can be reassembled via File
+System Access
 (`showSaveFilePicker`, secure context only). `uploadFiles` uploads in parallel;
 `uploadFileHTTPChunked` sends chunks strictly in sequence. A single request with pdf/html-b64 (`transformBuffers`) carries at most
 250 MB (`REQUEST_LIMIT_BYTES`, a little under the server's 256 MiB): larger files are refused before

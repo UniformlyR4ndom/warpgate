@@ -53,6 +53,29 @@ export function snapshotTransform() {
   };
 }
 
+// A codec that applies tx piecewise to the consecutive pieces of one request's
+// data, carrying the XOR key position or the AES counter across pieces; null
+// for transforms coded as whole documents. The streaming transforms are
+// symmetric, so it serves both directions.
+export function newStreamCodec(tx) {
+  if (tx.type === 'id') return function(bytes) { return bytes; };
+  if (tx.type === 'xor') {
+    var key = hexToBytes(tx.xor.key);
+    var pos = 0;
+    return function(bytes) {
+      var out = new Uint8Array(bytes.length);
+      for (var i = 0; i < bytes.length; i++) out[i] = bytes[i] ^ key[(pos + i) % key.length];
+      pos = (pos + bytes.length) % key.length;
+      return out;
+    };
+  }
+  if (tx.type === 'aes-ctr') {
+    var ctr = new aesjs.ModeOfOperation.ctr(Array.from(hexToBytes(tx.aesCtr.key)), new aesjs.Counter(Array.from(hexToBytes(tx.aesCtr.iv))));
+    return function(bytes) { return ctr.encrypt(bytes); };
+  }
+  return null;
+}
+
 // Reverses tx's transform on a downloaded chunk's ArrayBuffer.
 export function decrypt(tx, buffer, password, htmlB64Key) {
   if (tx.type === 'xor')      { return Promise.resolve(applyXOR(new Uint8Array(buffer), hexToBytes(tx.xor.key))); }
