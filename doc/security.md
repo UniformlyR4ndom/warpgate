@@ -30,8 +30,8 @@ matching content signatures; they provide **neither confidentiality nor integrit
 - No transform authenticates the payload: a modified payload may decode without error into modified
   file content (with `xor` and `aes-ctr`, flipping a bit of the payload flips the same bit of the
   file). wgcli detects this by comparing each transfer's SHA-256 with the server's; the hash itself
-  is protected only with parameter encryption, which authenticates responses. The browser doesn't
-  check yet.
+  is protected only with parameter encryption, which authenticates responses. The browser checks
+  uploads only (`reportUpload`), not downloads.
 - Without parameter encryption, the transform keys travel in the request next to the payload.
 
 Parameter encryption hides keys, paths and filenames from an inspecting proxy and authenticates
@@ -114,5 +114,5 @@ Confidentiality is provided only by TLS, and only as far as no proxy intercepts 
 | `-no-auth` exposes all of the above to anyone who can reach the server | Explicit operator choice; combine with the IP firewall or mutual TLS. |
 | Hard links and bind mounts inside a served root are not detected | Only someone with local access to the host can create them, and the host is trusted. |
 | Clipboard images are accepted by their declared `image/*` type without checking their bytes | They are displayed via `<img>` from `blob:` URLs, never as documents, so the declared type doesn't let them execute. |
-| `wgcli` buffers responses without size or time limits and may leave a partial output file when a transfer fails | The client trusts the server it is pointed at; output paths are chosen by the user. |
+| `wgcli` buffers responses without size or time limits; a killed download leaves its `.wgpart` temporary file behind | The client trusts the server it is pointed at; output paths are chosen by the user. |
 | The key in `sessionStorage` is readable by any script of the same origin; outbox state in IndexedDB is origin-wide | Serve each instance on its own origin. The path prefix is not an origin boundary. |

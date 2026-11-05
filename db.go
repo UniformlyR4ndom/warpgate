@@ -231,7 +231,7 @@ func (db *DB) UpdateClipboard(id int64, title *string, data []byte) (bool, error
 		return false, err
 	}
 	if n == 0 {
-		return false, nil // no row changed; leave the rev bump, it's harmless
+		return false, nil
 	}
 	return true, tx.Commit()
 }
