@@ -1,28 +1,59 @@
-// Framework-agnostic WebSocket + streaming helpers. See the original app.js
-// comments for the rationale behind the drain-pacing and multi-frame logic.
+// A pending read fails after this long without a message: a connection that a
+// middlebox silently drops never delivers a close event.
+var READ_IDLE_MS = 5 * 60 * 1000;
+
+var readers = new WeakMap();
+
+// Listeners are attached once per socket, so a message or close arriving
+// between two reads is kept for the next one, however long the caller takes.
+function readerFor(ws) {
+  var r = readers.get(ws);
+  if (r) return r;
+  r = { queue: [], waiters: [], failure: null, fail: fail };
+  function fail(err) {
+    if (r.failure) return;
+    r.failure = err;
+    r.waiters.splice(0).forEach(function(w) { w.reject(err); });
+  }
+  ws.addEventListener('message', function(ev) {
+    var w = r.waiters.shift();
+    if (w) w.resolve(ev.data); else r.queue.push(ev.data);
+  });
+  ws.addEventListener('close', function(ev) {
+    fail(new Error('WebSocket closed unexpectedly' + (ev.reason ? ': ' + ev.reason : '')));
+  });
+  ws.addEventListener('error', function() { fail(new Error('WebSocket error')); });
+  if (ws.readyState === WebSocket.CLOSING || ws.readyState === WebSocket.CLOSED) {
+    fail(new Error('WebSocket closed unexpectedly'));
+  }
+  readers.set(ws, r);
+  return r;
+}
 
 export function wsOpen(url) {
   return new Promise(function(resolve, reject) {
     var ws = new WebSocket(url);
     ws.binaryType = 'arraybuffer';
+    readerFor(ws);
     ws.addEventListener('open', function() { resolve(ws); }, { once: true });
     ws.addEventListener('error', function() { reject(new Error('WebSocket connection failed')); }, { once: true });
   });
 }
 
 export function wsNextMessage(ws) {
+  var r = readerFor(ws);
+  if (r.queue.length) return Promise.resolve(r.queue.shift());
+  if (r.failure) return Promise.reject(r.failure);
   return new Promise(function(resolve, reject) {
-    function cleanup() {
-      ws.removeEventListener('message', onMessage);
-      ws.removeEventListener('close', onClose);
-      ws.removeEventListener('error', onError);
-    }
-    function onMessage(ev) { cleanup(); resolve(ev.data); }
-    function onClose(ev)   { cleanup(); reject(new Error('WebSocket closed unexpectedly' + (ev.reason ? ': ' + ev.reason : ''))); }
-    function onError()     { cleanup(); reject(new Error('WebSocket error')); }
-    ws.addEventListener('message', onMessage);
-    ws.addEventListener('close', onClose);
-    ws.addEventListener('error', onError);
+    var timer = setTimeout(function() {
+      r.fail(new Error('WebSocket timed out waiting for the server'));
+      ws.close();
+    }, READ_IDLE_MS);
+    var waiter = {
+      resolve: function(v) { clearTimeout(timer); resolve(v); },
+      reject:  function(e) { clearTimeout(timer); reject(e); },
+    };
+    r.waiters.push(waiter);
   });
 }
 

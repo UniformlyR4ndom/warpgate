@@ -4,9 +4,12 @@
 // and its caller never reached cleanup. It must now reject on close/error or a
 // non-OPEN state and dispose its timer/listeners.
 import assert from 'node:assert/strict';
-import { wsWaitForDrain, sendWSBinary } from '../../web/app/lib/ws.js';
+import { mock } from 'node:test';
+import { wsWaitForDrain, sendWSBinary, wsOpen, wsNextMessage } from '../../web/app/lib/ws.js';
 
-globalThis.WebSocket = { CONNECTING: 0, OPEN: 1, CLOSING: 2, CLOSED: 3 };
+var lastSocket = null;
+globalThis.WebSocket = function() { lastSocket = fakeWS(0); lastSocket.readyState = WebSocket.CONNECTING; return lastSocket; };
+Object.assign(globalThis.WebSocket, { CONNECTING: 0, OPEN: 1, CLOSING: 2, CLOSED: 3 });
 
 function fakeWS(bufferedAmount) {
   var listeners = { close: [], error: [], message: [] };
@@ -14,10 +17,11 @@ function fakeWS(bufferedAmount) {
     readyState: WebSocket.OPEN,
     bufferedAmount: bufferedAmount || 0,
     sent: [],
-    addEventListener(t, fn) { listeners[t].push(fn); },
-    removeEventListener(t, fn) { listeners[t] = listeners[t].filter(function(f) { return f !== fn; }); },
+    addEventListener(t, fn) { (listeners[t] = listeners[t] || []).push(fn); },
+    removeEventListener(t, fn) { listeners[t] = (listeners[t] || []).filter(function(f) { return f !== fn; }); },
     send(data) { this.sent.push(data); this.bufferedAmount += data.byteLength; },
-    emit(t, ev) { listeners[t].slice().forEach(function(fn) { fn(ev || {}); }); },
+    close() { this.closed = true; },
+    emit(t, ev) { (listeners[t] || []).slice().forEach(function(fn) { fn(ev || {}); }); },
     listenerCount() { return listeners.close.length + listeners.error.length + listeners.message.length; },
   };
 }
@@ -80,5 +84,69 @@ await test('sendWSBinary sends every frame on a healthy connection', async () =>
   assert.equal(ws.listenerCount(), 0);
 });
 
+async function openFake() {
+  var p = wsOpen('ws://test');
+  lastSocket.readyState = WebSocket.OPEN;
+  lastSocket.emit('open');
+  return p;
+}
+
+function closeFake(ws) { ws.readyState = WebSocket.CLOSED; ws.emit('close', {}); }
+
+await test('a message arriving before the read is kept for it', async () => {
+  var ws = await openFake();
+  ws.emit('message', { data: 'a' });
+  ws.emit('message', { data: 'b' });
+  assert.equal(await wsNextMessage(ws), 'a');
+  assert.equal(await wsNextMessage(ws), 'b');
+});
+
+await test('a close between two reads rejects the next read', async () => {
+  var ws = await openFake();
+  ws.emit('message', { data: 'ack' });
+  assert.equal(await wsNextMessage(ws), 'ack');
+  closeFake(ws);
+  await assert.rejects(wsNextMessage(ws), /closed unexpectedly/);
+});
+
+await test('messages received before a close are still delivered', async () => {
+  var ws = await openFake();
+  ws.emit('message', { data: 'error ack' });
+  closeFake(ws);
+  assert.equal(await wsNextMessage(ws), 'error ack');
+  await assert.rejects(wsNextMessage(ws), /closed unexpectedly/);
+});
+
+await test('a pending read rejects on close', async () => {
+  var ws = await openFake();
+  var p = wsNextMessage(ws);
+  closeFake(ws);
+  await assert.rejects(p, /closed unexpectedly/);
+});
+
+await test('a socket already closed when first read rejects', async () => {
+  var ws = fakeWS(0);
+  ws.readyState = WebSocket.CLOSED;
+  await assert.rejects(wsNextMessage(ws), /closed unexpectedly/);
+});
+
+await test('a read with no message times out and closes the socket', async () => {
+  mock.timers.enable({ apis: ['setTimeout'] });
+  try {
+    var ws = await openFake();
+    var p = wsNextMessage(ws);
+    mock.timers.tick(5 * 60 * 1000 - 1);
+    ws.emit('message', { data: 'just in time' });
+    assert.equal(await p, 'just in time');
+    p = wsNextMessage(ws);
+    mock.timers.tick(5 * 60 * 1000);
+    await assert.rejects(p, /timed out/);
+    assert.ok(ws.closed, 'socket closed on timeout');
+    await assert.rejects(wsNextMessage(ws), /timed out/);
+  } finally {
+    mock.timers.reset();
+  }
+});
+
 if (failures) { console.error('\n' + failures + ' test(s) failed'); process.exit(1); }
-console.log('\nall ws drain tests passed');
+console.log('\nall ws tests passed');

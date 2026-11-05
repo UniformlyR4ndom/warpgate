@@ -559,7 +559,9 @@ render.
 
 **Transfers.** `fetchChunk` picks HTTP or WS by `settings.backend`; a `wsSession`
 (`{ws, password, htmlB64Key, encrypted}`) keeps one WS connection per file, closed by
-`closeWSSession`. Chunked downloads can be reassembled via File System Access
+`closeWSSession`. WS reads (`wsNextMessage`, `lib/ws.js`) take from a per-socket queue attached in
+`wsOpen`, so nothing arriving between reads is lost; a read fails after 5 min without a message.
+Chunked downloads can be reassembled via File System Access
 (`showSaveFilePicker`, secure context only). `uploadFiles` uploads in parallel;
 `uploadFileHTTPChunked` sends chunks strictly in sequence. `encodeBytesForUpload` is the one encoder
 for files, chunks and clipboard images. Listings update only on change (`updateIfChanged`), keeping
