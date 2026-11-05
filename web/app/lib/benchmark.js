@@ -5,7 +5,7 @@ import { API_BASE, state, settings, authKeyHash } from '../store.js';
 import { authHeaders, jsonHeaders, encodeBody, decodeResponseJSON, assertOk,
          paramEncryptEnabled, apiFetch, apiWSOpen, noteWSAck, sendWSControl, wsDecryptFor, closeWSSession } from './api.js';
 import { wsNextJSON, sendWSBinary, receiveWSBinary } from './ws.js';
-import { sha256Hex } from './util.js';
+import { sha256Hex, chunkRanges } from './util.js';
 
 const NO_SUBTLE = 'SHA-256 hashing requires a secure context (HTTPS or localhost)';
 
@@ -121,9 +121,8 @@ export async function runDownloadBenchmark() {
 
     var received = new Uint8Array(totalSize);
     startTime = performance.now();
-    for (var offset = 0; offset < totalSize; offset += chunkSize) {
-      var size  = Math.min(chunkSize, totalSize - offset);
-      received.set(await fetchSimChunk(wsSession, totalSize, offset, size, onProgress), offset);
+    for (var r of chunkRanges(totalSize, chunkSize)) {
+      received.set(await fetchSimChunk(wsSession, totalSize, r.start, r.size, onProgress), r.start);
     }
     var durationMs = performance.now() - startTime;
 

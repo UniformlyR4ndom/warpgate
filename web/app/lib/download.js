@@ -7,7 +7,7 @@ import { jsonHeaders, encodeBody, decodeResponseJSON, assertOk,
 import { wsNextJSON, receiveWSBinary, readBodyWithProgress } from './ws.js';
 import { decrypt, buildTransformArgs, perRequestSecrets, resolveContentTypeOverride, snapshotTransform } from './transform.js';
 import { authKeyHash } from '../store.js';
-import { padIndex, triggerDownload, applyExtOverride, chunkBytesFromMB } from './util.js';
+import { padIndex, triggerDownload, applyExtOverride, chunkBytesFromMB, chunkRanges } from './util.js';
 import { addTransfer, removeTransfer, makeTransferProgress, updateIfChanged } from './transfers.js';
 import { makeRequestGuard } from './loadguard.js';
 
@@ -135,58 +135,57 @@ export async function downloadFile(root, entry) {
   var onProgress = makeTransferProgress(transfer, entry.size);
   var saveName   = applyExtOverride(entry.name, settings.extOverride.ext, settings.extOverride.mode);
 
-  if (chunking.enabled) {
-    var chunkBytes = chunkBytesFromMB(chunking.chunkSize, 100);
-    var numChunks  = Math.ceil(entry.size / chunkBytes);
-
-    if (chunking.reassemble && state.hasFileSystemAccess) {
-      try {
-        var fileHandle = await window.showSaveFilePicker({ suggestedName: saveName });
-        var writable   = await fileHandle.createWritable();
-        try {
-          for (var i = 0; i < numChunks; i++) {
-            var start = i * chunkBytes;
-            var size  = Math.min(chunkBytes, entry.size - start);
-            var data  = await fetchChunk(opts, wsSession, prefix, path, start, size, onProgress);
-            await writable.write(data);
-          }
-          await writable.close();
-        } catch(err) {
-          writable.abort();
-          throw err;
-        }
-      } catch(err) {
-        if (err && err.name !== 'AbortError') { b.error = 'Download failed: ' + err; }
-      } finally {
-        closeWSSession(wsSession);
-        removeTransfer(transfer);
-      }
-    } else {
-      (async function() {
-        try {
-          for (var i = 0; i < numChunks; i++) {
-            var start = i * chunkBytes;
-            var size  = Math.min(chunkBytes, entry.size - start);
-            var data  = await fetchChunk(opts, wsSession, prefix, path, start, size, onProgress);
-            triggerDownload(data, saveName + '.' + padIndex(i));
-          }
-        } catch(err) {
-          b.error = 'Chunk failed: ' + (err.status ? 'HTTP ' + err.status : err);
-        } finally {
-          closeWSSession(wsSession);
-          removeTransfer(transfer);
-        }
-      })();
+  var chunkBytes = chunking.enabled ? chunkBytesFromMB(chunking.chunkSize, 100) : entry.size;
+  var sink = !chunking.enabled ? wholeFileSink(saveName)
+    : chunking.reassemble && state.hasFileSystemAccess ? writableSink(saveName)
+    : separateChunksSink(saveName);
+  try {
+    await sink.open();
+    var ranges = chunkRanges(entry.size, chunkBytes);
+    for (var i = 0; i < ranges.length; i++) {
+      await sink.write(await fetchChunk(opts, wsSession, prefix, path, ranges[i].start, ranges[i].size, onProgress), i);
     }
-  } else {
-    try {
-      var data = await fetchChunk(opts, wsSession, prefix, path, 0, entry.size, onProgress);
-      triggerDownload(data, saveName);
-    } catch(err) {
-      b.error = 'Download failed: ' + (err.status ? 'HTTP ' + err.status : err);
-    } finally {
-      closeWSSession(wsSession);
-      removeTransfer(transfer);
-    }
+    await sink.close();
+  } catch(err) {
+    sink.abort();
+    if (!(err && err.name === 'AbortError')) b.error = 'Download failed: ' + (err.status ? 'HTTP ' + err.status : err);
+  } finally {
+    closeWSSession(wsSession);
+    removeTransfer(transfer);
   }
+}
+
+// Where downloaded chunks go. Each produces exactly one file for an empty
+// download, which needs no request at all.
+function wholeFileSink(saveName) {
+  var data = new Uint8Array(0);
+  return {
+    open:  async function() {},
+    write: async function(d) { data = d; },
+    close: async function() { triggerDownload(data, saveName); },
+    abort: function() {},
+  };
+}
+
+function separateChunksSink(saveName) {
+  var written = 0;
+  return {
+    open:  async function() {},
+    write: async function(d, i) { triggerDownload(d, saveName + '.' + padIndex(i)); written++; },
+    close: async function() { if (!written) triggerDownload(new Uint8Array(0), saveName); },
+    abort: function() {},
+  };
+}
+
+function writableSink(saveName) {
+  var writable = null;
+  return {
+    open: async function() {
+      var handle = await window.showSaveFilePicker({ suggestedName: saveName });
+      writable = await handle.createWritable();
+    },
+    write: function(d) { return writable.write(d); },
+    close: function() { return writable.close(); },
+    abort: function() { if (writable) writable.abort().catch(function() {}); },
+  };
 }

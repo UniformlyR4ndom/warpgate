@@ -75,6 +75,15 @@ export function chunkBytesFromMB(mb, defaultMB) {
   return bytes >= 1 ? bytes : defaultMB * 1024 * 1024;
 }
 
+// The {start, size} requests covering [0, total): none for an empty file.
+export function chunkRanges(total, chunkBytes) {
+  var ranges = [];
+  for (var start = 0; start < total; start += chunkBytes) {
+    ranges.push({ start: start, size: Math.min(chunkBytes, total - start) });
+  }
+  return ranges;
+}
+
 export function formatSize(bytes) {
   if (bytes === null || bytes === undefined) return '';
   if (bytes < 1024)               return bytes.toFixed(2) + ' B';
