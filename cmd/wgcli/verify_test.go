@@ -84,3 +84,23 @@ func TestDownloadDepthLimit(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 }
+
+func TestDownloadShortChunkFails(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/files/list":
+			_, _ = w.Write([]byte(`[{"name":"f.bin","type":"f","size":10}]`))
+		case "/api/files/download":
+			_, _ = w.Write([]byte("x")) // the file shrank to one byte
+		}
+	}))
+	t.Cleanup(ts.Close)
+	out := filepath.Join(t.TempDir(), "out.bin")
+	err := runDownload([]string{"-url", ts.URL, "-no-root", "-no-verify", "-o", out, "f.bin"})
+	if err == nil || !strings.Contains(err.Error(), "changed on the server") {
+		t.Fatalf("err = %v, want a changed-on-the-server error", err)
+	}
+	if entries, _ := os.ReadDir(filepath.Dir(out)); len(entries) != 0 {
+		t.Errorf("short download left %d files behind", len(entries))
+	}
+}

@@ -107,6 +107,32 @@ func downloadFile(g *globalFlags, o xferOpts, remotePath, out string, entry *lis
 	return fileResult{Path: remotePath, Out: out, Bytes: size, SHA256: sum, Verified: verified}, nil
 }
 
+// copyChunks downloads [0, size) in chunks of at most chunkSize, decodes each
+// with t and writes it to w. A chunk decoding to another length than requested
+// fails the download even without verification: the file changed on the server.
+func copyChunks(w io.Writer, size, chunkSize int64, t transform.Transformer, fetch func(start, n int64) ([]byte, error)) error {
+	for start := int64(0); start < size; {
+		n := min(chunkSize, size-start)
+		chunk, err := fetch(start, n)
+		if err != nil {
+			return err
+		}
+		reader, err := t.Untransform(bytes.NewReader(chunk))
+		if err != nil {
+			return fmt.Errorf("decoding chunk at offset %d: %w", start, err)
+		}
+		written, err := io.Copy(w, reader)
+		if err != nil {
+			return fmt.Errorf("writing chunk at offset %d: %w", start, err)
+		}
+		if written != n {
+			return fmt.Errorf("chunk at offset %d decoded to %d bytes instead of %d: the file changed on the server; download again", start, written, n)
+		}
+		start += n
+	}
+	return nil
+}
+
 func downloadHTTP(g *globalFlags, o xferOpts, remotePath string, f io.Writer, entry *listEntry) (size int64, sum string, verified bool, err error) {
 	if entry == nil || (o.verify && entry.SHA256 == "") {
 		e, err := fetchFileEntry(g, o.prefix, remotePath, o.verify)
@@ -120,27 +146,15 @@ func downloadHTTP(g *globalFlags, o xferOpts, remotePath string, f io.Writer, en
 	h := sha256.New()
 	w := io.MultiWriter(f, h)
 
-	var transferred int64
-	for transferred < size {
-		reqSize := o.chunkSize
-		if remaining := size - transferred; reqSize > remaining {
-			reqSize = remaining
-		}
-
-		chunk, err := fetchDownloadChunkHTTP(g, o.prefix, remotePath, transferred, reqSize, o.transformName, o.transformArgs)
+	err = copyChunks(w, size, o.chunkSize, o.transformer, func(start, n int64) ([]byte, error) {
+		chunk, err := fetchDownloadChunkHTTP(g, o.prefix, remotePath, start, n, o.transformName, o.transformArgs)
 		if err != nil {
-			return 0, "", false, fmt.Errorf("downloading chunk at offset %d: %w", transferred, err)
+			return nil, fmt.Errorf("downloading chunk at offset %d: %w", start, err)
 		}
-
-		reader, err := o.transformer.Untransform(bytes.NewReader(chunk))
-		if err != nil {
-			return 0, "", false, fmt.Errorf("decoding chunk at offset %d: %w", transferred, err)
-		}
-		if _, err := io.Copy(w, reader); err != nil {
-			return 0, "", false, fmt.Errorf("writing chunk at offset %d: %w", transferred, err)
-		}
-
-		transferred += reqSize
+		return chunk, nil
+	})
+	if err != nil {
+		return 0, "", false, err
 	}
 
 	sum = hex.EncodeToString(h.Sum(nil))
@@ -179,50 +193,38 @@ func downloadWS(g *globalFlags, o xferOpts, remotePath string, f io.Writer) (siz
 	h := sha256.New()
 	w := io.MultiWriter(f, h)
 
-	var transferred int64
-	for transferred < size {
-		reqSize := o.chunkSize
-		if remaining := size - transferred; reqSize > remaining {
-			reqSize = remaining
+	err = copyChunks(w, size, o.chunkSize, o.transformer, func(start, n int64) ([]byte, error) {
+		if err := writeWSJSON(conn, g, wsChunkRequest{Start: start, Size: n}); err != nil {
+			return nil, fmt.Errorf("requesting chunk at offset %d: %w", start, err)
 		}
 
-		if err := writeWSJSON(conn, g, wsChunkRequest{Start: transferred, Size: reqSize}); err != nil {
-			return 0, "", false, fmt.Errorf("requesting chunk at offset %d: %w", transferred, err)
-		}
-
-		// The transformed chunk isn't always reqSize bytes long (pdf/html-b64
-		// both expand it), so the server announces the actual byte count
-		// before sending any frames.
+		// The transformed chunk isn't always n bytes long (pdf/html-b64 both
+		// expand it), so the server announces the actual byte count before
+		// sending any frames.
 		chunkAck, err := readWSAck(conn, g)
 		if err != nil {
-			return 0, "", false, fmt.Errorf("reading chunk ack at offset %d: %w", transferred, err)
+			return nil, fmt.Errorf("reading chunk ack at offset %d: %w", start, err)
 		}
 
 		chunk := make([]byte, 0, chunkAck.ChunkSize)
 		for int64(len(chunk)) < chunkAck.ChunkSize {
 			mt, p, err := conn.ReadMessage()
 			if err != nil {
-				return 0, "", false, fmt.Errorf("reading frame at offset %d: %w", transferred, err)
+				return nil, fmt.Errorf("reading frame at offset %d: %w", start, err)
 			}
 			if mt != websocket.BinaryMessage {
 				var errAck wsAck
 				if jsonErr := g.decodeJSON(p, &errAck); jsonErr == nil && errAck.Error != "" {
-					return 0, "", false, fmt.Errorf("server error: %s", errAck.Error)
+					return nil, fmt.Errorf("server error: %s", errAck.Error)
 				}
-				return 0, "", false, fmt.Errorf("expected binary frame at offset %d, got message type %d", transferred, mt)
+				return nil, fmt.Errorf("expected binary frame at offset %d, got message type %d", start, mt)
 			}
 			chunk = append(chunk, p...)
 		}
-
-		reader, err := o.transformer.Untransform(bytes.NewReader(chunk))
-		if err != nil {
-			return 0, "", false, fmt.Errorf("decoding chunk at offset %d: %w", transferred, err)
-		}
-		if _, err := io.Copy(w, reader); err != nil {
-			return 0, "", false, fmt.Errorf("writing chunk at offset %d: %w", transferred, err)
-		}
-
-		transferred += reqSize
+		return chunk, nil
+	})
+	if err != nil {
+		return 0, "", false, err
 	}
 
 	_ = writeWSJSON(conn, g, wsChunkRequest{Done: true})

@@ -143,7 +143,13 @@ export async function downloadFile(root, entry) {
     await sink.open();
     var ranges = chunkRanges(entry.size, chunkBytes);
     for (var i = 0; i < ranges.length; i++) {
-      await sink.write(await fetchChunk(opts, wsSession, prefix, path, ranges[i].start, ranges[i].size, onProgress), i);
+      var r = ranges[i];
+      var data = await fetchChunk(opts, wsSession, prefix, path, r.start, r.size, onProgress);
+      if (data.byteLength !== r.size) {
+        throw new Error('chunk at offset ' + r.start + ' decoded to ' + data.byteLength + ' bytes instead of ' + r.size +
+          ': the file changed on the server; download again');
+      }
+      await sink.write(data, i);
     }
     await sink.close();
   } catch(err) {
