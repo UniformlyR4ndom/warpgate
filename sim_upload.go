@@ -105,94 +105,89 @@ func (s *Server) handleSimUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	sess, wasNew, ok := s.simUploadSessions.tryClaim(name, func() *simUlSession {
+	ack, ok := withClaim(s.simUploadSessions, name, func() *simUlSession {
 		return &simUlSession{hasher: sha256.New()}
+	}, func(sess *simUlSession, wasNew bool) (simUlAck, bool) {
+		if continuationKey == "" {
+			// First chunk always starts a fresh hash, discarding anything
+			// previously recorded for this session name — mirrors how a first
+			// real-upload chunk unconditionally overwrites its target file.
+			// completed/previousKey must reset too, or a stale completed=true
+			// from a prior run on this same name makes ulValidateKey
+			// misclassify this run's real current-key chunk as a completed-
+			// session replay once currentKey happens to coincide.
+			sess.hasher = sha256.New()
+			sess.totalBytes = 0
+			sess.completed = false
+			sess.previousKey = ""
+			return simUploadChunk(file, sess, done, true)
+		}
+		switch ulValidateKey(sess, continuationKey) {
+		case ulKeyCompleted:
+			sess.expiresAt = time.Now().Add(ulSessionIdleExpiry)
+			return simUlAck{hash: hex.EncodeToString(sess.hasher.Sum(nil))}, false
+		case ulKeyPrevious:
+			sess.expiresAt = time.Now().Add(ulSessionIdleExpiry)
+			return simUlAck{key: sess.currentKey}, false
+		case ulKeyCurrent:
+			return simUploadChunk(file, sess, done, false)
+		default: // ulKeyUnrecognized
+			return simUlAck{status: http.StatusBadRequest, errMsg: "unrecognized continuation-key"}, wasNew
+		}
 	})
 	if !ok {
 		http.Error(w, "upload already in progress for this session", http.StatusConflict)
 		return
 	}
-
-	if continuationKey == "" {
-		// First chunk always starts a fresh hash, discarding anything
-		// previously recorded for this session name — mirrors how a first
-		// real-upload chunk unconditionally overwrites its target file.
-		// completed/previousKey must reset too, or a stale completed=true
-		// from a prior run on this same name makes ulValidateKey
-		// misclassify this run's real current-key chunk as a completed-
-		// session replay once currentKey happens to coincide.
-		sess.hasher = sha256.New()
-		sess.totalBytes = 0
-		sess.completed = false
-		sess.previousKey = ""
-		s.handleSimUploadChunk(w, file, name, sess, done, true, wasEncrypted)
+	if ack.errMsg != "" {
+		http.Error(w, ack.errMsg, ack.status)
 		return
 	}
-
-	switch ulValidateKey(sess, continuationKey) {
-	case ulKeyCompleted:
-		hashHex := hex.EncodeToString(sess.hasher.Sum(nil))
-		sess.expiresAt = time.Now().Add(ulSessionIdleExpiry)
-		s.simUploadSessions.release(name, false)
-		s.writeSimUploadResponse(w, wasEncrypted, hashHex, "")
-	case ulKeyPrevious:
-		nextKey := sess.currentKey
-		sess.expiresAt = time.Now().Add(ulSessionIdleExpiry)
-		s.simUploadSessions.release(name, false)
-		s.writeSimUploadResponse(w, wasEncrypted, "", nextKey)
-	case ulKeyCurrent:
-		s.handleSimUploadChunk(w, file, name, sess, done, false, wasEncrypted)
-	default: // ulKeyUnrecognized
-		s.simUploadSessions.release(name, wasNew)
-		http.Error(w, "unrecognized continuation-key", http.StatusBadRequest)
-	}
+	s.writeSimUploadResponse(w, wasEncrypted, ack.hash, ack.key)
 }
 
-// handleSimUploadChunk hashes one chunk's bytes into sess's running hash and
+// simUlAck is the response to one sim upload request, built while the session
+// claim is held. Every success is a 200.
+type simUlAck struct {
+	hash   string
+	key    string
+	status int    // of an error
+	errMsg string // set: plain-text error response
+}
+
+// simUploadChunk hashes one chunk's bytes into sess's running hash and
 // either finalizes (done) or rotates the continuation-key for the next
 // chunk. isFirst is true only for a request with no continuation-key at
 // all, used solely to decide whether a done response discards the session
-// (a genuine one-shot upload, matching today's behavior exactly) or keeps a
-// completed marker around for idempotent replay (a real chunked upload's
-// final chunk).
-func (s *Server) handleSimUploadChunk(w http.ResponseWriter, file multipart.File, name string, sess *simUlSession, done, isFirst, encrypted bool) {
+// (a genuine one-shot upload) or keeps a completed marker around for
+// idempotent replay (a real chunked upload's final chunk).
+func simUploadChunk(file multipart.File, sess *simUlSession, done, isFirst bool) (simUlAck, bool) {
 	n, err := io.Copy(sess.hasher, io.LimitReader(file, simMaxTotalSize-sess.totalBytes+1))
 	if err != nil {
-		s.simUploadSessions.release(name, true)
-		http.Error(w, "read error", http.StatusInternalServerError)
-		return
+		return simUlAck{status: http.StatusInternalServerError, errMsg: "read error"}, true
 	}
 	sess.totalBytes += n
 	if sess.totalBytes > simMaxTotalSize {
-		s.simUploadSessions.release(name, true)
-		http.Error(w, fmt.Sprintf("upload exceeds %d bytes", simMaxTotalSize), http.StatusBadRequest)
-		return
+		return simUlAck{status: http.StatusBadRequest, errMsg: fmt.Sprintf("upload exceeds %d bytes", simMaxTotalSize)}, true
 	}
 
 	if done {
 		hashHex := hex.EncodeToString(sess.hasher.Sum(nil))
 		if isFirst {
-			s.simUploadSessions.release(name, true)
-			s.writeSimUploadResponse(w, encrypted, hashHex, "")
-			return
+			return simUlAck{hash: hashHex}, true
 		}
 		sess.completed = true
 		sess.previousKey = ""
 		sess.expiresAt = time.Now().Add(ulSessionIdleExpiry)
-		s.simUploadSessions.release(name, false)
-		s.writeSimUploadResponse(w, encrypted, hashHex, "")
-		return
+		return simUlAck{hash: hashHex}, false
 	}
 
 	key, err := ulNewKey()
 	if err != nil {
-		s.simUploadSessions.release(name, true)
-		http.Error(w, "internal error", http.StatusInternalServerError)
-		return
+		return simUlAck{status: http.StatusInternalServerError, errMsg: "internal error"}, true
 	}
 	sess.previousKey = sess.currentKey
 	sess.currentKey = key
 	sess.expiresAt = time.Now().Add(ulSessionIdleExpiry)
-	s.simUploadSessions.release(name, false)
-	s.writeSimUploadResponse(w, encrypted, "", key)
+	return simUlAck{key: key}, false
 }

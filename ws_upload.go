@@ -68,7 +68,7 @@ func (s *Server) handleWSUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	sess, _, ok := s.uploadSessions.tryClaim(filename, func() *ulSession { return &ulSession{} })
+	sess, _, ok := s.uploadSessions.tryClaim(filename, newUlSession)
 	if !ok {
 		s.writeWSError(conn, encrypted, websocket.CloseInternalServerErr, "upload already in progress for this file")
 		return

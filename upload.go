@@ -293,123 +293,119 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	sess, wasNew, ok := s.uploadSessions.tryClaim(filename, func() *ulSession { return &ulSession{} })
+	ack, ok := withClaim(s.uploadSessions, filename, newUlSession, func(sess *ulSession, wasNew bool) (ulAck, bool) {
+		if continuationKey == "" {
+			return s.uploadFirstChunk(transformer, file, filename, sess, done)
+		}
+		switch ulValidateKey(sess, continuationKey) {
+		case ulKeyCompleted:
+			sess.expiresAt = time.Now().Add(ulSessionIdleExpiry)
+			return ulAck{status: http.StatusOK, sha256: sess.sha256}, false
+		case ulKeyPrevious:
+			sess.expiresAt = time.Now().Add(ulSessionIdleExpiry)
+			return ulAck{status: http.StatusOK, key: sess.currentKey}, false
+		case ulKeyCurrent:
+			return s.uploadContinuation(transformer, file, filename, sess, done)
+		default: // ulKeyUnrecognized
+			// wasNew means nothing legitimate exists for this filename yet, so
+			// there's nothing worth keeping; otherwise this stale/unknown key
+			// must not disturb whatever session actually is on record.
+			return ulAck{status: http.StatusBadRequest, errMsg: "unrecognized continuation-key"}, wasNew
+		}
+	})
 	if !ok {
 		http.Error(w, "upload already in progress for this file", http.StatusConflict)
 		return
 	}
-
-	if continuationKey == "" {
-		s.handleUploadFirstChunk(w, transformer, file, filename, sess, done, wasEncrypted)
+	if ack.errMsg != "" {
+		http.Error(w, ack.errMsg, ack.status)
 		return
 	}
-
-	switch ulValidateKey(sess, continuationKey) {
-	case ulKeyCompleted:
-		sess.expiresAt = time.Now().Add(ulSessionIdleExpiry)
-		s.uploadSessions.release(filename, false)
-		s.writeUploadResponse(w, wasEncrypted, http.StatusOK, filename, "", sess.sha256)
-	case ulKeyPrevious:
-		nextKey := sess.currentKey
-		sess.expiresAt = time.Now().Add(ulSessionIdleExpiry)
-		s.uploadSessions.release(filename, false)
-		s.writeUploadResponse(w, wasEncrypted, http.StatusOK, filename, nextKey, "")
-	case ulKeyCurrent:
-		s.handleUploadContinuation(w, transformer, file, filename, sess, done, wasEncrypted)
-	default: // ulKeyUnrecognized
-		// wasNew means nothing legitimate exists for this filename yet, so
-		// there's nothing worth keeping; otherwise this stale/unknown key
-		// must not disturb whatever session actually is on record.
-		s.uploadSessions.release(filename, wasNew)
-		http.Error(w, "unrecognized continuation-key", http.StatusBadRequest)
-	}
+	s.writeUploadResponse(w, wasEncrypted, ack.status, filename, ack.key, ack.sha256)
 }
 
-// failUpload tears down the whole session for filename after a processing
+func newUlSession() *ulSession { return &ulSession{} }
+
+// ulAck is the response to one upload request, built while the session claim
+// is held.
+type ulAck struct {
+	status int
+	key    string
+	sha256 string
+	errMsg string // set: plain-text error response
+}
+
+// uploadFailed tears down the whole session for filename after a processing
 // failure: there is no partial-failure recovery.
-func (s *Server) failUpload(w http.ResponseWriter, filename string, sess *ulSession, err error) {
+func (s *Server) uploadFailed(filename string, sess *ulSession, err error) (ulAck, bool) {
 	log.Printf("upload %q failed: %v", filename, err)
 	s.removeUlTemp(sess.tmpPath)
-	s.uploadSessions.release(filename, true)
-	http.Error(w, "internal error", http.StatusInternalServerError)
+	return ulAck{status: http.StatusInternalServerError, errMsg: "internal error"}, true
 }
 
-// handleUploadFirstChunk handles a request with no continuation-key: it
-// starts over, discarding any session recorded for filename. The file is
-// replaced only once the upload completes.
-func (s *Server) handleUploadFirstChunk(w http.ResponseWriter, transformer transform.Transformer, file multipart.File, filename string, sess *ulSession, done, encrypted bool) {
+// uploadFirstChunk handles a request with no continuation-key: it starts
+// over, discarding any session recorded for filename. The file is replaced
+// only once the upload completes.
+func (s *Server) uploadFirstChunk(transformer transform.Transformer, file multipart.File, filename string, sess *ulSession, done bool) (ulAck, bool) {
 	s.removeUlTemp(sess.tmpPath)
 	tmpPath, err := s.createUlTemp()
 	if err != nil {
 		sess.tmpPath = ""
-		s.failUpload(w, filename, sess, err)
-		return
+		return s.uploadFailed(filename, sess, err)
 	}
 	sess.tmpPath = tmpPath
 
 	if err := appendUploadChunk(s.ulRoot, tmpPath, transformer, file); err != nil {
-		s.failUpload(w, filename, sess, err)
-		return
+		return s.uploadFailed(filename, sess, err)
 	}
 
 	if done {
 		sum, err := s.publishUpload(tmpPath, filename)
 		if err != nil {
-			s.failUpload(w, filename, sess, err)
-			return
+			return s.uploadFailed(filename, sess, err)
 		}
-		s.uploadSessions.release(filename, true)
-		s.writeUploadResponse(w, encrypted, http.StatusCreated, filename, "", sum)
-		return
+		return ulAck{status: http.StatusCreated, sha256: sum}, true
 	}
 
 	key, err := ulNewKey()
 	if err != nil {
-		s.failUpload(w, filename, sess, err)
-		return
+		return s.uploadFailed(filename, sess, err)
 	}
 	sess.completed = false
 	sess.currentKey = key
 	sess.previousKey = ""
 	sess.expiresAt = time.Now().Add(ulSessionIdleExpiry)
-	s.uploadSessions.release(filename, false)
-	s.writeUploadResponse(w, encrypted, http.StatusCreated, filename, key, "")
+	return ulAck{status: http.StatusCreated, key: key}, false
 }
 
-// handleUploadContinuation handles a request whose continuation-key matched
+// uploadContinuation handles a request whose continuation-key matched
 // sess.currentKey — the expected next chunk of an already-started upload.
-func (s *Server) handleUploadContinuation(w http.ResponseWriter, transformer transform.Transformer, file multipart.File, filename string, sess *ulSession, done, encrypted bool) {
+func (s *Server) uploadContinuation(transformer transform.Transformer, file multipart.File, filename string, sess *ulSession, done bool) (ulAck, bool) {
 	if err := appendUploadChunk(s.ulRoot, sess.tmpPath, transformer, file); err != nil {
-		s.failUpload(w, filename, sess, err)
-		return
+		return s.uploadFailed(filename, sess, err)
 	}
 
 	if done {
 		sum, err := s.publishUpload(sess.tmpPath, filename)
 		if err != nil {
-			s.failUpload(w, filename, sess, err)
-			return
+			return s.uploadFailed(filename, sess, err)
 		}
 		sess.tmpPath = ""
 		sess.sha256 = sum
 		sess.completed = true
 		sess.previousKey = ""
 		sess.expiresAt = time.Now().Add(ulSessionIdleExpiry)
-		s.uploadSessions.release(filename, false)
-		s.writeUploadResponse(w, encrypted, http.StatusOK, filename, "", sum)
-		return
+		return ulAck{status: http.StatusOK, sha256: sum}, false
 	}
 
 	key, err := ulNewKey()
 	if err != nil {
-		s.failUpload(w, filename, sess, err)
-		return
+		return s.uploadFailed(filename, sess, err)
 	}
 	sess.previousKey = sess.currentKey
 	sess.currentKey = key
 	sess.expiresAt = time.Now().Add(ulSessionIdleExpiry)
-	s.uploadSessions.release(filename, false)
-	s.writeUploadResponse(w, encrypted, http.StatusOK, filename, key, "")
+	return ulAck{status: http.StatusOK, key: key}, false
 }
 
 func (s *Server) handleUlList(w http.ResponseWriter, r *http.Request) {

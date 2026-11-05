@@ -204,6 +204,49 @@ func TestUploadChunkedCompletedReplay(t *testing.T) {
 	}
 }
 
+func TestWithClaim(t *testing.T) {
+	st := newSessionStore[*ulSession]()
+
+	ack, ok := withClaim(st, "f.bin", newUlSession, func(sess *ulSession, wasNew bool) (string, bool) {
+		if !wasNew {
+			t.Error("first claim: wasNew = false")
+		}
+		if _, _, ok := st.tryClaim("f.bin", newUlSession); ok {
+			t.Error("claim not held while fn runs")
+		}
+		sess.sha256 = "kept"
+		return "ack", false
+	})
+	if !ok || ack != "ack" {
+		t.Fatalf("withClaim = %q, %v", ack, ok)
+	}
+
+	_, ok = withClaim(st, "f.bin", newUlSession, func(sess *ulSession, wasNew bool) (struct{}, bool) {
+		if wasNew || sess.sha256 != "kept" {
+			t.Errorf("kept session: wasNew=%v sha256=%q", wasNew, sess.sha256)
+		}
+		return struct{}{}, true
+	})
+	if !ok {
+		t.Fatal("claim not released after fn")
+	}
+
+	_, _ = withClaim(st, "f.bin", newUlSession, func(_ *ulSession, wasNew bool) (struct{}, bool) {
+		if !wasNew {
+			t.Error("discarded session still on record")
+		}
+		return struct{}{}, false
+	})
+
+	func() {
+		defer func() { _ = recover() }()
+		withClaim(st, "f.bin", newUlSession, func(*ulSession, bool) (struct{}, bool) { panic("boom") })
+	}()
+	if _, _, ok := st.tryClaim("f.bin", newUlSession); !ok {
+		t.Fatal("claim still held after fn panicked")
+	}
+}
+
 func TestUploadChunkedUnrecognizedKeyLeavesLiveSessionAlone(t *testing.T) {
 	ulRoot := t.TempDir()
 	ts := newSimTestServer(t, Config{Root: t.TempDir(), UlRoot: ulRoot, NoAuth: true})
@@ -241,8 +284,6 @@ func TestUploadChunkedLockRejection(t *testing.T) {
 	}
 	defer db.Close()
 	srv := newTestServer(t, Config{Root: t.TempDir(), UlRoot: ulRoot, NoAuth: true}, db)
-
-	newUlSession := func() *ulSession { return &ulSession{} }
 
 	_, wasNew, ok := srv.uploadSessions.tryClaim("f.bin", newUlSession)
 	if !ok || !wasNew {

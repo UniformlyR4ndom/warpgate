@@ -131,6 +131,21 @@ func (st *sessionStore[T]) release(name string, discard bool) {
 	}
 }
 
+// withClaim runs fn holding the claim on name, then releases it, dropping the
+// session if fn returns discard. Once released, another request may take the
+// session over, so fn must copy whatever the response needs into ack rather
+// than let sess escape.
+func withClaim[T ulCoreHolder, A any](st *sessionStore[T], name string, newT func() T, fn func(sess T, wasNew bool) (ack A, discard bool)) (ack A, ok bool) {
+	sess, wasNew, ok := st.tryClaim(name, newT)
+	if !ok {
+		return ack, false
+	}
+	discard := true
+	defer func() { st.release(name, discard) }()
+	ack, discard = fn(sess, wasNew)
+	return ack, true
+}
+
 // sweepExpired purges sessions idle longer than ulSessionIdleExpiry, never
 // touching one currently being processed. onAbort, if non-nil, is called
 // (outside the lock) for each purged non-completed session, so the caller

@@ -225,9 +225,12 @@ too (`reportUpload`, needs `crypto.subtle`): a match raises a green "uploaded an
 mismatch a red one.
 
 `ul_session.go` (`sessionStore`, generic over the session payload) and `upload.go`
-(`handleUploadFirstChunk`, `handleUploadContinuation`) implement it:
-- **Locking**: a per-target claim (`tryClaim`/`release` on `Server.uploadSessions`) answers `409`
-  instead of queuing when the target is busy. Chunks must be sent one at a time.
+(`uploadFirstChunk`, `uploadContinuation`) implement it:
+- **Locking**: a per-target claim on `Server.uploadSessions` answers `409` instead of queuing when
+  the target is busy. Chunks must be sent one at a time. HTTP handlers take it through `withClaim`:
+  the callback returns a value-only ack (`ulAck`, `simUlAck`) and the response is written from that
+  after the release, never from the session (another request may own it by then). A WS upload holds
+  `tryClaim`/`release` for the whole connection.
 - **Key rotation**: current and previous key are kept. The previous key (a lost ack, retried) gets an
   idempotent answer with the current key; any other key is rejected without touching what's on record.
   So chunks must never be concurrent or out of order.
