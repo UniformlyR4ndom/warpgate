@@ -18,7 +18,8 @@ header {
   border: none;
   cursor: pointer;
   padding: 0;
-  font-size: 0.8rem;
+  font-family: monospace;
+  font-size: 0.85rem;
   color: var(--dim);
   transition: color 0.15s;
 }
@@ -34,7 +35,7 @@ header {
 }
 
 .key-id {
-  font-size: 0.8rem;
+  font-size: 0.85rem;
   color: var(--dim);
 }
 
