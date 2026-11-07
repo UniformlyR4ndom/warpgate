@@ -534,9 +534,12 @@ Writes serialize, so the cursor only moves forward. Concurrent edits of one note
 outbox notes ⇪ and cli notes with a robot icon — hints from cooperative clients, not a security
 property.
 
-**Images** use the transform system: uploads are untransformed and stored raw (≤ 20 MiB,
-`image/...` only); downloads are transformed (`resolveContentType`, stored mime as fallback) and not
-param-encrypted. Store and fetch transforms are independent.
+**Images** use the transform system: uploads are untransformed and stored raw (≤ 20 MiB; the
+declared mime must be one of `image/png`, `image/jpeg`, `image/gif`, `image/webp` — `validImageMime` —
+and match `http.DetectContentType` of the bytes, else `400`); downloads are transformed
+(`resolveContentType`, stored mime as fallback) and not param-encrypted. The download filename's
+extension comes from that same allowlist (`imageExt`, `web/app/lib/clipboard.js`), so an attachment
+is never saved under an active extension. Store and fetch transforms are independent.
 
 ## Content Security Policy (`csp.go`)
 

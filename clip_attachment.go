@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
-	"strings"
 
 	"warpgate/internal/transform"
 )
@@ -18,9 +17,16 @@ const clipAttachmentMaxSize = 20 << 20 // 20 MiB
 // plus multipart framing.
 const clipAttachmentMaxBody = clipAttachmentMaxSize/3*4 + 1<<20
 
-// validImageMime accepts a well-formed "image/..." content type.
+// validImageMime accepts only the raster image types the clipboard stores.
+// The allowlist keeps an attachment's declared type from steering its
+// downloaded filename to an active extension such as .svg or .html (see
+// doc/security.md); http.DetectContentType returns exactly these strings.
 func validImageMime(s string) bool {
-	return strings.HasPrefix(s, "image/") && validContentType(s)
+	switch s {
+	case "image/png", "image/jpeg", "image/gif", "image/webp":
+		return true
+	}
+	return false
 }
 
 // handleClipAttachmentNew stores one pasted image for a note. The multipart
@@ -89,6 +95,10 @@ func (s *Server) handleClipAttachmentNew(w http.ResponseWriter, r *http.Request)
 	}
 	if len(data) > clipAttachmentMaxSize {
 		http.Error(w, "image too large", http.StatusRequestEntityTooLarge)
+		return
+	}
+	if http.DetectContentType(data) != spec.Mime {
+		http.Error(w, "image data does not match declared type", http.StatusBadRequest)
 		return
 	}
 

@@ -115,7 +115,9 @@ func TestAttachmentBodyLimit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	encoded, err := tr.Transform(bytes.NewReader(bytes.Repeat([]byte{7}, clipAttachmentMaxSize)))
+	raw := make([]byte, clipAttachmentMaxSize)
+	copy(raw, "\x89PNG\r\n\x1a\n")
+	encoded, err := tr.Transform(bytes.NewReader(raw))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -24,11 +24,17 @@ export function downloadClip(item) {
   triggerDownload(new TextEncoder().encode(text), (safeFileName(item.title) || 'note-' + item.id) + '.txt');
 }
 
+// The server stores only an allowlist of raster types, so a downloaded
+// attachment never gets an active extension; 'img' is a neutral fallback for
+// anything unexpected (e.g. a legacy row).
 function imageExt(mime) {
-  var sub = mime.slice('image/'.length).toLowerCase();
-  if (sub === 'jpeg') return 'jpg';
-  if (sub === 'svg+xml') return 'svg';
-  return sub.replace(/[^a-z0-9]/g, '') || 'img';
+  switch (mime) {
+    case 'image/png': return 'png';
+    case 'image/jpeg': return 'jpg';
+    case 'image/gif': return 'gif';
+    case 'image/webp': return 'webp';
+    default: return 'img';
+  }
 }
 
 // Download name for an image: its caption, else the note title (numbered when

@@ -102,6 +102,30 @@ func TestValidClipTitle(t *testing.T) {
 	}
 }
 
+func TestValidImageMime(t *testing.T) {
+	cases := []struct {
+		mime string
+		ok   bool
+	}{
+		{"image/png", true},
+		{"image/jpeg", true},
+		{"image/gif", true},
+		{"image/webp", true},
+		{"image/svg+xml", false},
+		{"image/html", false},
+		{"image/bmp", false},
+		{"image/", false},
+		{"image", false},
+		{"text/html", false},
+		{"", false},
+	}
+	for _, c := range cases {
+		if got := validImageMime(c.mime); got != c.ok {
+			t.Errorf("validImageMime(%q) = %v, want %v", c.mime, got, c.ok)
+		}
+	}
+}
+
 func mustInsert(t *testing.T, db *DB, title, text string) int64 {
 	t.Helper()
 	id, _, err := db.InsertClipboard(title, "", []byte(text))
@@ -415,13 +439,14 @@ func TestHandleClipAttachmentCaption(t *testing.T) {
 	s := newParamDecodeTestServer(t, Config{NoAuth: true})
 	noteID := mustInsert(t, s.db, "n", "")
 
-	upload := func(caption string) *httptest.ResponseRecorder {
+	pngBytes := "\x89PNG\r\n\x1a\nfake png bytes"
+	upload := func(caption, mime, fileData string) *httptest.ResponseRecorder {
 		var body bytes.Buffer
 		mw := multipart.NewWriter(&body)
-		spec, _ := json.Marshal(map[string]any{"transform": "id", "note_id": noteID, "mime": "image/png", "caption": caption})
+		spec, _ := json.Marshal(map[string]any{"transform": "id", "note_id": noteID, "mime": mime, "caption": caption})
 		for _, part := range []struct{ field, name, data string }{
 			{"transform", "transform.json", string(spec)},
-			{"file", "image", "png"},
+			{"file", "image", fileData},
 		} {
 			pw, err := mw.CreateFormFile(part.field, part.name)
 			if err == nil {
@@ -438,13 +463,19 @@ func TestHandleClipAttachmentCaption(t *testing.T) {
 		s.handleClipAttachmentNew(rec, r)
 		return rec
 	}
-	rec := upload("screen 1")
+	rec := upload("screen 1", "image/png", pngBytes)
 	var meta AttachmentMeta
 	if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &meta) != nil || meta.Caption != "screen 1" {
 		t.Fatalf("upload with caption: %d %s", rec.Code, rec.Body.String())
 	}
-	if rec := upload("two\nlines"); rec.Code != http.StatusBadRequest {
+	if rec := upload("two\nlines", "image/png", pngBytes); rec.Code != http.StatusBadRequest {
 		t.Fatalf("multi-line caption: status %d, want 400", rec.Code)
+	}
+	if rec := upload("", "image/svg+xml", pngBytes); rec.Code != http.StatusBadRequest {
+		t.Fatalf("disallowed mime: status %d, want 400", rec.Code)
+	}
+	if rec := upload("", "image/png", "not really an image"); rec.Code != http.StatusBadRequest {
+		t.Fatalf("mime/bytes mismatch: status %d, want 400", rec.Code)
 	}
 
 	edit := func(body string) int {
