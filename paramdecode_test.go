@@ -60,7 +60,7 @@ func TestDecodeParamsPlainJSON(t *testing.T) {
 
 func TestDecodeParamsEncryptedBlob(t *testing.T) {
 	s := newParamDecodeTestServer(t, Config{Key: "test-key"})
-	blob, err := paramcrypt.Encrypt(s.paramKeys, []byte(`{"path":"a.txt"}`))
+	blob, err := paramcrypt.Encrypt(s.paramKeys.Request, []byte(`{"path":"a.txt"}`))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -93,7 +93,7 @@ func TestDecodeParamsGarbageRejected(t *testing.T) {
 func TestDecodeParamsWrongKeyRejected(t *testing.T) {
 	s := newParamDecodeTestServer(t, Config{Key: "test-key"})
 	otherKeys := paramcrypt.DeriveKeys(testK("a-different-key"))
-	blob, err := paramcrypt.Encrypt(otherKeys, []byte(`{"path":"a.txt"}`))
+	blob, err := paramcrypt.Encrypt(otherKeys.Request, []byte(`{"path":"a.txt"}`))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -119,7 +119,7 @@ func TestDecodeParamsNoAuthRejectsEncryptedBlob(t *testing.T) {
 	s := newParamDecodeTestServer(t, Config{NoAuth: true})
 	// Built with a real key even though the server has none — simulates a
 	// client mistakenly sending an encrypted blob to a -no-auth server.
-	blob, err := paramcrypt.Encrypt(paramcrypt.DeriveKeys(testK("some-key")), []byte(`{"path":"a.txt"}`))
+	blob, err := paramcrypt.Encrypt(paramcrypt.DeriveKeys(testK("some-key")).Request, []byte(`{"path":"a.txt"}`))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -156,6 +156,36 @@ func TestHandleClipNewMalformedNoAuthIsBadRequest(t *testing.T) {
 	s.handleClipNew(rec, httptest.NewRequest(http.MethodPost, "/api/clip/new", strings.NewReader("not json!!!")))
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("malformed body under -no-auth = %d, want %d", rec.Code, http.StatusBadRequest)
+	}
+}
+
+// An encrypted server response must not be accepted as an encrypted request:
+// a proxy that captured a clip/new response (without decrypting it) can't
+// replay it as a clip/delete body to delete the note whose id it hides.
+func TestEncryptedResponseNotAcceptedAsRequest(t *testing.T) {
+	s := newParamDecodeTestServer(t, Config{Key: "test-key"})
+	noteID := mustInsert(t, s.db, "secret", "hidden")
+
+	resp := struct {
+		ID int64 `json:"id"`
+		TS int64 `json:"ts"`
+	}{noteID, 1}
+	body, err := json.Marshal(resp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	captured, err := paramcrypt.Encrypt(s.paramKeys.Response, body)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	rec := httptest.NewRecorder()
+	s.handleClipDelete(rec, httptest.NewRequest(http.MethodDelete, "/api/clip/delete", strings.NewReader(captured)))
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("replayed response as delete: status %d, want 401", rec.Code)
+	}
+	if _, notes, _, _, _ := s.db.ClipState(0); len(notes) != 1 {
+		t.Fatalf("note was deleted by a replayed response blob: %d notes left", len(notes))
 	}
 }
 
@@ -210,7 +240,7 @@ func TestEncodeParamsResponseEncrypted(t *testing.T) {
 	if ct := rec.Header().Get("Content-Type"); ct != "text/plain" {
 		t.Fatalf("Content-Type = %q, want text/plain", ct)
 	}
-	plaintext, err := paramcrypt.Decrypt(s.paramKeys, rec.Body.String())
+	plaintext, err := paramcrypt.Decrypt(s.paramKeys.Response, rec.Body.String())
 	if err != nil {
 		t.Fatalf("response body did not decrypt: %v", err)
 	}
@@ -234,7 +264,7 @@ func TestHandleUlListQueryParamEncryption(t *testing.T) {
 		rec := httptest.NewRecorder()
 		s.handleUlList(rec, req)
 		var got []listEntry
-		listResponseEncrypted(t, rec, keys, &got)
+		listResponseEncrypted(t, rec, keys.Response, &got)
 	})
 
 	t.Run("without e param, response is plain JSON", func(t *testing.T) {
@@ -268,7 +298,7 @@ func TestHandleClipStateQueryParamEncryption(t *testing.T) {
 		rec := httptest.NewRecorder()
 		s.handleClipState(rec, req)
 		var got clipStateResponse
-		listResponseEncrypted(t, rec, keys, &got)
+		listResponseEncrypted(t, rec, keys.Response, &got)
 	})
 
 	t.Run("without e param, response is plain JSON", func(t *testing.T) {

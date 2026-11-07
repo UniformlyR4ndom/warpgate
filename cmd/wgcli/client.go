@@ -368,10 +368,10 @@ func (g *globalFlags) fetchSalt() ([]byte, error) {
 // paramKeys reports whether parameter encryption is active (-param-crypt
 // and a key) and, if so, the subkeys of K. A key error is reported by the
 // next request instead.
-func (g *globalFlags) paramKeys() (paramcrypt.Keys, bool) {
+func (g *globalFlags) paramKeys() (paramcrypt.DirectionKeys, bool) {
 	k, err := g.key()
 	if !g.paramCrypt || k == nil || err != nil {
-		return paramcrypt.Keys{}, false
+		return paramcrypt.DirectionKeys{}, false
 	}
 	return paramcrypt.DeriveKeys(k), true
 }

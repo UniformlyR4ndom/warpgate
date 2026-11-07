@@ -401,8 +401,12 @@ Without it, request parameters â€” paths, file names, the very transform keys â€
 JSON, so a TLS-terminating proxy could undo the disguise. Opt-in, client-side, keyed from K.
 
 - **Format**: `base64(nonce[16] || AES-CTR ciphertext || HMAC-SHA256[32])`, encrypt-then-MAC over
-  nonce and ciphertext. Subkeys from `internal/paramcrypt.DeriveKeys(K)`: labeled HMACs
-  `warpgate-param-enc-v2` / `warpgate-param-mac-v2`.
+  nonce and ciphertext. `internal/paramcrypt.DeriveKeys(K)` returns per-direction subkeys
+  (`DirectionKeys{Request,Response}`), labeled HMACs `warpgate-param-{enc,mac}-v2` (request) and
+  `warpgate-param-resp-{enc,mac}-v2` (response). The directions use different keys, so a captured
+  response can't be decoded or forged as a request; param encryption is thus a confidentiality layer,
+  not request authentication (it binds nothing to the endpoint or method). It verifies a blob wasn't
+  modified, not that it belongs where it arrived.
 - **Server** (`Server.decodeParams`, `paramdecode.go`): tries JSON first, then (auth enabled) the
   encrypted form; both are always accepted, no flag. `writeParamError` maps the failure to a status:
   `413` oversize (`errParamsTooLarge`), `400` plainly malformed (`errParamsMalformed`: plain-JSON
@@ -422,8 +426,9 @@ JSON, so a TLS-terminating proxy could undo the disguise. Opt-in, client-side, k
 - **Frontend**: "Parameter obfuscation" checkbox (Auth section, `settings.paramCrypt.enabled`,
   disabled without a key). All sends go through `encodeBody` / `sendWSControl`, responses through
   `decodeResponseJSON` / `wsNextJSON(ws, decrypt)`; the client knows whether it encrypted and decodes
-  accordingly (WS sessions keep it in `wsSession.encrypted`). Keys (`paramEncKeyBytes`,
-  `paramMacKeyBytes`) are signals recomputed by `recomputeDerivedKeys()`. It must work over plain
+  accordingly (WS sessions keep it in `wsSession.encrypted`). Keys are signals recomputed on an
+  auth-key change (`applyAuthK`): request keys `paramEncKeyBytes`/`paramMacKeyBytes` (for sends),
+  response keys `paramRespEncKeyBytes`/`paramRespMacKeyBytes` (for decoding responses). It must work over plain
   HTTP, so no `crypto.subtle`: nonces via `crypto.getRandomValues`, AES via `aes-js` (`web/aes.js`),
   HMAC via `js-sha256` (`web/sha256.js`); MAC comparison is constant-time.
 - **wgcli**: `-param-crypt`, effective only with a key (`globalFlags.paramKeys()`).

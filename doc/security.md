@@ -35,9 +35,13 @@ matching content signatures; they provide **neither confidentiality nor integrit
   checked.
 - Without parameter encryption, the transform keys travel in the request next to the payload.
 
-Parameter encryption hides keys, paths and filenames from an inspecting proxy and authenticates
-each control message (encrypt-then-MAC). It does not prevent replay and is not mandatory: requests
-whose parameters are plain, unencrypted JSON are always accepted (independent of whether TLS is used).
+Parameter encryption hides keys, paths and filenames from an inspecting proxy and gives each control
+message confidentiality and integrity under K (encrypt-then-MAC), with separate request and response
+subkeys so a captured response can't be replayed as a request. It does not bind a message to its
+endpoint, method or transport, and does not prevent replay of a message at its own endpoint; so it is
+a confidentiality layer, not request authentication (the auth token is a separate, replayable bearer
+value — see below). It is not mandatory: requests whose parameters are plain, unencrypted JSON are
+always accepted (independent of whether TLS is used).
 
 Confidentiality is provided only by TLS, and only as far as no proxy intercepts it.
 

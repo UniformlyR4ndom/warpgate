@@ -94,6 +94,8 @@ export const authKeyHash = signal('');
 export const authFingerprint = signal('');
 export const paramEncKeyBytes = signal(null);
 export const paramMacKeyBytes = signal(null);
+export const paramRespEncKeyBytes = signal(null);
+export const paramRespMacKeyBytes = signal(null);
 
 export const backendTypes = [
   { id: 'http', label: 'HTTP POST' },
@@ -203,6 +205,8 @@ function applyAuthK(k) {
   authFingerprint.value = k ? fingerprint(k) : '';
   paramEncKeyBytes.value = k ? labelBytes(k, 'warpgate-param-enc-v2') : null;
   paramMacKeyBytes.value = k ? labelBytes(k, 'warpgate-param-mac-v2') : null;
+  paramRespEncKeyBytes.value = k ? labelBytes(k, 'warpgate-param-resp-enc-v2') : null;
+  paramRespMacKeyBytes.value = k ? labelBytes(k, 'warpgate-param-resp-mac-v2') : null;
 }
 
 var onKeyChange = null;

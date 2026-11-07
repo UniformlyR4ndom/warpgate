@@ -177,7 +177,7 @@ func (s *Server) writeWSOK(conn *websocket.Conn, encrypted bool, v any) error {
 		return err
 	}
 	if encrypted {
-		blob, err := paramcrypt.Encrypt(s.paramKeys, body)
+		blob, err := paramcrypt.Encrypt(s.paramKeys.Response, body)
 		if err != nil {
 			return err
 		}

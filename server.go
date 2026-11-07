@@ -35,7 +35,7 @@ type Server struct {
 	clientFP   []byte
 	wsUpgrader websocket.Upgrader
 	authToken  string
-	paramKeys  paramcrypt.Keys // zero value when cfg.NoAuth: parameter encryption is unavailable
+	paramKeys  paramcrypt.DirectionKeys // zero value when cfg.NoAuth: parameter encryption is unavailable
 	keyFP      string
 	kdfSalt    []byte
 	authLimit  *authLimiter

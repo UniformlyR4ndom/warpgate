@@ -20,7 +20,7 @@ func (g *globalFlags) encodeBody(v any) ([]byte, error) {
 	if !enabled {
 		return plain, nil
 	}
-	blob, err := paramcrypt.Encrypt(keys, plain)
+	blob, err := paramcrypt.Encrypt(keys.Request, plain)
 	if err != nil {
 		return nil, err
 	}
@@ -39,7 +39,7 @@ func (g *globalFlags) decodeJSON(body []byte, v any) error {
 	if !enabled {
 		return json.Unmarshal(body, v)
 	}
-	plain, err := paramcrypt.Decrypt(keys, string(body))
+	plain, err := paramcrypt.Decrypt(keys.Response, string(body))
 	if err != nil {
 		return err
 	}

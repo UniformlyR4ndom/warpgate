@@ -24,6 +24,9 @@ const (
 
 	encLabel = "warpgate-param-enc-v2"
 	macLabel = "warpgate-param-mac-v2"
+
+	respEncLabel = "warpgate-param-resp-enc-v2"
+	respMacLabel = "warpgate-param-resp-mac-v2"
 )
 
 // ErrAuthFailed is returned by Decrypt for any failure — bad base64, a
@@ -31,17 +34,33 @@ const (
 // why a blob was rejected.
 var ErrAuthFailed = errors.New("paramcrypt: authentication failed")
 
-// Keys holds the AES-CTR and HMAC-SHA256 subkeys.
+// Keys holds the AES-CTR and HMAC-SHA256 subkeys for one message direction.
 type Keys struct {
 	enc []byte
 	mac []byte
 }
 
-// DeriveKeys derives the encryption and MAC subkeys from the master key K.
-func DeriveKeys(k []byte) Keys {
-	return Keys{
-		enc: authhash.Label(k, encLabel),
-		mac: authhash.Label(k, macLabel),
+// DirectionKeys holds independent subkeys for each message direction. A blob
+// is encrypted and MAC'd under Request (client→server) or Response
+// (server→client); the keys differ, so a captured response can't be decoded
+// or forged as a request (see doc/security.md).
+type DirectionKeys struct {
+	Request  Keys
+	Response Keys
+}
+
+// DeriveKeys derives the per-direction encryption and MAC subkeys from the
+// master key K.
+func DeriveKeys(k []byte) DirectionKeys {
+	return DirectionKeys{
+		Request: Keys{
+			enc: authhash.Label(k, encLabel),
+			mac: authhash.Label(k, macLabel),
+		},
+		Response: Keys{
+			enc: authhash.Label(k, respEncLabel),
+			mac: authhash.Label(k, respMacLabel),
+		},
 	}
 }
 

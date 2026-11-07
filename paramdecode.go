@@ -56,7 +56,7 @@ func (s *Server) decodeParams(r io.Reader, v any) (bool, error) {
 	if s.cfg.NoAuth {
 		return false, errParamsMalformed
 	}
-	plaintext, err := paramcrypt.Decrypt(s.paramKeys, string(raw))
+	plaintext, err := paramcrypt.Decrypt(s.paramKeys.Request, string(raw))
 	if err != nil || json.Unmarshal(plaintext, v) != nil {
 		return false, errParamsInvalid
 	}
@@ -92,7 +92,7 @@ func (s *Server) encodeParamsResponse(w http.ResponseWriter, encrypted bool, sta
 	}
 	contentType := "application/json"
 	if encrypted {
-		blob, err := paramcrypt.Encrypt(s.paramKeys, body)
+		blob, err := paramcrypt.Encrypt(s.paramKeys.Response, body)
 		if err != nil {
 			log.Printf("encrypting response: %v", err)
 			http.Error(w, "internal error", http.StatusInternalServerError)

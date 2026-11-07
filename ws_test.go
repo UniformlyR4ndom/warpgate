@@ -590,13 +590,13 @@ func TestWSDownloadAuthFailure(t *testing.T) {
 // writeEncryptedWSJSON marshals v, encrypts it under keys, and sends it as a
 // text message — mirroring what an encrypting client sends instead of plain
 // JSON.
-func writeEncryptedWSJSON(t *testing.T, conn *websocket.Conn, keys paramcrypt.Keys, v any) {
+func writeEncryptedWSJSON(t *testing.T, conn *websocket.Conn, keys paramcrypt.DirectionKeys, v any) {
 	t.Helper()
 	body, err := json.Marshal(v)
 	if err != nil {
 		t.Fatalf("marshaling: %v", err)
 	}
-	blob, err := paramcrypt.Encrypt(keys, body)
+	blob, err := paramcrypt.Encrypt(keys.Request, body)
 	if err != nil {
 		t.Fatalf("encrypting: %v", err)
 	}
@@ -608,7 +608,7 @@ func writeEncryptedWSJSON(t *testing.T, conn *websocket.Conn, keys paramcrypt.Ke
 // readEncryptedWSJSON reads the next text message, asserts it is NOT valid
 // plain JSON (proving the server actually encrypted it, not just echoed
 // plaintext), then decrypts it under keys into v.
-func readEncryptedWSJSON(t *testing.T, conn *websocket.Conn, keys paramcrypt.Keys, v any) {
+func readEncryptedWSJSON(t *testing.T, conn *websocket.Conn, keys paramcrypt.DirectionKeys, v any) {
 	t.Helper()
 	mt, p, err := conn.ReadMessage()
 	if err != nil {
@@ -620,7 +620,7 @@ func readEncryptedWSJSON(t *testing.T, conn *websocket.Conn, keys paramcrypt.Key
 	if json.Valid(p) {
 		t.Fatalf("expected an encrypted (non-JSON) message, got plain JSON: %s", p)
 	}
-	plaintext, err := paramcrypt.Decrypt(keys, string(p))
+	plaintext, err := paramcrypt.Decrypt(keys.Response, string(p))
 	if err != nil {
 		t.Fatalf("decrypting message: %v", err)
 	}

@@ -1,6 +1,6 @@
 // Client-side parameter encryption: base64(nonce[16] || AES-CTR(json) ||
 // HMAC-SHA256[32]). Reuses the vendored aesjs; keys come from the store.
-import { paramEncKeyBytes, paramMacKeyBytes } from '../store.js';
+import { paramEncKeyBytes, paramMacKeyBytes, paramRespEncKeyBytes, paramRespMacKeyBytes } from '../store.js';
 import { hmacSha256Bytes } from './authhash.js';
 import { bytesToBinaryString, binaryStringToBytes } from './util.js';
 
@@ -31,10 +31,10 @@ export function decryptParams(blob) {
   if (raw.length < 16 + 32) throw new Error('response authentication failed');
   var body = raw.slice(0, raw.length - 32);
   var mac  = raw.slice(raw.length - 32);
-  var expected = hmacSha256Bytes(Array.from(paramMacKeyBytes.value), Array.from(body));
+  var expected = hmacSha256Bytes(Array.from(paramRespMacKeyBytes.value), Array.from(body));
   if (!constantTimeEqualBytes(expected, mac)) throw new Error('response authentication failed');
   var nonce = body.slice(0, 16);
   var ciphertext = body.slice(16);
-  var ctr = new aesjs.ModeOfOperation.ctr(Array.from(paramEncKeyBytes.value), new aesjs.Counter(Array.from(nonce)));
+  var ctr = new aesjs.ModeOfOperation.ctr(Array.from(paramRespEncKeyBytes.value), new aesjs.Counter(Array.from(nonce)));
   return JSON.parse(new TextDecoder().decode(ctr.decrypt(ciphertext)));
 }
