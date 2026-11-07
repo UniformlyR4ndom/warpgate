@@ -33,6 +33,22 @@ func TestHandleSettings(t *testing.T) {
 	}
 }
 
+func TestHandleSettingsAuth(t *testing.T) {
+	ts := newSimTestServer(t, Config{Root: t.TempDir(), Key: "secret"})
+	res, err := http.Get(ts.URL + "/api/public/settings")
+	if err != nil {
+		t.Fatalf("GET /api/public/settings: %v", err)
+	}
+	defer res.Body.Close()
+	var got settingsResponse
+	if err := json.NewDecoder(res.Body).Decode(&got); err != nil {
+		t.Fatalf("decoding response: %v", err)
+	}
+	if !got.Auth {
+		t.Fatal("auth = false, want true")
+	}
+}
+
 func TestHandleSettingsUploads(t *testing.T) {
 	ts := newSimTestServer(t, Config{Root: t.TempDir(), UlRoot: t.TempDir(), UlFlat: true, NoAuth: true})
 

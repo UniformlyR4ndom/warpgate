@@ -1,5 +1,6 @@
 import { html, Fragment } from './html.js';
-import { settings, state } from '../store.js';
+import { settings, state, authFingerprint } from '../store.js';
+import { logout } from '../lib/authsession.js';
 import { visibleTabs, setTab, refreshActive } from '../nav.js';
 import { Panel } from './panel.js';
 import { DownloadTab } from './download.js';
@@ -11,10 +12,15 @@ import { Toasts } from './toasts.js';
 
 // Shown as a dot on the closed settings button.
 function settingsAttention() {
-  if (state.authFailed) return 'The server rejected the auth key';
   var st = state.outbox.status;
-  if (st === 'reconnect' || st === 'auth' || st === 'error') return 'The outbox needs attention';
+  if (st === 'reconnect' || st === 'error') return 'The outbox needs attention';
   return '';
+}
+
+function onLogout() {
+  var busy = state.transfers.length > 0 || state.benchmarkRunning;
+  if (busy && !window.confirm('Transfers are running and will be aborted. Log out anyway?')) return;
+  logout(false);
 }
 
 export function App() {
@@ -24,6 +30,9 @@ export function App() {
         <div class="header-top">
           <h1>Warpgate</h1>
           <div class="header-actions">
+          ${authFingerprint.value && html`
+            <span class="key-id" title="Fingerprint of the derived key. The server logs the same value at startup.">Key-ID <code>${authFingerprint.value}</code></span>
+            <button class="refresh-btn" onClick=${onLogout} title="Forget the key in this browser tab and return to the passphrase prompt.">Log out</button>`}
           <button class="refresh-btn settings-btn ${settings.panel.open ? 'active' : ''}"
                   onClick=${() => (settings.panel.open = !settings.panel.open)} title="Show or hide the settings (Esc closes).">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">

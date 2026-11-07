@@ -84,7 +84,8 @@ accepted risks; update it when a security-relevant decision changes.
 | Method   | Path                    | Auth | Description |
 |----------|-------------------------|------|-------------|
 | GET      | `/api/public/checkin`   | No   | Logs the client IP (`clientIP`); called once on page load |
-| GET      | `/api/public/settings`  | No   | `{"wsFrameMin","wsFrameMax","uploads","ulFlat","kdfSalt"}` for UI clamping, the Upload tab (hidden without `-ul-root`), the `-ul-flat` mode and key derivation |
+| GET      | `/api/public/settings`  | No   | `{"wsFrameMin","wsFrameMax","uploads","ulFlat","kdfSalt","auth"}` for UI clamping, the Upload tab (hidden without `-ul-root`), the `-ul-flat` mode, key derivation and skipping the login gate (`auth: false` under `-no-auth`) |
+| POST     | `/api/auth/check`       | Yes  | `204` iff `X-Auth` is valid; no body. The login gate's key check |
 | POST     | `/api/files/list`       | Yes  | List a directory of the download root, or one file; body `{"path":"subdir","hash":false}` (`hash`: add each file's `sha256`) |
 | POST     | `/api/files/download`   | Yes  | Download a (chunk of a) file, transformed |
 | POST     | `/api/files/upload`     | Yes  | Upload a (chunk of a) file (needs `-ul-root`); multipart |
@@ -385,13 +386,10 @@ applied at route registration.
   `withAuth` and for WS in `readWSHandshake` (a handshake that doesn't decode counts too, since an
   encrypted one fails under a wrong key) and `authorizeWS`. Beyond 100k tracked clients the rest
   share one entry. In memory only: a restart clears it.
-- **Frontend**: the Auth section takes a passphrase (Set / Enter); `submitPassphrase` derives K
-  (`scryptAsync` with progress) and keeps it as hex in `sessionStorage["warpgate-auth-k"]`; the
-  passphrase is dropped. With a key it shows "Key ID: <fingerprint>" with Change (Esc cancels) and
-  Clear; the form reappears on `state.authFailed`. Every authenticated request goes through
-  `apiFetch`/`apiWSOpen` (`lib/api.js`): after a `401` (or a WS `unauthorized` ack, `noteWSAck`)
-  nothing is sent until the key changes, so polling doesn't use up the failure budget; `429` sets
-  `state.authBlocked`.
+- **Frontend**: see "Login gate". Every authenticated request goes through `apiFetch`/`apiWSOpen`
+  (`lib/api.js`): a `401` (or a WS `unauthorized` ack, `noteWSAck`) drops K and reloads to the
+  gate (`logout(true)`, `lib/authsession.js`), sending nothing more, so polling doesn't use up the
+  failure budget. A loaded app never changes its key.
 - **wgcli**: `-auth-key` fetches the salt and derives K lazily (`globalFlags.key()`, cached);
   `-auth-k`/`WGCLI_AUTH_K` takes K directly; `wgcli derive-key` prints it.
 
@@ -423,8 +421,8 @@ JSON, so a TLS-terminating proxy could undo the disguise. Opt-in, client-side, k
   (presence only) instead — not bound to anything, so stripping it silently downgrades to plaintext;
   accepted. WS: `readWSControl` reports `encrypted` for the handshake, and `writeWSOK`/`writeWSError`
   use that choice for the whole connection.
-- **Frontend**: "Parameter obfuscation" checkbox (Auth section, `settings.paramCrypt.enabled`,
-  disabled without a key). All sends go through `encodeBody` / `sendWSControl`, responses through
+- **Frontend**: "Parameter obfuscation" checkbox (General section, `settings.paramCrypt.enabled`,
+  hidden without a key). All sends go through `encodeBody` / `sendWSControl`, responses through
   `decodeResponseJSON` / `wsNextJSON(ws, decrypt)`; the client knows whether it encrypted and decodes
   accordingly (WS sessions keep it in `wsSession.encrypted`). Keys are signals recomputed on an
   auth-key change (`applyAuthK`): request keys `paramEncKeyBytes`/`paramMacKeyBytes` (for sends),
@@ -563,16 +561,19 @@ prop). The only Trusted Types policy, `pdfjs-worker` (`web/app/main.js`), admits
 
 Preact + htm + `@preact/signals` + `deepsignal` as native ES modules; no build step, no CDN.
 
-- `index.html` — served at `/`, so asset URLs carry `static/`; loads the global-setting scripts
-  (`pdf-lib.min.js`, `aes.js`, `sha256.js`) and `static/app/main.js`
+- `index.html` — served at `/`, so asset URLs carry `static/`; holds the login gate's form and
+  loads only `base.css`, `sha256.js` and `static/app/gate.js` (see "Login gate")
+- `base.css` — variables, page base and the gate; `style.css` — the app, loaded after login
 - `favicon.svg` — linked relatively (`/favicon.ico` would miss the path prefix)
 - `pdf.min.mjs`, `pdf.worker.min.mjs` — pdf.js 6.4.299 (modern build)
 - `app/vendor/` — the libraries, bare imports rewritten to relative paths; `noble-hashes/` is the
   scrypt subset of `@noble/hashes` 2.4.0
-- `app/main.js` — boot; `app/store.js` — `settings`, `state`, derived key signals, `API_BASE`;
-  `app/nav.js` — `TABS`, `setTab`, `restoreTab`, `refreshActive`, `onAuthKeyChange`
+- `app/gate.js` — login gate; `app/main.js` — `start(publicSettings)`, called by the gate;
+  `app/store.js` — `settings`, `state`, derived key signals;
+  `app/nav.js` — `TABS`, `setTab`, `restoreTab`, `refreshActive`
 - `app/lib/` — logic: `api.js` (auth headers, `encodeBody`/`decodeResponseJSON`/`sendWSControl`),
   `transform.js`, `ws.js`, `transfers.js`, `paramcrypt.js`, `authhash.js`, `util.js`, `outbox.js`,
+  `authsession.js` (shared with the gate: `API_BASE`, K in `sessionStorage`, `logout`, `reRegister`),
   one module per tab
 - `app/components/` — `html.js` (bound `html` tag, `text`/`num`/`check`/`sel` binding helpers),
   `app.js`, `panel.js`, `browser.js` (file browser, both roots), `transfers.js`, `outbox.js`, one per tab
@@ -638,25 +639,42 @@ against their option lists (`backendTypes`, `transformTypes`, `clipSearchScopes`
 survives and `auto: true` regenerates.
 
 - The auth key is not in `settings`: K lives in `sessionStorage["warpgate-auth-k"]` (per browser
-  tab, gone when it closes; see "Authentication"). `loadAuthK` deletes the old
+  tab, gone when it closes; see "Login gate"). `loadAuthK` deletes the old
   `"warpgate-auth-key"` entry.
 - `state` is not persisted (`browse` paths could go stale; `wsFrameMinKB`/`wsFrameMaxKB` come from
-  `/api/public/settings`; `authShowKey` starts masked). Exception: `state.tab`, kept in
+  `/api/public/settings`). Exception: `state.tab`, kept in
   `sessionStorage["warpgate-tab"]` by `setTab` and reapplied by `restoreTab()` (unknown or hidden → Download).
+
+### Login gate
+
+Before login only the gate is loaded (`index.html` form, `base.css`, `sha256.js`, `app/gate.js` with
+`authhash.js`/scrypt, `authsession.js`, `util.js`); the app is fetched after it. Not access control
+(`/static/*` stays public); it just doesn't send what isn't needed.
+- `gate.js` (plain DOM, no Preact/store) fetches `/api/public/settings` (re-registering once on the
+  blank refusal, like `apiFetch`), derives K from the passphrase with progress, and checks it with
+  `POST /api/auth/check`: only `204` is success (the blank refusal is a `200`), `401` wrong
+  passphrase, `429` blocked. Then K goes to `sessionStorage`, and `startApp` loads `style.css`,
+  `aes.js` and `pdf-lib.min.js` (classic scripts setting globals, loaded by `import()` because
+  Trusted Types blocks `script.src`; `aes.js`'s wrapper is patched from `this` to `globalThis`),
+  then `main.js`, and calls `start(publicSettings)`.
+- On load: `auth: false` starts the app directly; a stored K is checked first, a rejected one is
+  dropped and the form shown.
+- The header shows "Key-ID <fingerprint>" and Log out (`logout(false)`: drop K, reload; asks first while
+  transfers or a benchmark run). A rejected key mid-session (`logout(true)`) sets
+  `sessionStorage["warpgate-auth-rejected"]`, so the gate says why.
 
 ### Side panel
 
 Toggled by ⚙ Settings (`settings.panel.open`); Esc closes it unless the lightbox or push-function
-dialog is open or focus is outside the panel. While closed, an orange dot flags `state.authFailed`
-(last list/poll got `401`, `noteAuthStatus`) or an outbox in `reconnect`/`auth`/`error`. Every
+dialog is open or focus is outside the panel. While closed, an orange dot flags an outbox in
+`reconnect`/`error`. Every
 setting has a short `title` tooltip on its label and input that doesn't restate the label.
 
 | Section   | Contents |
 |-----------|----------|
-| Auth      | Passphrase form (masked, 👁 not persisted; Set) or "Key ID: <fingerprint>" with Change / Clear (`components/auth.js`); Parameter obfuscation |
 | Benchmark | Benchmark tab: Size (1–1024 MB), Chunk size (≤ Size) |
 | Chunking  | Download: chunking, chunk size, reassembly. Upload: chunking and size (HTTP backend only). Chunk sizes ≤ 250 MB (`REQUEST_LIMIT_MB`) |
-| General   | Auto-refresh (1 s; clipboard: long poll); Confirm note delete; Backend (HTTP/WS); WS frame size (WS only, clamped to the server); Content-Type override (download, HTTP only); Extension override (`settings.extOverride`, replace/append the saved file's extension for browsers that block types; `applyExtOverride`) |
+| General   | Auto-refresh (1 s; clipboard: long poll); Confirm note delete; Parameter obfuscation (with a key); Backend (HTTP/WS); WS frame size (WS only, clamped to the server); Content-Type override (download, HTTP only); Extension override (`settings.extOverride`, replace/append the saved file's extension for browsers that block types; `applyExtOverride`) |
 | Outbox    | Status, connect/reconnect/disconnect, "Push function" dialog; hidden without `showDirectoryPicker` |
 | Transform | Type and parameters (auto-generated keys/IVs) |
 
@@ -703,8 +721,8 @@ git-ignored): `local/push-to-wgclip/push-to-clip.md`.
 - **The tab never writes files**: Edge marks page-written files (Mark of the Web) and such writes
   sometimes fail; reading, deleting and renaming are reliable.
 - **Retries**: missing content, hash mismatch or a server error retry until 10 s after the hash file
-  appeared (`FAIL_AFTER_MS`); too large or not UTF-8 fail at once. A `401` pauses
-  (`status: 'auth'`) until the key changes.
+  appeared (`FAIL_AFTER_MS`); too large or not UTF-8 fail at once. A `401` returns the page to the
+  login gate, leaving the files in place.
 - **No duplicates**: name+hash is recorded before deleting, in the tab's memory (`pushedHere`) and
   in IndexedDB (`warpgate-outbox`, store `kv`, key `pushed:<name>.sha256`; writes resolve on the
   transaction's commit, a failed one raises a red toast); a recorded hash file is only cleaned up.

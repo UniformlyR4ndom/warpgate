@@ -1,0 +1,146 @@
+:root {
+  --accent: #63d0ba;
+  --text: #e4e4e4;
+  --muted: #b7bfc3;
+  --dim: #98a3a8;
+  --faint: #555;
+  --border: #3a4750;
+  --input-bg: #2f3d44;
+  --error: #ff8989;
+  --warn: #ebaf55;
+  scrollbar-color: var(--faint) #263238;
+  accent-color: var(--accent);
+  color-scheme: dark;
+  font-size: 17px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  font-family: monospace;
+  font-size: 14px;
+  margin: 0;
+  padding: 0;
+  background: #263238;
+  color: var(--text);
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+}
+
+#app {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+h1 {
+  margin: 0;
+  font-size: 1.2rem;
+  color: #9cdcfe;
+}
+
+.key-masked {
+  -webkit-text-security: disc;
+}
+
+.key-toggle {
+  flex-shrink: 0;
+  background: none;
+  border: none;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 1rem;
+  padding: 0 0.2rem;
+  line-height: 1;
+}
+
+.key-toggle:hover {
+  color: var(--text);
+}
+
+#gate {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+#gate[hidden] {
+  display: none;
+}
+
+.gate-card {
+  width: 22rem;
+  max-width: calc(100% - 2rem);
+  border: 1px solid var(--border);
+  padding: 1.5rem;
+}
+
+.gate-card h1 {
+  margin-bottom: 1.2rem;
+}
+
+.gate-card label {
+  display: block;
+  font-size: 0.85rem;
+  color: var(--muted);
+  margin-bottom: 0.3rem;
+}
+
+.gate-row {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+
+.gate-row input {
+  flex: 1;
+  min-width: 0;
+  background: var(--input-bg);
+  border: 1px solid var(--border);
+  color: var(--text);
+  font-family: monospace;
+  font-size: 0.85rem;
+  padding: 0.3rem 0.4rem;
+}
+
+.gate-row input:focus {
+  outline: 1px solid var(--accent);
+  border-color: var(--accent);
+}
+
+#gate-submit {
+  margin-top: 0.9rem;
+  background: #3a4a53;
+  border: 1px solid #5f707a;
+  color: var(--text);
+  cursor: pointer;
+  font-family: monospace;
+  font-size: 0.85rem;
+  padding: 0.25rem 0.9rem;
+}
+
+#gate-submit:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+#gate-submit:disabled {
+  color: var(--faint);
+  cursor: default;
+}
+
+.gate-msg {
+  min-height: 1.2em;
+  margin-top: 0.7rem;
+  font-size: 0.8rem;
+  color: var(--dim);
+}
+
+.gate-msg.gate-error {
+  color: var(--error);
+}

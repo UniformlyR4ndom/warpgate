@@ -1,9 +1,8 @@
 import { html, text, num, check, sel } from './html.js';
 import { useEffect } from '../vendor/hooks.module.js';
-import { settings, state, backendTypes, transformTypes, extOverrideModes } from '../store.js';
+import { settings, state, authKeyHash, backendTypes, transformTypes, extOverrideModes } from '../store.js';
 import { randomHex, normalizeExtOverride } from '../lib/util.js';
 import { OutboxSettings } from './outbox.js';
-import { AuthSettings } from './auth.js';
 
 // Tooltips, shared by each setting's label and its input.
 const TIP = {
@@ -17,6 +16,7 @@ const TIP = {
   ulsize: "Size of each uploaded chunk, in megabytes (at most 250).",
   auto: "Reload the current tab's list every second.",
   confirm: "Ask for confirmation before deleting a clipboard note.",
+  pcrypt: "Encrypt JSON request bodies and WebSocket control messages using keys derived from the passphrase, so a proxy inspecting plaintext traffic can't read transform keys or paths.",
   backend: "Transport used for downloads, uploads, and the benchmark tab. WebSocket uses one connection per file with a configurable wire frame size.",
   frame: "Maximum size of each WebSocket frame. Clamped to the range the server allows.",
   ctype: "Overrides the Content-Type header on the download response. WebSocket downloads have no HTTP headers, so this only applies to the HTTP POST backend.",
@@ -74,10 +74,6 @@ export function Panel() {
     <aside class="panel">
         <div class="panel-content">
 
-          <${Section} title="Auth" openKey="authOpen">
-            <${AuthSettings} />
-          <//>
-
           <${Section} title="Benchmark" openKey="benchmarkOpen" hidden=${tab !== 'benchmark'}>
             <label title=${TIP.bsize}>Size (MB)</label>
             <input type="number" ...${num(settings.benchmark, 'sizeMB')} min="1" max="1024" title=${TIP.bsize} />
@@ -110,6 +106,8 @@ export function Panel() {
           <${Section} title="General" openKey="generalOpen">
             <label class="auto-label" title=${TIP.auto}><input type="checkbox" ...${check(settings, 'autoRefresh')} /> Auto-refresh</label>
             <label class="auto-label" title=${TIP.confirm}><input type="checkbox" ...${check(settings, 'confirmDelete')} /> Confirm note delete</label>
+            ${authKeyHash.value && html`
+              <label class="auto-label" title=${TIP.pcrypt}><input type="checkbox" ...${check(settings.paramCrypt, 'enabled')} /> Parameter obfuscation</label>`}
             ${tabTransport && html`<div>
               <label title=${TIP.backend}>Backend</label>
               <select ...${sel(settings, 'backend')} title=${TIP.backend}>

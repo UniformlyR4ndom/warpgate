@@ -12,6 +12,7 @@ type settingsResponse struct {
 	Uploads    bool   `json:"uploads"`
 	UlFlat     bool   `json:"ulFlat"`
 	KDFSalt    string `json:"kdfSalt"`
+	Auth       bool   `json:"auth"`
 }
 
 // handleSettings exposes server-configured limits the frontend needs to
@@ -26,5 +27,6 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 		Uploads:    s.ulRoot != nil,
 		UlFlat:     s.cfg.UlFlat,
 		KDFSalt:    hex.EncodeToString(s.kdfSalt),
+		Auth:       !s.cfg.NoAuth,
 	})
 }

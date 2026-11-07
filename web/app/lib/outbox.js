@@ -4,7 +4,7 @@
 // optional title). This tab only reads, deletes and renames files in the folder:
 // it deletes both files after a successful push and renames the hash file to
 // <name>.failed otherwise.
-import { state, authKeyHash } from '../store.js';
+import { state } from '../store.js';
 import { createNote, reloadClipboard, sanitizeClipTitle } from './clipboard.js';
 import { sha256Hex } from './util.js';
 import { addToast } from './notices.js';
@@ -60,9 +60,6 @@ function kvDel(key)      { return kvRequest('readwrite', function(s) { return s.
 export async function initOutbox() {
   state.outbox.supported = typeof window.showDirectoryPicker === 'function';
   if (!state.outbox.supported) return;
-  authKeyHash.subscribe(function() {
-    if (state.outbox.status === 'auth') { state.outbox.status = 'watching'; kick(); }
-  });
   var handle = null;
   try { handle = await kvGet('dir'); } catch (e) {}
   if (!handle) return;
@@ -113,10 +110,6 @@ function start(handle) {
 
 function stop() {
   if (current) { current.stop(); current = null; }
-}
-
-function kick() {
-  if (current) current.kick();
 }
 
 function setError(w, err) {
@@ -183,7 +176,7 @@ async function scan(w) {
   }
   var names = Object.keys(files).sort();
   for (var i = 0; i < names.length; i++) {
-    if (w.stopped || state.outbox.status === 'auth') return;
+    if (w.stopped) return;
     if (names[i].endsWith('.sha256')) await processPush(w, names[i].slice(0, -'.sha256'.length), files);
   }
   if (!w.stopped) await removeLeftovers(w.folder, names, files);
@@ -228,7 +221,7 @@ async function processPush(w, name, files) {
   try {
     id = await createNote(title, text, 'outbox');
   } catch (e) {
-    if (e.status === 401) { if (!w.stopped) state.outbox.status = 'auth'; return; }
+    if (e.status === 401) return; // the page is returning to the gate
     return retryOrFail(w, name, files, waited, 'server error (' + e.message + ')');
   }
   // Recorded before deleting, so a hash file that survives a failed delete

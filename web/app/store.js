@@ -1,16 +1,13 @@
 import { deepSignal } from './vendor/deepsignal.module.js';
 import { signal, effect } from './vendor/signals.module.js';
-import { deriveKey, authToken, fingerprint, labelBytes } from './lib/authhash.js';
-import { bytesToHex, hexToBytes, chunkSizeMB } from './lib/util.js';
+import { authToken, fingerprint, labelBytes } from './lib/authhash.js';
+import { chunkSizeMB } from './lib/util.js';
+import { API_BASE, loadAuthK } from './lib/authsession.js';
 
-export const API_BASE = window.location.pathname.replace(/\/[^/]*$/, '');
+export { API_BASE };
 
 const SETTINGS_STORAGE_KEY = 'warpgate-settings';
 const SETTINGS_VERSION = 1;
-// The derived key K lives in sessionStorage, so it doesn't outlive the
-// browser tab; the passphrase itself is never stored.
-const AUTH_K_STORAGE_KEY = 'warpgate-auth-k';
-const LEGACY_AUTH_KEY_STORAGE_KEY = 'warpgate-auth-key';
 
 // Persisted config. Keep serializable.
 export const settings = deepSignal({
@@ -34,7 +31,7 @@ export const settings = deepSignal({
   uploadChunking: { enabled: false, chunkSizeMB: 100 },
   benchmark: { sizeMB: 10, chunkSizeMB: 4 },
   panel: {
-    open: true, authOpen: true, benchmarkOpen: true,
+    open: true, benchmarkOpen: true,
     transformOpen: true, chunkingOpen: true, generalOpen: true, outboxOpen: true,
   },
 });
@@ -48,14 +45,6 @@ export const state = deepSignal({
     ul: { segments: [], entries: [], error: null },
   },
   newDirName: null, // null = the upload tab's "New folder" form is closed
-  authFailed: false,
-  authBlocked: false,
-  // Auth section: "Change" form open, input, derivation progress (0..1, null = idle).
-  authEditing: false,
-  authPassphrase: '',
-  authDeriving: null,
-  authError: '',
-  kdfSalt: '',
   uploads: true,
   ulFlat: false,
   uploadEntries: [],
@@ -80,16 +69,15 @@ export const state = deepSignal({
   clipSearch: '',
   clipError: null,
   clipSubmitting: false,
-  authShowKey: false,
   wsFrameMinKB: 1,
   wsFrameMaxKB: 262144,
   hasFileSystemAccess: typeof window.showSaveFilePicker === 'function',
-  // status: off | reconnect | other-tab | watching | auth | error
+  // status: off | reconnect | other-tab | watching | error
   outbox: { supported: false, status: 'off', folder: '', error: '', showScript: false },
   toasts: [],
 });
 
-// All derived from K by setAuthK, not per request. authToken is '' without a key.
+// Derived from K once at start. authKeyHash is '' without a key (-no-auth).
 export const authKeyHash = signal('');
 export const authFingerprint = signal('');
 export const paramEncKeyBytes = signal(null);
@@ -168,15 +156,6 @@ function loadSettings() {
   normalizeSettings();
 }
 
-function loadAuthK() {
-  try {
-    sessionStorage.removeItem(LEGACY_AUTH_KEY_STORAGE_KEY);
-    var hex = sessionStorage.getItem(AUTH_K_STORAGE_KEY) || '';
-    if (/^[0-9a-f]{64}$/.test(hex)) return hexToBytes(hex);
-  } catch(e) {}
-  return null;
-}
-
 function saveSettings() {
   try {
     localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify({ version: SETTINGS_VERSION, settings: settings }));
@@ -209,73 +188,11 @@ function applyAuthK(k) {
   paramRespMacKeyBytes.value = k ? labelBytes(k, 'warpgate-param-resp-mac-v2') : null;
 }
 
-var onKeyChange = null;
-
-// Installs K (null: no key), persists it and resets the auth status.
-function setAuthK(k) {
-  applyAuthK(k);
-  try {
-    if (k) sessionStorage.setItem(AUTH_K_STORAGE_KEY, bytesToHex(k));
-    else sessionStorage.removeItem(AUTH_K_STORAGE_KEY);
-  } catch(e) {}
-  state.authFailed = false;
-  state.authBlocked = false;
-  if (onKeyChange) onKeyChange();
-}
-
-var settingsPromise = null;
-
-// Resolves once /api/public/settings has been applied (or failed).
-export function serverSettingsLoaded() {
-  return settingsPromise;
-}
-
-// Derives K from the passphrase form's input; an empty passphrase means no
-// key (servers started with -no-auth).
-export async function submitPassphrase() {
-  if (state.authDeriving !== null) return;
-  var passphrase = state.authPassphrase;
-  state.authError = '';
-  if (!passphrase) {
-    finishPassphrase(null);
-    return;
-  }
-  state.authDeriving = 0;
-  try {
-    var salt = state.kdfSalt || (await settingsPromise, state.kdfSalt);
-    if (!salt) throw new Error('could not load the key salt from the server');
-    var k = await deriveKey(passphrase, salt, function(p) {
-      p = Math.floor(p * 20) / 20;
-      if (p !== state.authDeriving) state.authDeriving = p;
-    });
-    finishPassphrase(k);
-  } catch (e) {
-    state.authError = e.message;
-  } finally {
-    state.authDeriving = null;
-  }
-}
-
-function finishPassphrase(k) {
-  state.authPassphrase = '';
-  state.authShowKey = false;
-  state.authEditing = false;
-  setAuthK(k);
-}
-
-export function clearAuthK() {
-  state.authEditing = false;
-  setAuthK(null);
-}
-
-// Wires persistence and fetches server settings. `onAuthKeyChange` (optional)
-// runs after every key change, for reloading listings.
-export function initStore(onAuthKeyChange) {
+// Wires persistence and applies /api/public/settings, fetched by the gate.
+export function initStore(publicSettings) {
   loadSettings();
   applyAuto();
-  var k = loadAuthK();
-  applyAuthK(k);
-  onKeyChange = onAuthKeyChange || null;
+  applyAuthK(publicSettings.auth === false ? null : loadAuthK());
 
   // Persist on any settings change (reading the whole tree subscribes).
   var firstSave = true;
@@ -285,18 +202,10 @@ export function initStore(onAuthKeyChange) {
     saveSettings();
   });
 
-  fetch(API_BASE + '/api/public/checkin').catch(function() {});
-  settingsPromise = fetch(API_BASE + '/api/public/settings')
-    .then(function(res) { return res.ok ? res.json() : null; })
-    .then(function(data) {
-      if (!data) return;
-      state.kdfSalt = /^[0-9a-f]+$/.test(data.kdfSalt || '') ? data.kdfSalt : '';
-      state.uploads = data.uploads !== false;
-      state.ulFlat = !!data.ulFlat;
-      state.wsFrameMinKB = Math.ceil(data.wsFrameMin / 1024);
-      state.wsFrameMaxKB = Math.floor(data.wsFrameMax / 1024);
-      if (settings.wsFrameSizeKB > state.wsFrameMaxKB) settings.wsFrameSizeKB = state.wsFrameMaxKB;
-      if (settings.wsFrameSizeKB < state.wsFrameMinKB) settings.wsFrameSizeKB = state.wsFrameMinKB;
-    })
-    .catch(function() {});
+  state.uploads = publicSettings.uploads !== false;
+  state.ulFlat = !!publicSettings.ulFlat;
+  state.wsFrameMinKB = Math.ceil(publicSettings.wsFrameMin / 1024);
+  state.wsFrameMaxKB = Math.floor(publicSettings.wsFrameMax / 1024);
+  if (settings.wsFrameSizeKB > state.wsFrameMaxKB) settings.wsFrameSizeKB = state.wsFrameMaxKB;
+  if (settings.wsFrameSizeKB < state.wsFrameMinKB) settings.wsFrameSizeKB = state.wsFrameMinKB;
 }

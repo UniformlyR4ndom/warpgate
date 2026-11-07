@@ -4,14 +4,24 @@
   <meta charset="utf-8">
   <title>Warpgate</title>
   <link rel="icon" type="image/svg+xml" href="static/favicon.svg">
-  <link rel="stylesheet" href="static/style.css">
+  <link rel="stylesheet" href="static/base.css">
 </head>
 <body>
+  <div id="gate" hidden>
+    <form id="gate-form" class="gate-card">
+      <h1>Warpgate</h1>
+      <label for="gate-pass" title="The server's -auth-key. A key is derived from it and kept for this browser tab; the passphrase itself is not stored.">Passphrase</label>
+      <div class="gate-row">
+        <input id="gate-pass" type="text" class="key-masked" autocomplete="off" spellcheck="false">
+        <button type="button" id="gate-toggle" class="key-toggle" title="Show passphrase">👁</button>
+      </div>
+      <button type="submit" id="gate-submit">Unlock</button>
+      <div id="gate-msg" class="gate-msg"></div>
+    </form>
+  </div>
   <div id="app"></div>
 
-  <script src="static/pdf-lib.min.js"></script>
-  <script src="static/aes.js"></script>
   <script src="static/sha256.js"></script>
-  <script type="module" src="static/app/main.js"></script>
+  <script type="module" src="static/app/gate.js"></script>
 </body>
 </html>

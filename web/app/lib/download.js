@@ -17,8 +17,8 @@ import { addToast } from './notices.js';
 const API_PREFIX = { dl: '/api/files/', ul: '/api/ul/' };
 
 // One guard per root: a listing that resolves after the user has navigated
-// elsewhere (or changed the auth key) is dropped instead of overwriting the
-// directory now on screen, and overlapping auto-refresh ticks are serialized.
+// elsewhere is dropped instead of overwriting the directory now on screen, and
+// overlapping auto-refresh ticks are serialized.
 const loadGuard = { dl: makeRequestGuard(), ul: makeRequestGuard() };
 
 export async function load(root) {
@@ -52,7 +52,7 @@ export async function load(root) {
   }
 }
 
-// Reload after a context change (navigation, auth key / DB change): mark the
+// Reload after a context change (navigation, a local change): mark the
 // new context so any in-flight listing for the old one is dropped and the
 // serialize check doesn't skip this reload.
 export function reload(root) {

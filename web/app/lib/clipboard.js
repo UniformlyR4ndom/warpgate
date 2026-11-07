@@ -8,8 +8,7 @@ import { makeRequestGuard } from './loadguard.js';
 import { makeClipPoller } from './clippoll.js';
 
 // Serializes overlapping auto-refresh polls (so a delayed one can't overwrite
-// newer notes or rewind the cursor) and drops a poll whose database changed
-// under it (auth key / DB swap).
+// newer notes or rewind the cursor) and drops a poll superseded by a reload.
 const clipGuard = makeRequestGuard();
 // Attachment id -> its current load; a load whose entry was replaced or
 // removed meanwhile is discarded.
@@ -97,16 +96,6 @@ export function visibleClipItems() {
     .filter(Boolean);
 }
 
-// Full resync from scratch — the auth key may now point at a different DB.
-export function resetClipSync() {
-  bumpClip();
-  state.clipCursor = 0;
-  state.clipItems  = [];
-  Object.keys(state.clipImages).forEach(revokeClipImage);
-  // An edit refers to note and attachment ids of the previous database.
-  if (state.clipEditId !== null) resetClipDraft();
-}
-
 function bumpClip() {
   clipGuard.bump();
   clipPoller.abort();
@@ -131,7 +120,7 @@ export async function pollClipboard(opts) {
     return { status: 'ok' };
   } catch(err) {
     if (!clipGuard.fresh(token) || err.name === 'AbortError') return { status: 'skipped' };
-    var suspect = !err.refused && !state.authFailed && err.status !== 401 && err.status !== 429;
+    var suspect = !err.refused && err.status !== 401 && err.status !== 429;
     // A suspect long-poll failure is checked by a plain poll before it is shown.
     if (!(wait && suspect)) state.clipError = 'Failed to load clipboard (' + err.message + ')';
     return { status: 'error', error: err.message, suspect: suspect };

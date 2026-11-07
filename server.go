@@ -155,6 +155,7 @@ func NewServer(cfg Config, db *DB) (srv *Server, err error) {
 	}
 	s.mux.HandleFunc("/api/public/checkin", s.handleCheckin)
 	s.mux.HandleFunc("/api/public/settings", s.handleSettings)
+	s.mux.Handle("/api/auth/check", s.withAuth(s.handleAuthCheck))
 	s.mux.Handle("/api/clip/state", s.withAuth(s.handleClipState))
 	s.mux.Handle("/api/clip/new", s.withAuth(s.handleClipNew))
 	s.mux.Handle("/api/clip/edit", s.withAuth(s.handleClipEdit))

@@ -97,6 +97,8 @@ Confidentiality is provided only by TLS, and only as far as no proxy intercepts 
 - No string HTML sinks; note text, titles, captions and filenames are rendered as text.
 - Only the derived key is kept, in `sessionStorage`, so it doesn't outlive the tab; the passphrase
   is not stored.
+- Before login only the login gate's code is loaded; the app follows once the key checks out. This
+  is not access control: `/static/*` is public, and the code is open source anyway.
 - Vendored libraries are kept current (pdf.js 6.4.299).
 
 **CLI (`wgcli`)**

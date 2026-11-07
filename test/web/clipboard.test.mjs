@@ -8,7 +8,7 @@
 // The network boundary (api.js) and the store are stubbed via the loader; the
 // real transform/util/loadguard run.
 import assert from 'node:assert/strict';
-import { submitClip, editClip, resetClipDraft, resetClipSync, ensureAttachment, retryAttachment, reloadClipboard } from '../../web/app/lib/clipboard.js';
+import { submitClip, editClip, resetClipDraft, ensureAttachment, retryAttachment, reloadClipboard } from '../../web/app/lib/clipboard.js';
 import { state, settings } from './stub-store.mjs';
 import { mock, ok, fail } from './stub-api.mjs';
 
@@ -139,18 +139,6 @@ await test('editing another note does not carry over pending images', async () =
   assert.deepEqual(state.clipCaptionEdits, { 9: 'cap' });
 });
 
-await test('a database change drops an edit draft but keeps a new-note draft', async () => {
-  resetState({ clipEditId: 4, clipText: 'edit' });
-  resetClipSync();
-  assert.equal(state.clipEditId, null);
-  assert.equal(state.clipText, '');
-
-  resetState({ clipText: 'new note', pendingAttachments: [pendingImage('a')] });
-  resetClipSync();
-  assert.equal(state.clipText, 'new note');
-  assert.equal(state.pendingAttachments.length, 1);
-});
-
 function imageResponse() {
   return { ok: true, status: 200, arrayBuffer: async function() { return new Uint8Array([1, 2, 3]).buffer; } };
 }
@@ -161,17 +149,6 @@ function deferredFetch() {
   mock.reset(function() { return gate.then(imageResponse); });
   return release;
 }
-
-await test('an attachment load finishing after a database change is dropped', async () => {
-  resetState();
-  var release = deferredFetch();
-  var p = ensureAttachment({ id: 5, mime: 'image/png' });
-  resetClipSync();
-  var r = trackRevokes();
-  try { release(); await p; } finally { r.restore(); }
-  assert.equal(state.clipImages[5], undefined);
-  assert.equal(r.revoked.length, 1, 'the stale object URL is revoked');
-});
 
 await test('an attachment pruned while loading is not cached', async () => {
   resetState();

@@ -37,7 +37,6 @@ function statusText(o) {
     case 'reconnect': return 'Needs permission';
     case 'other-tab': return 'Handled by another warpgate tab';
     case 'watching':  return `Watching "${o.folder}"`;
-    case 'auth':      return 'Paused: auth key rejected';
     case 'error':     return `Error: ${o.error}`;
     default:          return 'Not connected';
   }
@@ -47,7 +46,6 @@ function statusTitle(o) {
   switch (o.status) {
     case 'reconnect': return `The browser needs permission to access "${o.folder}" again. Click Reconnect.`;
     case 'other-tab': return 'Another warpgate tab is watching this outbox. This tab takes over when that one closes.';
-    case 'auth':      return 'The server rejected the auth key. Enter the right key to resume.';
     default:          return '';
   }
 }

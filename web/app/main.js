@@ -2,10 +2,10 @@ import { render } from './vendor/preact.module.js';
 import { effect, untracked } from './vendor/signals.module.js';
 import { html } from './components/html.js';
 import { settings, state } from './store.js';
-import { initStore, serverSettingsLoaded } from './store.js';
+import { initStore } from './store.js';
 import { load } from './lib/download.js';
 import { initOutbox } from './lib/outbox.js';
-import { refreshListings, onAuthKeyChange, restoreTab } from './nav.js';
+import { refreshListings, restoreTab } from './nav.js';
 import { startClipPolling, stopClipPolling } from './lib/clipboard.js';
 import { App } from './components/app.js';
 import { GlobalWorkerOptions } from '../pdf.min.mjs';
@@ -24,10 +24,10 @@ GlobalWorkerOptions.workerPort = new Worker(workerURL, { type: 'module' });
 
 var refreshTimer = null;
 
-async function boot() {
-  await initStore(onAuthKeyChange);
+// Called by the gate once the key is accepted, with /api/public/settings.
+export function start(publicSettings) {
+  initStore(publicSettings);
   load('dl'); // initial download listing
-  await serverSettingsLoaded();
   restoreTab();
 
   // Auto-refresh: poll the active tab's listing every second while enabled.
@@ -44,5 +44,3 @@ async function boot() {
   render(html`<${App} />`, document.getElementById('app'));
   initOutbox();
 }
-
-boot();

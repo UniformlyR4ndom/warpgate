@@ -131,7 +131,7 @@ func (c fwClient) expectRedirect(method, path, ip, to string) {
 func (c fwClient) expectUI(path, ip string) {
 	c.t.Helper()
 	rec := c.do(http.MethodGet, path, ip)
-	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "static/app/main.js") {
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "static/app/gate.js") {
 		c.t.Errorf("GET %s from %s: got %d %q; want the UI", path, ip, rec.Code, rec.Body.String())
 	}
 }

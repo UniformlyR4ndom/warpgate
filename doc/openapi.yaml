@@ -281,7 +281,7 @@ paths:
             application/json:
               schema:
                 type: object
-                required: [wsFrameMin, wsFrameMax, uploads, ulFlat, kdfSalt]
+                required: [wsFrameMin, wsFrameMax, uploads, ulFlat, kdfSalt, auth]
                 properties:
                   wsFrameMin:
                     type: integer
@@ -305,12 +305,36 @@ paths:
                     type: string
                     description: Hex-encoded scrypt salt for the auth key, fixed for the life of the database.
                     example: 83ebd22deef9e82ccebdd0060a31f8d0
+                  auth:
+                    type: boolean
+                    description: Authentication is enabled (false under `-no-auth`).
+                    example: true
               example:
                 wsFrameMin: 1024
                 wsFrameMax: 16777216
                 uploads: true
                 ulFlat: false
                 kdfSalt: 83ebd22deef9e82ccebdd0060a31f8d0
+                auth: true
+
+  /api/auth/check:
+    post:
+      operationId: checkAuth
+      summary: Verify the auth token
+      description: |
+        Succeeds exactly when `X-Auth` is valid (always under `-no-auth`); no body, no side
+        effects. A wrong token counts toward the failure limit like on any other endpoint.
+        Clients must test for `204`: the uniform refusal of a wrong path prefix or the IP
+        firewall is an empty `200`.
+      responses:
+        "204":
+          description: The token is valid.
+        "401":
+          description: Missing or invalid `X-Auth` header.
+        "405":
+          description: Not a POST.
+        "429":
+          description: Too many failed attempts from this client.
 
   /api/files/list:
     post:

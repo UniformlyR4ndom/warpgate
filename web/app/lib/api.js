@@ -1,9 +1,10 @@
 // Request/response plumbing shared by every tab: auth headers, the
 // encode/decode choke points for parameter encryption, and WS helpers that
 // depend on the store.
-import { API_BASE, settings, state, authKeyHash, paramEncKeyBytes } from '../store.js';
+import { API_BASE, settings, authKeyHash, paramEncKeyBytes } from '../store.js';
 import { encryptParams, decryptParams } from './paramcrypt.js';
 import { wsOpen } from './ws.js';
+import { logout, isBlankRefusal, reRegister } from './authsession.js';
 
 export { API_BASE, decryptParams };
 
@@ -13,21 +14,26 @@ export function authHeaders() {
   return h;
 }
 
-function authRejectedError() {
-  return Object.assign(new Error('The server rejected the auth key; set it again in the settings'), { status: 401 });
+var keyRejected = false;
+
+// Returns to the gate. Nothing is sent meanwhile, so requests still queued
+// can't use up the server's failed-attempt budget.
+function rejectKey() {
+  if (!keyRejected) {
+    keyRejected = true;
+    logout(true);
+  }
+  return Object.assign(new Error('The server rejected the auth key'), { status: 401 });
 }
 
-// Every authenticated request goes through here. After a 401 nothing is sent
-// until the key changes, so polling can't use up the server's failed-attempt
-// budget.
+// Every authenticated request goes through here.
 // rawBytes marks a download, where an empty text/html body can be genuine
 // (empty file with a Content-Type override), so the blank check is skipped.
 export async function apiFetch(url, opts, rawBytes) {
-  if (state.authFailed) throw authRejectedError();
+  if (keyRejected) throw rejectKey();
   var res = await fetch(url, opts);
-  if (res.status === 401) state.authFailed = true;
-  state.authBlocked = res.status === 429;
-  if (state.authBlocked) {
+  if (res.status === 401) throw rejectKey();
+  if (res.status === 429) {
     throw Object.assign(new Error('Too many failed authentication attempts from this IP; wait up to 10 minutes or restart the server'), { status: 429 });
   }
   if (!rawBytes && isBlankRefusal(res)) {
@@ -39,35 +45,15 @@ export async function apiFetch(url, opts, rawBytes) {
   return res;
 }
 
-// The server's uniform refusal (wrong path, IP firewall): empty 200 text/html.
-function isBlankRefusal(res) {
-  return res.status === 200 &&
-    res.headers.get('Content-Length') === '0' &&
-    res.headers.get('Content-Type') === 'text/html; charset=utf-8';
-}
-
-var reRegistering = null;
-
-// POSTs to the base path, which registers this IP when the firewall registers
-// there and registration is open; a 303 means admitted.
-function reRegister() {
-  if (!reRegistering) {
-    reRegistering = fetch(API_BASE + '/', { method: 'POST', redirect: 'manual', cache: 'no-store' })
-      .then(function(res) { return res.type === 'opaqueredirect'; }, function() { return false; })
-      .finally(function() { reRegistering = null; });
-  }
-  return reRegistering;
-}
-
-// WebSocket counterpart of apiFetch's gate.
+// WebSocket counterpart of apiFetch's checks.
 export async function apiWSOpen(path) {
-  if (state.authFailed) throw authRejectedError();
+  if (keyRejected) throw rejectKey();
   return wsOpen(wsBaseURL() + path);
 }
 
-// Records an "unauthorized" handshake ack like an HTTP 401.
+// Treats an "unauthorized" handshake ack like an HTTP 401.
 export function noteWSAck(ack) {
-  if (!ack.ok && ack.error === 'unauthorized') state.authFailed = true;
+  if (!ack.ok && ack.error === 'unauthorized') rejectKey();
   return ack;
 }
 

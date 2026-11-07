@@ -61,7 +61,7 @@ func TestPathPrefixRouting(t *testing.T) {
 		}
 	}
 
-	if rec := do(http.MethodGet, "/pfx/"); rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "static/app/main.js") {
+	if rec := do(http.MethodGet, "/pfx/"); rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "static/app/gate.js") {
 		t.Errorf("GET /pfx/: got %d %q; want index.html", rec.Code, rec.Body.String())
 	}
 

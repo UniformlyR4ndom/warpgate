@@ -1,9 +1,9 @@
 // Tab navigation + the shared refresh dispatch. Tab-specific loaders are
 // wired in as each tab is ported.
 import { state, settings } from './store.js';
-import { load, reload } from './lib/download.js';
+import { load } from './lib/download.js';
 import { refreshUpload } from './lib/upload.js';
-import { pollClipboard, resetClipSync } from './lib/clipboard.js';
+import { pollClipboard } from './lib/clipboard.js';
 
 const TABS = [
   { id: 'download',  label: 'Download' },
@@ -40,12 +40,4 @@ export function setTab(t) {
 export function restoreTab() {
   var t = sessionStorage.getItem(TAB_STORAGE_KEY);
   if (t && t !== 'download' && visibleTabs().some((x) => x.id === t)) setTab(t);
-}
-
-// The new key may address a different server/DB: reload the download listing
-// (kept across tab switches) and resync the clipboard from scratch.
-export function onAuthKeyChange() {
-  resetClipSync();
-  reload('dl');
-  if (state.tab !== 'download') refreshActive();
 }

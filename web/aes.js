@@ -800,4 +800,4 @@
     }
 
 
-})(this);
+})(globalThis);
